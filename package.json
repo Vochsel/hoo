@@ -1,5 +1,5 @@
 {
-  "name": "taskbird-browser-extract",
+  "name": "hoo",
   "version": "0.1.0",
   "description": "Extracted Electron browser-automation app (tabs-as-nodes + settings/env + graph execution)",
   "packageManager": "bun@1.3.5",

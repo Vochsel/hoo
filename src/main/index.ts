@@ -40,10 +40,10 @@ function createWindow(): void {
   }
 }
 
-app.setName('Taskbird Browser Extract')
+app.setName('Hoo')
 
 app.whenReady().then(() => {
-  electronApp.setAppUserModelId('com.taskbird.browser.extract')
+  electronApp.setAppUserModelId('com.hoo.app')
 
   app.on('browser-window-created', (_, window) => {
     optimizer.watchWindowShortcuts(window)
