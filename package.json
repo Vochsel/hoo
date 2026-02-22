@@ -1,0 +1,58 @@
+{
+  "name": "taskbird-browser-extract",
+  "version": "0.1.0",
+  "description": "Extracted Electron browser-automation app (tabs-as-nodes + settings/env + graph execution)",
+  "packageManager": "bun@1.3.5",
+  "bin": {
+    "hoo-server": "./scripts/hoo-server.js"
+  },
+  "main": "./out/main/index.js",
+  "scripts": {
+    "hoo-server": "node ./scripts/hoo-server.js",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3",
+    "dev": "bun run rebuild:native && electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck:main": "tsc -p tsconfig.node.json --noEmit",
+    "typecheck:renderer": "tsc -p tsconfig.web.json --noEmit"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "^3.0.46",
+    "@ai-sdk/openai": "^3.0.30",
+    "@electron-toolkit/utils": "^3.0.0",
+    "@radix-ui/react-dialog": "^1.1.6",
+    "@radix-ui/react-scroll-area": "^1.2.3",
+    "@radix-ui/react-slot": "^1.1.2",
+    "@xyflow/react": "^12.10.0",
+    "ai": "^6.0.97",
+    "better-sqlite3": "^12.6.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "dotenv": "^17.2.4",
+    "drizzle-orm": "^0.39.3",
+    "lucide-react": "^0.469.0",
+    "nanoid": "^5.1.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^7.1.1",
+    "turndown": "^7.2.1",
+    "tailwind-merge": "^2.6.0",
+    "tailwindcss-animate": "^1.0.7"
+  },
+  "devDependencies": {
+    "@electron-toolkit/tsconfig": "^1.0.1",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^22.10.5",
+    "@types/react": "^18.3.14",
+    "@types/react-dom": "^18.3.5",
+    "@vitejs/plugin-react": "^4.3.4",
+    "@electron/rebuild": "^3.7.2",
+    "autoprefixer": "^10.4.20",
+    "electron": "37",
+    "electron-vite": "^2.3.0",
+    "postcss": "^8.4.49",
+    "tailwindcss": "^3.4.17",
+    "typescript": "^5.7.3",
+    "vite": "^5.4.11"
+  }
+}
