@@ -1,0 +1,38 @@
+appId: com.hoo.app
+productName: Hoo
+
+directories:
+  output: dist
+
+files:
+  - out/**
+  - package.json
+
+asarUnpack:
+  - node_modules/better-sqlite3/**
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - arm64
+    - target: zip
+      arch:
+        - arm64
+  artifactName: Hoo-${version}-mac-${arch}.${ext}
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: zip
+      arch:
+        - x64
+  artifactName: Hoo-${version}-win-${arch}.${ext}
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true

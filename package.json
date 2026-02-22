@@ -12,6 +12,8 @@
     "rebuild:native": "electron-rebuild -f -w better-sqlite3",
     "dev": "bun run rebuild:native && electron-vite dev",
     "build": "electron-vite build",
+    "dist:mac:arm64": "bun run build && bunx --bun electron-builder --mac --arm64 --publish never",
+    "dist:win:x64": "bun run build && bunx --bun electron-builder --win --x64 --publish never",
     "preview": "electron-vite preview",
     "typecheck:main": "tsc -p tsconfig.node.json --noEmit",
     "typecheck:renderer": "tsc -p tsconfig.web.json --noEmit"

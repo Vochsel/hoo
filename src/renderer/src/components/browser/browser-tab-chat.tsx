@@ -456,6 +456,7 @@ export function BrowserTabChat({
     const msg = input.trim()
     if (!msg || sending) return
     setInput('')
+    const originalTask = msg
 
     abortedRef.current = false
     console.log(`${TAG} Sending message: "${msg}" (vision=${screenshotEnabled})`)
@@ -478,6 +479,7 @@ export function BrowserTabChat({
 
       // Detect repeated identical actions to break infinite loops
       const actionKey = actions.map((a) => `${a.type}:${a.index ?? ''}:${a.url ?? ''}:${a.value ?? ''}`).join('|')
+      const isRepeatedAction = actionKey === prevActionKey
       if (actionKey === prevActionKey) {
         repeatCount++
         if (repeatCount >= 2) {
@@ -510,7 +512,18 @@ export function BrowserTabChat({
         .map((r) => `${r.type}: ${r.success ? 'OK' : 'FAILED'} — ${r.description}`)
         .join('\n')
 
-      const continuationMsg = `[Actions executed — iteration ${iteration}]\n${resultSummary}\n\nThe page has updated. Look at the current page state and continue with the original task if more steps are needed. If the task is complete, just confirm what was done.`
+      const continuationMsg = [
+        `[Actions executed — iteration ${iteration}]`,
+        `Original task: ${originalTask}`,
+        resultSummary,
+        '',
+        'The page has updated. Continue with the original task if more steps are needed. If complete, confirm what was done.',
+        isRepeatedAction
+          ? 'IMPORTANT: Your previous action repeated without progress. Do not click the same index again. Choose a different element or use fillInput for text entry.'
+          : ''
+      ]
+        .filter(Boolean)
+        .join('\n')
 
       console.log(`${TAG} Sending continuation to AI...`)
       actions = await sendMessage(continuationMsg, updatedContext)

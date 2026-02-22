@@ -18,7 +18,7 @@ const WEBVIEW_USER_AGENT = getWebviewUserAgent()
 
 // Selector for interactive elements — broad enough for modern web apps (Gmail, etc.)
 const INTERACTIVE_SELECTOR =
-  'a, button, input, textarea, select, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="listbox"], [role="checkbox"], [role="switch"], [tabindex], [onclick], [data-action]'
+  'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 
 export function BrowserTabDialog({
   tab,
@@ -202,34 +202,82 @@ export function BrowserTabDialog({
           wv.executeJavaScript(`
             (() => {
               const sel = '${INTERACTIVE_SELECTOR}';
-              // Deduplicate: skip elements that are children of another matched element
-              const all = Array.from(document.querySelectorAll(sel));
-              const visible = all.filter(el => {
+              const isVisible = (el) => {
                 const r = el.getBoundingClientRect();
-                return r.width > 0 && r.height > 0;
-              });
-              const els = visible.slice(0, 80);
-              return els.map((el, i) => {
+                if (r.width <= 0 || r.height <= 0) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                return true;
+              };
+              const isEditable = (el) => {
                 const tag = el.tagName.toLowerCase();
-                const type = el.getAttribute('type') || '';
-                const text = (el.textContent || '').trim().slice(0, 100);
-                const placeholder = el.getAttribute('placeholder') || '';
-                const href = el.getAttribute('href') || '';
                 const role = el.getAttribute('role') || '';
-                const name = el.getAttribute('name') || '';
-                const ariaLabel = el.getAttribute('aria-label') || '';
-                const title = el.getAttribute('title') || '';
-                const dataTooltip = el.getAttribute('data-tooltip') || '';
+                return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
+              };
+
+              const ranked = Array.from(document.querySelectorAll(sel))
+                .filter(isVisible)
+                .map((el, domIndex) => {
+                  const tag = el.tagName.toLowerCase();
+                  const type = el.getAttribute('type') || '';
+                  const role = el.getAttribute('role') || '';
+                  const name = el.getAttribute('name') || '';
+                  const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 100);
+                  const placeholder = el.getAttribute('placeholder') || '';
+                  const ariaLabel = el.getAttribute('aria-label') || '';
+                  const title = el.getAttribute('title') || '';
+                  const dataTooltip = el.getAttribute('data-tooltip') || '';
+                  const href = el.getAttribute('href') || '';
+                  const editable = isEditable(el);
+                  const value = tag === 'input' || tag === 'textarea' || tag === 'select'
+                    ? String(el.value || '').slice(0, 60)
+                    : '';
+                  const r = el.getBoundingClientRect();
+                  let score = 0;
+                  if (editable) score += 60;
+                  if (tag === 'button' || role === 'button') score += 40;
+                  if (tag === 'a' || role === 'link') score += 35;
+                  if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
+                  if (role === 'row') score += 20;
+                  if (text) score += 8;
+                  if (ariaLabel || placeholder || title || dataTooltip || name) score += 10;
+                  if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
+                  return {
+                    domIndex,
+                    top: r.top,
+                    left: r.left,
+                    score,
+                    tag,
+                    type,
+                    role,
+                    name,
+                    text,
+                    placeholder,
+                    ariaLabel,
+                    title,
+                    dataTooltip,
+                    href,
+                    editable,
+                    value
+                  };
+                })
+                .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
+                .slice(0, 120);
+
+              return ranked.map((el, i) => {
+                const tag = el.tag;
                 let desc = '[' + i + '] <' + tag + '>';
-                if (type) desc += ' type=' + type;
-                if (role) desc += ' role=' + role;
-                if (name) desc += ' name=' + name;
-                if (text) desc += ' text="' + text + '"';
-                if (placeholder) desc += ' placeholder="' + placeholder + '"';
-                if (ariaLabel) desc += ' aria-label="' + ariaLabel + '"';
-                if (title) desc += ' title="' + title + '"';
-                if (dataTooltip) desc += ' tooltip="' + dataTooltip + '"';
-                if (href) desc += ' href="' + href + '"';
+                if (el.type) desc += ' type=' + el.type;
+                if (el.role) desc += ' role=' + el.role;
+                if (el.name) desc += ' name=' + el.name;
+                if (el.text) desc += ' text="' + el.text + '"';
+                if (el.placeholder) desc += ' placeholder="' + el.placeholder + '"';
+                if (el.ariaLabel) desc += ' aria-label="' + el.ariaLabel + '"';
+                if (el.title) desc += ' title="' + el.title + '"';
+                if (el.dataTooltip) desc += ' tooltip="' + el.dataTooltip + '"';
+                if (el.href) desc += ' href="' + el.href + '"';
+                if (el.editable) desc += ' editable=true';
+                if (el.value) desc += ' value="' + el.value + '"';
                 return desc;
               }).join('\\n');
             })()
@@ -284,22 +332,49 @@ export function BrowserTabDialog({
                 const result = await wv.executeJavaScript(`
                   (() => {
                     const sel = '${INTERACTIVE_SELECTOR}';
-                    const all = Array.from(document.querySelectorAll(sel));
-                    const visible = all.filter(el => {
+                    const isVisible = (el) => {
                       const r = el.getBoundingClientRect();
-                      return r.width > 0 && r.height > 0;
-                    });
-                    const els = visible.slice(0, 80);
-                    const el = els[${action.index}];
-                    if (el) {
+                      if (r.width <= 0 || r.height <= 0) return false;
+                      const style = window.getComputedStyle(el);
+                      if (style.display === 'none' || style.visibility === 'hidden') return false;
+                      return true;
+                    };
+                    const isEditable = (el) => {
                       const tag = el.tagName.toLowerCase();
-                      const text = (el.textContent || '').trim().slice(0, 60);
+                      const role = el.getAttribute('role') || '';
+                      return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
+                    };
+                    const els = Array.from(document.querySelectorAll(sel))
+                      .filter(isVisible)
+                      .map((el, domIndex) => {
+                        const tag = el.tagName.toLowerCase();
+                        const role = el.getAttribute('role') || '';
+                        const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+                        const ariaLabel = el.getAttribute('aria-label') || '';
+                        const title = el.getAttribute('title') || '';
+                        const placeholder = el.getAttribute('placeholder') || '';
+                        const r = el.getBoundingClientRect();
+                        let score = 0;
+                        if (isEditable(el)) score += 60;
+                        if (tag === 'button' || role === 'button') score += 40;
+                        if (tag === 'a' || role === 'link') score += 35;
+                        if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
+                        if (role === 'row') score += 20;
+                        if (text) score += 8;
+                        if (ariaLabel || placeholder || title) score += 10;
+                        if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
+                        return { el, domIndex, score, top: r.top, left: r.left, tag, role, text, ariaLabel, title, placeholder };
+                      })
+                      .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
+                      .slice(0, 120);
+
+                    const target = els[${action.index}];
+                    const el = target?.el;
+                    if (el) {
+                      const tag = target.tag;
                       el.scrollIntoView({ block: 'center', behavior: 'instant' });
-                      // Focus first for input-like elements
-                      if (['input','textarea','select'].includes(tag) || el.isContentEditable) {
-                        el.focus();
-                      }
-                      // Full pointer + mouse event sequence for React/SPA compatibility
+                      if (isEditable(el)) el.focus();
+
                       const rect = el.getBoundingClientRect();
                       const x = rect.left + rect.width / 2;
                       const y = rect.top + rect.height / 2;
@@ -309,14 +384,18 @@ export function BrowserTabDialog({
                       el.dispatchEvent(new PointerEvent('pointerup', { ...eo, pointerId: 1 }));
                       el.dispatchEvent(new MouseEvent('mouseup', eo));
                       el.dispatchEvent(new MouseEvent('click', eo));
-                      // Also try submitting parent form if it's a submit button
                       if (el.type === 'submit' || tag === 'button') {
                         const form = el.closest('form');
-                        if (form) {
-                          form.requestSubmit ? form.requestSubmit() : form.submit();
-                        }
+                        if (form) form.requestSubmit ? form.requestSubmit() : form.submit();
                       }
-                      return JSON.stringify({ ok: true, desc: '<' + tag + '> "' + text + '"' });
+
+                      let desc = '<' + target.tag + '>';
+                      if (target.role) desc += ' role=' + target.role;
+                      if (target.ariaLabel) desc += ' aria-label="' + target.ariaLabel + '"';
+                      if (target.placeholder) desc += ' placeholder="' + target.placeholder + '"';
+                      if (target.title) desc += ' title="' + target.title + '"';
+                      if (target.text) desc += ' text="' + target.text + '"';
+                      return JSON.stringify({ ok: true, desc });
                     }
                     return JSON.stringify({ ok: false, desc: 'element not found (index ${action.index}, total=' + els.length + ')' });
                   })()
@@ -333,35 +412,95 @@ export function BrowserTabDialog({
                 const result = await wv.executeJavaScript(`
                   (() => {
                     const sel = '${INTERACTIVE_SELECTOR}';
-                    const all = Array.from(document.querySelectorAll(sel));
-                    const visible = all.filter(el => {
+                    const isVisible = (el) => {
                       const r = el.getBoundingClientRect();
-                      return r.width > 0 && r.height > 0;
-                    });
-                    const els = visible.slice(0, 80);
-                    const el = els[${action.index}];
-                    if (el) {
+                      if (r.width <= 0 || r.height <= 0) return false;
+                      const style = window.getComputedStyle(el);
+                      if (style.display === 'none' || style.visibility === 'hidden') return false;
+                      return true;
+                    };
+                    const isEditable = (el) => {
                       const tag = el.tagName.toLowerCase();
-                      const name = el.getAttribute('name') || el.getAttribute('placeholder') || tag;
+                      const role = el.getAttribute('role') || '';
+                      return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
+                    };
+                    const els = Array.from(document.querySelectorAll(sel))
+                      .filter(isVisible)
+                      .map((el, domIndex) => {
+                        const tag = el.tagName.toLowerCase();
+                        const role = el.getAttribute('role') || '';
+                        const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+                        const ariaLabel = el.getAttribute('aria-label') || '';
+                        const title = el.getAttribute('title') || '';
+                        const placeholder = el.getAttribute('placeholder') || '';
+                        const name = el.getAttribute('name') || '';
+                        const r = el.getBoundingClientRect();
+                        let score = 0;
+                        if (isEditable(el)) score += 60;
+                        if (tag === 'button' || role === 'button') score += 40;
+                        if (tag === 'a' || role === 'link') score += 35;
+                        if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
+                        if (role === 'row') score += 20;
+                        if (text) score += 8;
+                        if (ariaLabel || placeholder || title || name) score += 10;
+                        if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
+                        return { el, domIndex, score, top: r.top, left: r.left, tag, role, text, ariaLabel, title, placeholder, name };
+                      })
+                      .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
+                      .slice(0, 120);
+
+                    const target = els[${action.index}];
+                    const el = target?.el;
+                    if (el) {
+                      const tag = target.tag;
+                      const role = target.role;
+                      const rawValue = '${escapedValue}';
+                      const fieldName = target.ariaLabel || target.placeholder || target.name || target.title || target.text || tag;
                       el.focus();
 
-                      // Use native setter for React/framework compatibility
-                      const proto = tag === 'textarea'
-                        ? window.HTMLTextAreaElement.prototype
-                        : window.HTMLInputElement.prototype;
-                      const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                      if (nativeSetter) {
-                        nativeSetter.call(el, '${escapedValue}');
+                      if (tag === 'input' || tag === 'textarea') {
+                        const proto = tag === 'textarea'
+                          ? window.HTMLTextAreaElement.prototype
+                          : window.HTMLInputElement.prototype;
+                        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+                        if (nativeSetter) {
+                          nativeSetter.call(el, rawValue);
+                        } else {
+                          el.value = rawValue;
+                        }
+                      } else if (tag === 'select') {
+                        const options = Array.from(el.options || []);
+                        const needle = rawValue.toLowerCase();
+                        const match = options.find((o) => (o.value || '').toLowerCase() === needle)
+                          || options.find((o) => (o.textContent || '').trim().toLowerCase() === needle)
+                          || options.find((o) => (o.textContent || '').toLowerCase().includes(needle));
+                        el.value = match ? match.value : rawValue;
+                      } else if (el.isContentEditable || role === 'textbox') {
+                        const selection = window.getSelection();
+                        if (selection) {
+                          const range = document.createRange();
+                          range.selectNodeContents(el);
+                          selection.removeAllRanges();
+                          selection.addRange(range);
+                        }
+                        try { document.execCommand('insertText', false, rawValue); } catch {}
+                        if ((el.textContent || '') !== rawValue) {
+                          el.textContent = rawValue;
+                        }
                       } else {
-                        el.value = '${escapedValue}';
+                        el.value = rawValue;
                       }
 
-                      // Fire full event sequence for framework compat
+                      try {
+                        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: rawValue, inputType: 'insertText' }));
+                      } catch {}
                       el.dispatchEvent(new Event('input', { bubbles: true }));
                       el.dispatchEvent(new Event('change', { bubbles: true }));
-                      el.dispatchEvent(new InputEvent('input', { bubbles: true, data: '${escapedValue}', inputType: 'insertText' }));
+                      try {
+                        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: rawValue, inputType: 'insertText' }));
+                      } catch {}
 
-                      return JSON.stringify({ ok: true, desc: name + ' = "${escapedValue}"' });
+                      return JSON.stringify({ ok: true, desc: fieldName + ' = "' + rawValue + '"' });
                     }
                     return JSON.stringify({ ok: false, desc: 'element not found (index ${action.index}, total=' + els.length + ')' });
                   })()
@@ -369,32 +508,6 @@ export function BrowserTabDialog({
                 const parsed = JSON.parse(result)
                 console.log(`${TAG}     → fill: ${parsed.desc}`)
                 results.push({ type: 'fill', description: parsed.desc, success: parsed.ok })
-
-                // After filling, simulate Enter key to trigger search/submit
-                await new Promise((r) => setTimeout(r, 100))
-                await wv.executeJavaScript(`
-                  (() => {
-                    const sel = '${INTERACTIVE_SELECTOR}';
-                    const all = Array.from(document.querySelectorAll(sel));
-                    const visible = all.filter(el => {
-                      const r = el.getBoundingClientRect();
-                      return r.width > 0 && r.height > 0;
-                    });
-                    const els = visible.slice(0, 80);
-                    const el = els[${action.index}];
-                    if (el) {
-                      el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                      el.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                      el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
-                      // Also try form submit
-                      const form = el.closest('form');
-                      if (form) {
-                        form.requestSubmit ? form.requestSubmit() : form.submit();
-                      }
-                    }
-                  })()
-                `)
-                console.log(`${TAG}     → dispatched Enter key + form submit`)
               }
               break
 
