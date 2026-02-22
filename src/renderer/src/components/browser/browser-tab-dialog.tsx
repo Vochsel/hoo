@@ -476,6 +476,83 @@ export function BrowserTabDialog({
                           || options.find((o) => (o.textContent || '').toLowerCase().includes(needle));
                         el.value = match ? match.value : rawValue;
                       } else if (el.isContentEditable || role === 'textbox') {
+                        const escapeHtml = (value) =>
+                          value
+                            .replace(/&/g, '&amp;')
+                            .replace(/</g, '&lt;')
+                            .replace(/>/g, '&gt;')
+                            .replace(/"/g, '&quot;')
+                            .replace(/'/g, '&#39;');
+                        const renderInlineMarkdown = (value) => {
+                          let out = escapeHtml(value);
+                          out = out.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, '<a href="$2">$1</a>');
+                          out = out.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
+                          out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
+                          out = out.replace(/\\*([^*\\n]+)\\*/g, '<em>$1</em>');
+                          out = out.replace(/_([^_\\n]+)_/g, '<em>$1</em>');
+                          out = out.replace(/~~([^~]+)~~/g, '<s>$1</s>');
+                          return out;
+                        };
+                        const markdownToHtml = (value) => {
+                          const lines = value.replace(/\\r\\n/g, '\\n').split('\\n');
+                          const htmlParts = [];
+                          let listType = null;
+                          const closeList = () => {
+                            if (listType) {
+                              htmlParts.push('</' + listType + '>');
+                              listType = null;
+                            }
+                          };
+                          for (const raw of lines) {
+                            const line = raw.trimEnd();
+                            if (!line.trim()) {
+                              closeList();
+                              continue;
+                            }
+                            const heading = line.match(/^(#{1,6})\\s+(.*)$/);
+                            if (heading) {
+                              closeList();
+                              const level = heading[1].length;
+                              htmlParts.push('<h' + level + '>' + renderInlineMarkdown(heading[2].trim()) + '</h' + level + '>');
+                              continue;
+                            }
+                            const ul = line.match(/^\\s*[-*]\\s+(.*)$/);
+                            if (ul) {
+                              if (listType !== 'ul') {
+                                closeList();
+                                htmlParts.push('<ul>');
+                                listType = 'ul';
+                              }
+                              htmlParts.push('<li>' + renderInlineMarkdown(ul[1].trim()) + '</li>');
+                              continue;
+                            }
+                            const ol = line.match(/^\\s*\\d+\\.\\s+(.*)$/);
+                            if (ol) {
+                              if (listType !== 'ol') {
+                                closeList();
+                                htmlParts.push('<ol>');
+                                listType = 'ol';
+                              }
+                              htmlParts.push('<li>' + renderInlineMarkdown(ol[1].trim()) + '</li>');
+                              continue;
+                            }
+                            const quote = line.match(/^\\s*>\\s?(.*)$/);
+                            if (quote) {
+                              closeList();
+                              htmlParts.push('<blockquote>' + renderInlineMarkdown(quote[1].trim()) + '</blockquote>');
+                              continue;
+                            }
+                            closeList();
+                            htmlParts.push('<p>' + renderInlineMarkdown(line.trim()) + '</p>');
+                          }
+                          closeList();
+                          return htmlParts.join('');
+                        };
+                        const looksLikeMarkdown =
+                          /(^|\\n)\\s{0,3}(#{1,6}\\s|[-*]\\s|\\d+\\.\\s|>\\s)|\\*\\*|__|~~|\\[[^\\]]+\\]\\([^)]+\\)/m.test(rawValue);
+                        const htmlValue = looksLikeMarkdown
+                          ? markdownToHtml(rawValue)
+                          : escapeHtml(rawValue).replace(/\\n/g, '<br>');
                         const selection = window.getSelection();
                         if (selection) {
                           const range = document.createRange();
@@ -483,9 +560,9 @@ export function BrowserTabDialog({
                           selection.removeAllRanges();
                           selection.addRange(range);
                         }
-                        try { document.execCommand('insertText', false, rawValue); } catch {}
-                        if ((el.textContent || '') !== rawValue) {
-                          el.textContent = rawValue;
+                        try { document.execCommand('insertHTML', false, htmlValue); } catch {}
+                        if ((el.innerHTML || '').trim() !== htmlValue.trim()) {
+                          el.innerHTML = htmlValue;
                         }
                       } else {
                         el.value = rawValue;
@@ -500,7 +577,10 @@ export function BrowserTabDialog({
                         el.dispatchEvent(new InputEvent('input', { bubbles: true, data: rawValue, inputType: 'insertText' }));
                       } catch {}
 
-                      return JSON.stringify({ ok: true, desc: fieldName + ' = "' + rawValue + '"' });
+                      return JSON.stringify({
+                        ok: true,
+                        desc: fieldName + ' = "' + rawValue + '"' + ((el.isContentEditable || role === 'textbox') ? ' (rich)' : '')
+                      });
                     }
                     return JSON.stringify({ ok: false, desc: 'element not found (index ${action.index}, total=' + els.length + ')' });
                   })()
