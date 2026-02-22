@@ -3,6 +3,7 @@ import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Globe, X, Radio, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BrowserTabMonitor } from '@/hooks/use-browser-tabs'
+import { NodeStatusBar } from './node-status-bar'
 
 export interface BrowserTabNodeData {
   title: string
@@ -11,12 +12,13 @@ export interface BrowserTabNodeData {
   screenshot: string | null
   monitors: BrowserTabMonitor[]
   isRunning?: boolean
+  runtimeStatus?: string
   onClose: (id: string) => void
   [key: string]: unknown
 }
 
 function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { title, favicon, screenshot, monitors, isRunning, onClose } = data as unknown as BrowserTabNodeData
+  const { title, favicon, screenshot, monitors, isRunning, runtimeStatus, onClose } = data as unknown as BrowserTabNodeData
   const enabledMonitors = monitors?.filter((m) => m.enabled) ?? []
   const hasMonitors = enabledMonitors.length > 0
 
@@ -101,6 +103,16 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
               />
             </div>
           ))}
+        </div>
+      )}
+
+      {(runtimeStatus || isRunning) && (
+        <div className="border-t px-2.5 py-1.5">
+          <NodeStatusBar
+            status={runtimeStatus}
+            isRunning={isRunning}
+            className="border-0 bg-muted/40 px-1.5 py-1"
+          />
         </div>
       )}
 

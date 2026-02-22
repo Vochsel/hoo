@@ -111,6 +111,26 @@ function BrowserPageInner(): React.ReactElement {
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const isMapMode = flowInteractionMode === 'map'
 
+  const setNodeRuntimeStatus = useCallback(
+    (nodeId: string, status: string, isRunning?: boolean): void => {
+      reactFlowInstance.setNodes((nds) =>
+        nds.map((n) => {
+          if (n.id !== nodeId) return n
+          const nextData: Record<string, unknown> = {
+            ...(n.data as Record<string, unknown>),
+            runtimeStatus: status,
+            runtimeUpdatedAt: Date.now()
+          }
+          if (isRunning !== undefined) {
+            nextData.isRunning = isRunning
+          }
+          return { ...n, data: nextData }
+        })
+      )
+    },
+    [reactFlowInstance]
+  )
+
   // ─── Browser tab agent execution ───────────────────────────────────────
 
   const executeBrowserTab = useCallback(
@@ -118,11 +138,13 @@ function BrowserPageInner(): React.ReactElement {
       const runLabel = runId ?? `standalone-${Date.now().toString(36)}`
       const tab = tabs.find((t) => t.id === tabNodeId)
       if (!tab || !tab.url || tab.url === 'about:blank') {
+        setNodeRuntimeStatus(tabNodeId, 'Browser: invalid tab or URL', false)
         console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} skipped invalid tab/url`)
         return undefined
       }
 
       const startTs = Date.now()
+      setNodeRuntimeStatus(tabNodeId, 'Browser: preparing webview', true)
       // Mark tab as running
       setRunningTabs((prev) => new Set(prev).add(tabNodeId))
       console.log(
@@ -137,6 +159,7 @@ function BrowserPageInner(): React.ReactElement {
 
         if (!webview) {
           // Wait for React to render the hidden webview
+          setNodeRuntimeStatus(tabNodeId, 'Browser: waiting for hidden webview', true)
           await new Promise<void>((resolve) => {
             const check = (): void => {
               waitAttempts += 1
@@ -157,6 +180,7 @@ function BrowserPageInner(): React.ReactElement {
         )
 
         if (!webview) {
+          setNodeRuntimeStatus(tabNodeId, 'Browser: failed (webview unavailable)', false)
           console.error(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} no webview available`)
           return undefined
         }
@@ -166,6 +190,7 @@ function BrowserPageInner(): React.ReactElement {
 
         // Load the tab URL and wait for it
         const loadStart = Date.now()
+        setNodeRuntimeStatus(tabNodeId, `Browser: loading ${preview(tab.url, 60)}`, true)
         console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} loading url=${tab.url}`)
         webview.loadURL(tab.url)
         await new Promise<void>((resolve) => {
@@ -186,6 +211,7 @@ function BrowserPageInner(): React.ReactElement {
         )
 
         // Extra settle time
+        setNodeRuntimeStatus(tabNodeId, 'Browser: waiting for page settle', true)
         await new Promise((r) => setTimeout(r, 1000))
         console.log(
           `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} page settled url=${webview.getURL()} title="${preview(webview.getTitle(), 90)}"`
@@ -195,13 +221,18 @@ function BrowserPageInner(): React.ReactElement {
         const prompt = inputData?.trim()
         if (prompt) {
           const agentStart = Date.now()
+          setNodeRuntimeStatus(tabNodeId, 'Agent: starting', true)
           console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} running browser agent promptLen=${prompt.length}`)
-          const result = await runAgentOnWebview(tabNodeId, prompt, webview)
+          const result = await runAgentOnWebview(tabNodeId, prompt, webview, {
+            onStatus: (status) => setNodeRuntimeStatus(tabNodeId, status, true)
+          })
           agentSummary = result.content
+          setNodeRuntimeStatus(tabNodeId, `Agent: complete (${result.iterations} iterations)`, true)
           console.log(
             `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} browser agent done ms=${Date.now() - agentStart} outputLen=${agentSummary?.length ?? 0} outputPreview="${preview(agentSummary)}"`
           )
         } else {
+          setNodeRuntimeStatus(tabNodeId, 'Browser: capturing page content', true)
           console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} no input prompt; capturing page content only`)
         }
 
@@ -257,6 +288,7 @@ function BrowserPageInner(): React.ReactElement {
 
         // Extract full HTML and convert to markdown for downstream prompt nodes.
         const htmlCaptureStart = Date.now()
+        setNodeRuntimeStatus(tabNodeId, 'Browser: extracting HTML snapshot', true)
         const htmlCapture = (await webview.executeJavaScript(`
           (() => {
             const html = document.documentElement?.outerHTML ?? ''
@@ -278,6 +310,7 @@ function BrowserPageInner(): React.ReactElement {
         )
 
         const turndownStart = Date.now()
+        setNodeRuntimeStatus(tabNodeId, 'Browser: converting HTML to markdown', true)
         const markdown = turndown.turndown(rawHtml)
         console.log(
           `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} turndown done ms=${Date.now() - turndownStart} markdownLen=${markdown.length}`
@@ -313,8 +346,14 @@ function BrowserPageInner(): React.ReactElement {
             `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} output truncated from ${combined.length} to ${MAX_OUTPUT_CHARS}`
           )
         }
+        setNodeRuntimeStatus(tabNodeId, `Browser complete (${output.length} chars)`, false)
         return output
       } catch (err) {
+        setNodeRuntimeStatus(
+          tabNodeId,
+          `Browser error: ${preview(err instanceof Error ? err.message : String(err), 70)}`,
+          false
+        )
         console.error(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} executeBrowserTab error:`, err)
         return undefined
       } finally {
@@ -326,9 +365,21 @@ function BrowserPageInner(): React.ReactElement {
           next.delete(tabNodeId)
           return next
         })
+        reactFlowInstance.setNodes((nds) =>
+          nds.map((n) => {
+            if (n.id !== tabNodeId) return n
+            return {
+              ...n,
+              data: {
+                ...(n.data as Record<string, unknown>),
+                isRunning: false
+              }
+            }
+          })
+        )
       }
     },
-    [tabs, updateTab, reactFlowInstance]
+    [tabs, updateTab, reactFlowInstance, setNodeRuntimeStatus]
   )
 
   // ─── Graph node callbacks ──────────────────────────────────────────────────
@@ -586,7 +637,7 @@ function BrowserPageInner(): React.ReactElement {
         return { ...base, data: { label: gn.label || 'Run', onTrigger: handleTrigger } }
       }
       if (gn.nodeType === 'debug') {
-        return { ...base, data: { label: gn.label || 'Debug', activated: false } }
+        return { ...base, data: { label: gn.label || 'Debug' } }
       }
       if (gn.nodeType === 'notification') {
         return {
@@ -604,7 +655,6 @@ function BrowserPageInner(): React.ReactElement {
           data: {
             label: gn.label || 'Delay',
             config,
-            isRunning: false,
             onEditConfig: handleEditDelayConfig
           }
         }
@@ -615,7 +665,6 @@ function BrowserPageInner(): React.ReactElement {
           data: {
             label: gn.label || 'AI Prompt',
             config,
-            isRunning: false,
             onEditPrompt: handleEditAiPrompt
           }
         }
@@ -681,8 +730,24 @@ function BrowserPageInner(): React.ReactElement {
 
   // Sync nodes when data sources change
   useEffect(() => {
-    setNodes(initialNodes)
-  }, [initialNodes])
+    setNodes((prevNodes) => {
+      const prevById = new Map(prevNodes.map((node) => [node.id, node]))
+      return initialNodes.map((nextNode) => {
+        const prevNode = prevById.get(nextNode.id)
+        if (!prevNode) return nextNode
+        return {
+          ...prevNode,
+          ...nextNode,
+          // Preserve in-flight local positioning and interaction state.
+          position: prevNode.position ?? nextNode.position,
+          data: {
+            ...(prevNode.data as Record<string, unknown>),
+            ...(nextNode.data as Record<string, unknown>)
+          }
+        }
+      })
+    })
+  }, [initialNodes, setNodes])
 
   // Sync edges when loaded from DB
   useEffect(() => {

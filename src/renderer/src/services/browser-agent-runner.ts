@@ -6,6 +6,13 @@ const MAX_LOOPS = 10
 const INTERACTIVE_SELECTOR =
   'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 
+function preview(value: string | undefined, max = 80): string {
+  if (!value) return ''
+  const compact = value.replace(/\s+/g, ' ').trim()
+  if (compact.length <= max) return compact
+  return `${compact.slice(0, max)}...`
+}
+
 // ─── Page context gathering ─────────────────────────────────────────────────
 
 async function gatherPageContext(webview: Electron.WebviewTag): Promise<PageContext> {
@@ -113,12 +120,18 @@ async function gatherPageContext(webview: Electron.WebviewTag): Promise<PageCont
 
 async function executeBrowserActions(
   webview: Electron.WebviewTag,
-  actions: BrowserAction[]
+  actions: BrowserAction[],
+  onStatus?: (status: string) => void
 ): Promise<ActionResult[]> {
   const results: ActionResult[] = []
 
   for (let i = 0; i < actions.length; i++) {
     const action = actions[i]
+    onStatus?.(
+      `Tool ${i + 1}/${actions.length}: ${action.type}${action.index !== undefined ? ` #${action.index}` : ''}${
+        action.url ? ` ${preview(action.url, 40)}` : ''
+      }`
+    )
     console.log(
       `${TAG}   [${i}/${actions.length}] ${action.type}` +
         `${action.index !== undefined ? ` index=${action.index}` : ''}` +
@@ -458,20 +471,24 @@ export async function runAgentOnWebview(
   tabId: string,
   prompt: string,
   webview: Electron.WebviewTag,
-  options?: { maxLoops?: number }
+  options?: { maxLoops?: number; onStatus?: (status: string) => void }
 ): Promise<{ content: string; iterations: number }> {
   const maxLoops = options?.maxLoops ?? MAX_LOOPS
   const automatedPrompt = `[Automated] ${prompt}`
+  const reportStatus = (status: string): void => options?.onStatus?.(status)
 
   console.log(`${TAG} Starting agent run on tab=${tabId} prompt="${prompt.slice(0, 80)}"`)
+  reportStatus('Agent: gathering page context')
 
   // Initial gather + send
   const pageContext = await gatherPageContext(webview)
+  reportStatus('Agent: requesting model plan')
   const result = await window.api.browserTabs.chat(tabId, automatedPrompt, pageContext)
   let actions: BrowserAction[] = result.actions ?? []
   let lastContent = result.messages?.[result.messages.length - 1]?.content ?? ''
 
   console.log(`${TAG} Initial AI response: ${actions.length} action(s)`)
+  reportStatus(actions.length > 0 ? `Agent plan: ${actions.length} action(s)` : 'Agent: no actions')
 
   let iteration = 0
   let prevActionKey = ''
@@ -490,6 +507,7 @@ export async function runAgentOnWebview(
       repeatCount++
       if (repeatCount >= 2) {
         console.warn(`${TAG} Breaking loop — same action repeated ${repeatCount + 1} times`)
+        reportStatus('Agent stopped: repeated action loop')
         break
       }
     } else {
@@ -499,14 +517,17 @@ export async function runAgentOnWebview(
 
     // Execute actions
     console.log(`${TAG} Executing ${actions.length} actions...`)
-    const results = await executeBrowserActions(webview, actions)
+    reportStatus(`Agent: executing ${actions.length} action(s)`)
+    const results = await executeBrowserActions(webview, actions, reportStatus)
 
     // Wait for page
     console.log(`${TAG} Waiting for page to settle...`)
+    reportStatus('Agent: waiting for page settle')
     await waitForPageSettle(webview)
 
     // Re-observe
     console.log(`${TAG} Gathering updated page context...`)
+    reportStatus('Agent: collecting updated page context')
     const updatedContext = await gatherPageContext(webview)
 
     const resultSummary = results
@@ -527,16 +548,20 @@ export async function runAgentOnWebview(
       .join('\n')
 
     console.log(`${TAG} Sending continuation to AI...`)
+    reportStatus('Agent: requesting next step')
     const contResult = await window.api.browserTabs.chat(tabId, continuationMsg, updatedContext)
     actions = contResult.actions ?? []
     lastContent = contResult.messages?.[contResult.messages.length - 1]?.content ?? lastContent
     console.log(`${TAG} AI returned ${actions.length} action(s) on iteration ${iteration}`)
+    reportStatus(actions.length > 0 ? `Agent next: ${actions.length} action(s)` : 'Agent: task complete')
   }
 
   if (iteration >= maxLoops && actions.length > 0) {
     console.warn(`${TAG} Agent loop hit max iterations (${maxLoops})`)
+    reportStatus(`Agent stopped: max loops (${maxLoops})`)
   }
 
   console.log(`${TAG} Agent run complete after ${iteration} iteration(s)`)
+  reportStatus(`Agent done after ${iteration} iteration(s)`)
   return { content: lastContent, iterations: iteration }
 }

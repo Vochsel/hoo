@@ -2,16 +2,19 @@ import { memo, useState, useRef, useEffect } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Bell, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { NodeStatusBar } from './node-status-bar'
 
 export interface NotificationNodeData {
   label: string
   config: { title?: string; body?: string; playSound?: boolean }
+  isRunning?: boolean
+  runtimeStatus?: string
   onEditConfig: (nodeId: string, config: { title?: string; body?: string; playSound?: boolean }) => void
   [key: string]: unknown
 }
 
 function NotificationNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { label, config, onEditConfig } = data as unknown as NotificationNodeData
+  const { label, config, isRunning, runtimeStatus, onEditConfig } = data as unknown as NotificationNodeData
   const title = config?.title || ''
   const body = config?.body || ''
   const playSound = config?.playSound ?? true
@@ -126,6 +129,8 @@ function NotificationNodeInner({ id, data, selected }: NodeProps): React.ReactEl
           )}
         </div>
       )}
+
+      <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
     </div>
   )
 }

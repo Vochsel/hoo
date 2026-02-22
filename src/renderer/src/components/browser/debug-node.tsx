@@ -2,15 +2,17 @@ import { memo, useState, useEffect, useRef } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Bug } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { NodeStatusBar } from './node-status-bar'
 
 export interface DebugNodeData {
   label: string
   activated?: boolean
+  runtimeStatus?: string
   [key: string]: unknown
 }
 
 function DebugNodeInner({ data, selected }: NodeProps): React.ReactElement {
-  const { label, activated } = data as unknown as DebugNodeData
+  const { label, activated, runtimeStatus } = data as unknown as DebugNodeData
   const [lit, setLit] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout>>()
 
@@ -54,6 +56,8 @@ function DebugNodeInner({ data, selected }: NodeProps): React.ReactElement {
         <Bug className="h-3.5 w-3.5 text-muted-foreground" />
         <span className="text-xs font-medium truncate">{label || 'Debug'}</span>
       </div>
+
+      <NodeStatusBar status={runtimeStatus} isRunning={false} className="mt-2" />
     </div>
   )
 }

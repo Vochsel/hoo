@@ -2,17 +2,19 @@ import { memo, useState, useRef, useEffect } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Sparkles, Loader2, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { NodeStatusBar } from './node-status-bar'
 
 export interface AiPromptNodeData {
   label: string
   config: { prompt?: string; lastOutput?: string }
   isRunning?: boolean
+  runtimeStatus?: string
   onEditPrompt: (nodeId: string, prompt: string) => void
   [key: string]: unknown
 }
 
 function AiPromptNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { label, config, isRunning, onEditPrompt } = data as unknown as AiPromptNodeData
+  const { label, config, isRunning, runtimeStatus, onEditPrompt } = data as unknown as AiPromptNodeData
   const promptText = config?.prompt || ''
   const lastOutput = config?.lastOutput || ''
 
@@ -131,6 +133,8 @@ function AiPromptNodeInner({ id, data, selected }: NodeProps): React.ReactElemen
           )}
         </>
       )}
+
+      <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
     </div>
   )
 }

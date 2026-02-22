@@ -12,6 +12,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
+import { NodeStatusBar } from './node-status-bar'
 
 export interface FileNodeConfig {
   filePath?: string
@@ -26,6 +27,8 @@ export interface FileNodeConfig {
 export interface FileNodeData {
   label: string
   config: FileNodeConfig
+  isRunning?: boolean
+  runtimeStatus?: string
   onEditConfig: (nodeId: string, config: FileNodeConfig) => void | Promise<void>
   onPickFile: (
     nodeId: string,
@@ -36,7 +39,7 @@ export interface FileNodeData {
 }
 
 function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { label, config, onEditConfig, onPickFile } = data as unknown as FileNodeData
+  const { label, config, isRunning, runtimeStatus, onEditConfig, onPickFile } = data as unknown as FileNodeData
   const filePath = config?.filePath || ''
   const writeMode = config?.writeMode === 'append' ? 'append' : 'overwrite'
 
@@ -139,6 +142,8 @@ function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
             )}
           </>
         )}
+
+        <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>

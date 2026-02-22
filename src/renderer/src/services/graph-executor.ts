@@ -154,6 +154,20 @@ export async function executeFromTrigger(
   const queue: Array<{ nodeId: string }> = [{ nodeId: triggerId }]
   visited.add(triggerId)
 
+  const setNodeRuntime = (nodeId: string, status: string, isRunning?: boolean): void => {
+    updateNodeData(nodeId, (prev) => {
+      const next: Record<string, unknown> = {
+        ...prev,
+        runtimeStatus: status,
+        runtimeUpdatedAt: Date.now()
+      }
+      if (isRunning !== undefined) {
+        next.isRunning = isRunning
+      }
+      return next
+    })
+  }
+
   while (queue.length > 0) {
     const current = queue.shift()!
     const node = nodeById.get(current.nodeId)
@@ -233,12 +247,14 @@ export async function executeFromTrigger(
     if (nodeType === 'trigger') {
       // Trigger node itself doesn't execute, just passes through
       output = initialInput
+      setNodeRuntime(current.nodeId, 'Triggered')
       console.log(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} trigger pass-through`)
     } else if (nodeType === 'text') {
       const config = (node.data as { config?: { text?: string } }).config ?? {}
       if (inputData) {
         // Incoming data overwrites the text content
         output = inputData
+        setNodeRuntime(current.nodeId, `Text updated (${output.length} chars)`)
         const updatedConfig = { ...config, text: inputData }
         updateNodeData(current.nodeId, (prev) => ({
           ...prev,
@@ -253,6 +269,7 @@ export async function executeFromTrigger(
         )
       } else {
         output = config.text ?? ''
+        setNodeRuntime(current.nodeId, `Text static (${output.length} chars)`)
         console.log(
           `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} text static outputLen=${output.length}`
         )
@@ -269,13 +286,14 @@ export async function executeFromTrigger(
           activated: false
         }))
       }, 5000)
+      setNodeRuntime(current.nodeId, 'Debug pulse')
       console.log(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} debug pulse`)
     } else if (nodeType === 'delay') {
       const config = (node.data as { config?: { seconds?: number } }).config ?? {}
       const seconds = config.seconds ?? 1
-      updateNodeData(current.nodeId, (prev) => ({ ...prev, isRunning: true }))
+      setNodeRuntime(current.nodeId, `Delay ${seconds}s`, true)
       await new Promise((r) => setTimeout(r, seconds * 1000))
-      updateNodeData(current.nodeId, (prev) => ({ ...prev, isRunning: false }))
+      setNodeRuntime(current.nodeId, `Delay complete (${seconds}s)`, false)
       output = inputData
       console.log(
         `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} delay waited=${seconds}s pass outputLen=${output?.length ?? 0}`
@@ -285,17 +303,21 @@ export async function executeFromTrigger(
       const title = config.title || 'Notification'
       const body = config.body || ''
       const playSound = config.playSound ?? true
+      setNodeRuntime(current.nodeId, `Notify: ${preview(title, 40)}`, true)
       const notifyResult = await window.api.graphNodes.notify(title, body, playSound)
       if (!notifyResult?.success) {
+        setNodeRuntime(current.nodeId, `Notify failed: ${preview(notifyResult?.error ?? 'unknown', 60)}`, false)
         console.error(
           `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} notify failed error=${notifyResult?.error ?? 'unknown'}`
         )
+      } else {
+        setNodeRuntime(current.nodeId, `Notification sent: ${preview(title, 40)}`, false)
       }
       console.log(
         `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} notify sent title="${preview(title)}" bodyLen=${body.length} success=${notifyResult?.success ?? 'unknown'}`
       )
     } else if (nodeType === 'aiPrompt') {
-      updateNodeData(current.nodeId, (prev) => ({ ...prev, isRunning: true }))
+      setNodeRuntime(current.nodeId, 'AI: generating response...', true)
       try {
         console.log(
           `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} aiPrompt request inputLen=${inputData?.length ?? 0}`
@@ -303,6 +325,7 @@ export async function executeFromTrigger(
         const result = await window.api.graphNodes.executeAiPrompt(current.nodeId, inputData, execRunId)
         if (result.output) {
           output = result.output
+          setNodeRuntime(current.nodeId, `AI complete (${result.output.length} chars)`, false)
           console.log(
             `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} aiPrompt outputLen=${result.output.length} preview="${preview(result.output)}"`
           )
@@ -310,37 +333,41 @@ export async function executeFromTrigger(
             const prevConfig = (prev.config as { prompt?: string; lastOutput?: string }) ?? {}
             return {
               ...prev,
-              isRunning: false,
               config: { ...prevConfig, lastOutput: result.output }
             }
           })
         } else {
-          updateNodeData(current.nodeId, (prev) => ({ ...prev, isRunning: false }))
+          setNodeRuntime(current.nodeId, `AI returned no output${result.error ? `: ${preview(result.error, 60)}` : ''}`, false)
           console.warn(
             `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} aiPrompt no output error=${result.error ?? 'none'}`
           )
         }
       } catch (err) {
+        setNodeRuntime(current.nodeId, `AI error: ${preview(err instanceof Error ? err.message : String(err), 60)}`, false)
         console.error(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} aiPrompt exception:`, err)
-        updateNodeData(current.nodeId, (prev) => ({ ...prev, isRunning: false }))
       }
     } else if (nodeType === 'browserTab') {
       if (executeBrowserTab) {
-        updateNodeData(current.nodeId, (prev) => ({ ...prev, isRunning: true }))
+        setNodeRuntime(current.nodeId, 'Browser: preparing...', true)
         try {
           console.log(
             `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} browserTab invoke inputLen=${inputData?.length ?? 0}`
           )
           output = await executeBrowserTab(current.nodeId, inputData, execRunId)
+          setNodeRuntime(
+            current.nodeId,
+            output ? `Browser complete (${output.length} chars)` : 'Browser complete (no output)',
+            false
+          )
           console.log(
             `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} browserTab outputLen=${output?.length ?? 0} preview="${preview(output)}"`
           )
         } catch (err) {
+          setNodeRuntime(current.nodeId, `Browser error: ${preview(err instanceof Error ? err.message : String(err), 60)}`, false)
           console.error(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} browserTab failed:`, err)
-        } finally {
-          updateNodeData(current.nodeId, (prev) => ({ ...prev, isRunning: false }))
         }
       } else {
+        setNodeRuntime(current.nodeId, 'Browser executor missing')
         console.warn(
           `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} browserTab executor missing; pass-through only`
         )
@@ -358,6 +385,7 @@ export async function executeFromTrigger(
         config: JSON.stringify(nextConfig)
       })
       output = markdown
+      setNodeRuntime(current.nodeId, `Output updated (${markdown.length} chars)`)
       console.log(
         `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} output report updated markdownLen=${markdown.length}`
       )
@@ -389,6 +417,7 @@ export async function executeFromTrigger(
 
       if (!filePath) {
         const msg = 'No file path configured'
+        setNodeRuntime(current.nodeId, msg, false)
         persistConfig({
           ...config,
           lastOperation: inputData === undefined ? 'read' : 'write',
@@ -398,10 +427,12 @@ export async function executeFromTrigger(
         console.warn(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} file node skipped: ${msg}`)
         output = inputData
       } else if (inputData === undefined) {
+        setNodeRuntime(current.nodeId, `File read: ${preview(filePath, 40)}`, true)
         const readResult = await window.api.graphNodes.readFile(filePath)
         if (readResult?.success) {
           const content = typeof readResult.content === 'string' ? readResult.content : ''
           output = content
+          setNodeRuntime(current.nodeId, `File read complete (${content.length} bytes)`, false)
           persistConfig({
             ...config,
             lastOperation: 'read',
@@ -415,6 +446,7 @@ export async function executeFromTrigger(
           )
         } else {
           const msg = readResult?.error ?? 'Read failed'
+          setNodeRuntime(current.nodeId, `File read failed: ${preview(msg, 60)}`, false)
           persistConfig({
             ...config,
             lastOperation: 'read',
@@ -426,11 +458,13 @@ export async function executeFromTrigger(
           )
         }
       } else {
+        setNodeRuntime(current.nodeId, `File write (${writeMode}): ${preview(filePath, 40)}`, true)
         const writeResult = await window.api.graphNodes.writeFile(filePath, inputData, writeMode)
         output = inputData
 
         if (writeResult?.success) {
           const bytes = typeof writeResult.bytes === 'number' ? writeResult.bytes : inputData.length
+          setNodeRuntime(current.nodeId, `File write complete (${bytes} bytes)`, false)
           persistConfig({
             ...config,
             lastOperation: 'write',
@@ -443,6 +477,7 @@ export async function executeFromTrigger(
           )
         } else {
           const msg = writeResult?.error ?? 'Write failed'
+          setNodeRuntime(current.nodeId, `File write failed: ${preview(msg, 60)}`, false)
           persistConfig({
             ...config,
             lastOperation: 'write',
@@ -455,6 +490,7 @@ export async function executeFromTrigger(
         }
       }
     } else {
+      setNodeRuntime(current.nodeId, `Unsupported node type: ${String(nodeType)}`)
       console.warn(
         `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} unsupported node type=${String(nodeType)}`
       )

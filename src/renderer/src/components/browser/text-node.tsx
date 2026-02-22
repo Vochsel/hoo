@@ -2,16 +2,19 @@ import { memo, useState, useRef, useEffect } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Type, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { NodeStatusBar } from './node-status-bar'
 
 export interface TextNodeData {
   label: string
   config: { text?: string }
+  isRunning?: boolean
+  runtimeStatus?: string
   onEditText: (nodeId: string, text: string) => void
   [key: string]: unknown
 }
 
 function TextNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { label, config, onEditText } = data as unknown as TextNodeData
+  const { label, config, isRunning, runtimeStatus, onEditText } = data as unknown as TextNodeData
   const textContent = config?.text || ''
 
   const [editing, setEditing] = useState(false)
@@ -116,6 +119,8 @@ function TextNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
           )}
         </>
       )}
+
+      <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
     </div>
   )
 }

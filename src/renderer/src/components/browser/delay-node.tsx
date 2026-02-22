@@ -2,17 +2,19 @@ import { memo, useState, useRef, useEffect } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Timer, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { NodeStatusBar } from './node-status-bar'
 
 export interface DelayNodeData {
   label: string
   config: { seconds?: number }
   isRunning?: boolean
+  runtimeStatus?: string
   onEditConfig: (nodeId: string, config: { seconds?: number }) => void
   [key: string]: unknown
 }
 
 function DelayNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { label, config, isRunning, onEditConfig } = data as unknown as DelayNodeData
+  const { label, config, isRunning, runtimeStatus, onEditConfig } = data as unknown as DelayNodeData
   const seconds = config?.seconds ?? 1
 
   const [editing, setEditing] = useState(false)
@@ -120,6 +122,8 @@ function DelayNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
           {isRunning ? 'Waiting...' : formatDuration(seconds)}
         </p>
       )}
+
+      <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
     </div>
   )
 }

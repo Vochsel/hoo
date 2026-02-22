@@ -2,10 +2,13 @@ import { memo, type ReactNode } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { NodeStatusBar } from './node-status-bar'
 
 export interface OutputNodeData {
   label: string
   config: { markdown?: string }
+  isRunning?: boolean
+  runtimeStatus?: string
   [key: string]: unknown
 }
 
@@ -406,7 +409,7 @@ function MarkdownReport({ markdown }: { markdown: string }): React.ReactElement 
 }
 
 function OutputNodeInner({ data, selected }: NodeProps): React.ReactElement {
-  const { label, config } = data as unknown as OutputNodeData
+  const { label, config, isRunning, runtimeStatus } = data as unknown as OutputNodeData
   const markdown = config?.markdown || ''
 
   return (
@@ -434,6 +437,8 @@ function OutputNodeInner({ data, selected }: NodeProps): React.ReactElement {
           Connect this node to a browser or prompt node to capture markdown output.
         </div>
       )}
+
+      <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
     </div>
   )
 }
