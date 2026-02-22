@@ -244,11 +244,13 @@ export async function executeFromTrigger(
     let output: string | undefined
     const nodeType = node.type
 
-    if (nodeType === 'trigger') {
-      // Trigger node itself doesn't execute, just passes through
+    if (nodeType === 'trigger' || nodeType === 'scheduleTrigger') {
+      // Trigger nodes themselves don't execute, they just release downstream flow.
       output = initialInput
-      setNodeRuntime(current.nodeId, 'Triggered')
-      console.log(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} trigger pass-through`)
+      setNodeRuntime(current.nodeId, nodeType === 'scheduleTrigger' ? 'Schedule trigger fired' : 'Triggered')
+      console.log(
+        `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} ${nodeType} pass-through`
+      )
     } else if (nodeType === 'text') {
       const config = (node.data as { config?: { text?: string } }).config ?? {}
       if (inputData) {

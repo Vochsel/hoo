@@ -2,7 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 
 export interface GraphNode {
   id: string
-  nodeType: 'trigger' | 'debug' | 'notification' | 'aiPrompt' | 'delay' | 'text' | 'output' | 'file'
+  nodeType: 'trigger' | 'scheduleTrigger' | 'debug' | 'notification' | 'aiPrompt' | 'delay' | 'text' | 'output' | 'file'
   label: string
   config: string
   flowX: number

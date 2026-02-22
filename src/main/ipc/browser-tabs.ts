@@ -277,7 +277,7 @@ export function registerBrowserTabHandlers(): void {
       db.insert(graphNodes)
         .values({
           id,
-          nodeType: data.nodeType as 'trigger' | 'debug' | 'notification' | 'aiPrompt' | 'delay' | 'text' | 'output' | 'file',
+          nodeType: data.nodeType as 'trigger' | 'scheduleTrigger' | 'debug' | 'notification' | 'aiPrompt' | 'delay' | 'text' | 'output' | 'file',
           label: data.label ?? '',
           config: data.config ?? '{}',
           flowX: data.flowX ?? 0,

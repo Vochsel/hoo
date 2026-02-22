@@ -20,11 +20,12 @@ import {
   type Connection
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, Type, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare } from 'lucide-react'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, Type, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BrowserTabNode, type BrowserTabNodeData } from '@/components/browser/browser-tab-node'
 import { TriggerNode } from '@/components/browser/trigger-node'
+import { ScheduleTriggerNode, type ScheduleTriggerConfig } from '@/components/browser/schedule-trigger-node'
 import { DebugNode } from '@/components/browser/debug-node'
 import { NotificationNode } from '@/components/browser/notification-node'
 import { DelayNode } from '@/components/browser/delay-node'
@@ -41,13 +42,18 @@ import { useBrowserEdges } from '@/hooks/use-browser-edges'
 import { executeFromTrigger } from '@/services/graph-executor'
 import { runAgentOnWebview } from '@/services/browser-agent-runner'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
+import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/lib/schedule-cron'
 import TurndownService from 'turndown'
 
 const MONITOR_TAG = '[browser-monitor]'
+const SCHEDULE_TAG = '[schedule-trigger]'
 const BROWSER_EXEC_TAG = '[browser-exec]'
 const FLOW_TAG = '[browser-flow]'
 const MAX_HTML_CHARS = 250_000
 const MAX_OUTPUT_CHARS = 60_000
+const SCHEDULE_POLL_INTERVAL_MS = 60_000
+const SCHEDULE_ALIGNMENT_GRACE_MS = 250
+const SCHEDULE_MIN_TIMER_DELAY_MS = 25
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
 type FlowInteractionMode = 'design' | 'map'
 
@@ -64,9 +70,26 @@ function preview(value: string | undefined, max = 160): string {
   return `${compact.slice(0, max)}...`
 }
 
+function getNextAlignedMinuteTick(nowTs: number): number {
+  const baseMinute = Math.floor(nowTs / SCHEDULE_POLL_INTERVAL_MS) * SCHEDULE_POLL_INTERVAL_MS
+  let next = baseMinute + SCHEDULE_POLL_INTERVAL_MS + SCHEDULE_ALIGNMENT_GRACE_MS
+  if (next <= nowTs) next += SCHEDULE_POLL_INTERVAL_MS
+  return next
+}
+
+function parseNodeConfig(rawConfig: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(rawConfig)
+    return typeof parsed === 'object' && parsed !== null ? (parsed as Record<string, unknown>) : {}
+  } catch {
+    return {}
+  }
+}
+
 const nodeTypes: NodeTypes = {
   browserTab: BrowserTabNode as unknown as NodeTypes['browserTab'],
   trigger: TriggerNode as unknown as NodeTypes['trigger'],
+  scheduleTrigger: ScheduleTriggerNode as unknown as NodeTypes['scheduleTrigger'],
   debug: DebugNode as unknown as NodeTypes['debug'],
   notification: NotificationNode as unknown as NodeTypes['notification'],
   delay: DelayNode as unknown as NodeTypes['delay'],
@@ -106,6 +129,9 @@ function BrowserPageInner(): React.ReactElement {
   const [runningTabs, setRunningTabs] = useState<Set<string>>(new Set())
   const triggerWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
   const pendingPositionOverrides = useRef<Map<string, { x: number; y: number }>>(new Map())
+  const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const scheduleRunningRef = useRef(false)
+  const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
   const reactFlowInstance = useReactFlow()
   const flowInteractionMode: FlowInteractionMode =
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
@@ -401,6 +427,37 @@ function BrowserPageInner(): React.ReactElement {
     [reactFlowInstance, executeBrowserTab]
   )
 
+  const runFromTriggerNode = useCallback(
+    async (nodeId: string, runId?: string): Promise<void> => {
+      const currentNodes = reactFlowInstance.getNodes()
+      const currentEdges = reactFlowInstance.getEdges()
+      const updateNodeData = (id: string, updater: (prev: Record<string, unknown>) => Record<string, unknown>): void => {
+        reactFlowInstance.setNodes((nds) =>
+          nds.map((n) => (n.id === id ? { ...n, data: updater(n.data as Record<string, unknown>) } : n))
+        )
+      }
+      await executeFromTrigger(nodeId, currentEdges, currentNodes, updateNodeData, undefined, executeBrowserTab, undefined, runId)
+    },
+    [reactFlowInstance, executeBrowserTab]
+  )
+
+  const handleScheduleTrigger = useCallback(
+    (nodeId: string) => {
+      const runId = `schedule-manual-${Date.now().toString(36)}`
+      setNodeRuntimeStatus(nodeId, 'Schedule manual trigger started', true)
+      void runFromTriggerNode(nodeId, runId)
+        .then(() => {
+          setNodeRuntimeStatus(nodeId, 'Schedule manual trigger complete', false)
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error)
+          setNodeRuntimeStatus(nodeId, `Schedule manual trigger failed: ${preview(message, 60)}`, false)
+          console.error(`${SCHEDULE_TAG} run=${runId} manual trigger failed node=${nodeId}:`, error)
+        })
+    },
+    [runFromTriggerNode, setNodeRuntimeStatus]
+  )
+
   const handleEditNotificationConfig = useCallback(
     async (nodeId: string, config: { title?: string; body?: string }) => {
       await updateNode(nodeId, { config: JSON.stringify(config) })
@@ -418,7 +475,7 @@ function BrowserPageInner(): React.ReactElement {
   const handleEditAiPrompt = useCallback(
     async (nodeId: string, promptText: string) => {
       const node = gNodes.find((n) => n.id === nodeId)
-      const existingConfig = node ? JSON.parse(node.config) : {}
+      const existingConfig = node ? parseNodeConfig(node.config) : {}
       await updateNode(nodeId, {
         config: JSON.stringify({ ...existingConfig, prompt: promptText })
       })
@@ -429,12 +486,27 @@ function BrowserPageInner(): React.ReactElement {
   const handleEditText = useCallback(
     async (nodeId: string, textContent: string) => {
       const node = gNodes.find((n) => n.id === nodeId)
-      const existingConfig = node ? JSON.parse(node.config) : {}
+      const existingConfig = node ? parseNodeConfig(node.config) : {}
       await updateNode(nodeId, {
         config: JSON.stringify({ ...existingConfig, text: textContent })
       })
     },
     [updateNode, gNodes]
+  )
+
+  const handleEditScheduleConfig = useCallback(
+    async (nodeId: string, config: ScheduleTriggerConfig) => {
+      const prompt = config.prompt?.trim()
+      const cron = config.cron?.trim()
+      const resolved = resolveScheduleCron(prompt, cron)
+      const nextConfig: ScheduleTriggerConfig = {
+        prompt: prompt || undefined,
+        cron: cron || resolved.cron || undefined,
+        enabled: config.enabled !== false
+      }
+      await updateNode(nodeId, { config: JSON.stringify(nextConfig) })
+    },
+    [updateNode]
   )
 
   const handleEditFileConfig = useCallback(
@@ -605,6 +677,150 @@ function BrowserPageInner(): React.ReactElement {
     }
   }
 
+  const scheduleTriggerNodeCount = useMemo(
+    () => gNodes.filter((node) => node.nodeType === 'scheduleTrigger').length,
+    [gNodes]
+  )
+
+  // ─── Schedule trigger polling ───────────────────────────────────────────
+
+  useEffect(() => {
+    if (scheduleTimerRef.current) {
+      clearTimeout(scheduleTimerRef.current)
+      scheduleTimerRef.current = null
+    }
+
+    if (scheduleTriggerNodeCount === 0) {
+      scheduleRunningRef.current = false
+      scheduleLastFiredMinuteRef.current.clear()
+      console.log(`${SCHEDULE_TAG} scheduler disabled (no schedule trigger nodes)`)
+      return
+    }
+
+    let disposed = false
+    console.log(
+      `${SCHEDULE_TAG} scheduler setup nodes=${scheduleTriggerNodeCount} pollIntervalMs=${SCHEDULE_POLL_INTERVAL_MS} alignmentGraceMs=${SCHEDULE_ALIGNMENT_GRACE_MS}`
+    )
+
+    const runScheduleCycle = async (source: 'initial' | 'interval'): Promise<void> => {
+      const now = new Date()
+      const nowTs = now.getTime()
+      const minuteKey = formatLocalMinuteKey(now)
+      const nextTickTs = getNextAlignedMinuteTick(nowTs)
+
+      console.log(
+        `${SCHEDULE_TAG} tick source=${source} at=${now.toISOString()} local=${now.toLocaleTimeString()} minuteKey=${minuteKey} next~=${new Date(nextTickTs).toISOString()}`
+      )
+
+      if (scheduleRunningRef.current) {
+        console.log(`${SCHEDULE_TAG} cycle skip source=${source} reason=previous cycle still running`)
+        return
+      }
+
+      scheduleRunningRef.current = true
+      try {
+        const currentNodes = reactFlowInstance.getNodes().filter((node) => node.type === 'scheduleTrigger')
+        const activeNodeIds = new Set(currentNodes.map((node) => node.id))
+        for (const knownId of Array.from(scheduleLastFiredMinuteRef.current.keys())) {
+          if (!activeNodeIds.has(knownId)) {
+            scheduleLastFiredMinuteRef.current.delete(knownId)
+          }
+        }
+
+        console.log(`${SCHEDULE_TAG} cycle source=${source} scheduleNodes=${currentNodes.length}`)
+        for (const node of currentNodes) {
+          const nodeData = (node.data ?? {}) as Record<string, unknown>
+          const config = (nodeData.config as ScheduleTriggerConfig | undefined) ?? {}
+          const label = typeof nodeData.label === 'string' ? nodeData.label : node.id
+          const enabled = config.enabled !== false
+
+          if (!enabled) {
+            setNodeRuntimeStatus(node.id, 'Schedule disabled', false)
+            continue
+          }
+
+          const resolved = resolveScheduleCron(config.prompt, config.cron)
+          if (!resolved.cron) {
+            const reason = resolved.error ?? 'Missing cron expression'
+            setNodeRuntimeStatus(node.id, `Schedule invalid: ${preview(reason, 70)}`, false)
+            console.warn(
+              `${SCHEDULE_TAG} node=${node.id} label="${preview(label, 50)}" invalid reason="${reason}"`
+            )
+            continue
+          }
+
+          const cron = resolved.cron
+          const match = cronMatchesDate(cron, now)
+          console.log(
+            `${SCHEDULE_TAG} node=${node.id} label="${preview(label, 50)}" cron="${cron}" source=${resolved.source ?? 'unknown'} match=${match}`
+          )
+
+          if (!match) {
+            setNodeRuntimeStatus(node.id, `Waiting: ${cron}`, false)
+            continue
+          }
+
+          const lastFiredMinute = scheduleLastFiredMinuteRef.current.get(node.id)
+          if (lastFiredMinute === minuteKey) {
+            console.log(`${SCHEDULE_TAG} node=${node.id} already fired for minute=${minuteKey}; skip duplicate`)
+            continue
+          }
+
+          scheduleLastFiredMinuteRef.current.set(node.id, minuteKey)
+          const runId = `schedule-${Date.now().toString(36)}-${node.id.slice(0, 6)}`
+          setNodeRuntimeStatus(node.id, `Schedule fired (${minuteKey})`, true)
+          console.log(`${SCHEDULE_TAG} run=${runId} firing node=${node.id} cron="${cron}" minute=${minuteKey}`)
+
+          try {
+            await runFromTriggerNode(node.id, runId)
+            setNodeRuntimeStatus(node.id, `Schedule complete (${minuteKey})`, false)
+            console.log(`${SCHEDULE_TAG} run=${runId} complete node=${node.id}`)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            setNodeRuntimeStatus(node.id, `Schedule failed: ${preview(message, 70)}`, false)
+            console.error(`${SCHEDULE_TAG} run=${runId} failed node=${node.id}:`, error)
+          }
+        }
+      } finally {
+        scheduleRunningRef.current = false
+      }
+    }
+
+    const scheduleNextTick = (source: 'initial' | 'interval'): void => {
+      if (disposed) return
+      const now = Date.now()
+      const plannedAt = getNextAlignedMinuteTick(now)
+      const delayMs = Math.max(SCHEDULE_MIN_TIMER_DELAY_MS, plannedAt - now)
+      console.log(
+        `${SCHEDULE_TAG} timer scheduled source=${source} runAt=${new Date(plannedAt).toISOString()} local=${new Date(plannedAt).toLocaleTimeString()} delayMs=${delayMs}`
+      )
+      scheduleTimerRef.current = setTimeout(() => {
+        if (disposed) return
+        const firedAt = Date.now()
+        console.log(
+          `${SCHEDULE_TAG} timer fired source=${source} plannedAt=${new Date(plannedAt).toISOString()} firedAt=${new Date(firedAt).toISOString()} driftMs=${firedAt - plannedAt}`
+        )
+        void runScheduleCycle(source).finally(() => {
+          if (disposed) return
+          scheduleNextTick('interval')
+        })
+      }, delayMs)
+    }
+
+    void runScheduleCycle('initial')
+    scheduleNextTick('initial')
+
+    return (): void => {
+      disposed = true
+      scheduleRunningRef.current = false
+      if (scheduleTimerRef.current) {
+        clearTimeout(scheduleTimerRef.current)
+        scheduleTimerRef.current = null
+      }
+      console.log(`${SCHEDULE_TAG} scheduler cleanup`)
+    }
+  }, [scheduleTriggerNodeCount, reactFlowInstance, runFromTriggerNode, setNodeRuntimeStatus])
+
   // ─── Merge tabs + graph nodes into React Flow nodes ──────────────────────
 
   const graphNodeIdSet = useMemo(() => new Set(gNodes.map((node) => node.id)), [gNodes])
@@ -626,7 +842,7 @@ function BrowserPageInner(): React.ReactElement {
     }))
 
     const graphNodeList: Node[] = gNodes.map((gn) => {
-      const config = JSON.parse(gn.config)
+      const config = parseNodeConfig(gn.config)
       const base = {
         id: gn.id,
         type: gn.nodeType,
@@ -635,6 +851,17 @@ function BrowserPageInner(): React.ReactElement {
 
       if (gn.nodeType === 'trigger') {
         return { ...base, data: { label: gn.label || 'Run', onTrigger: handleTrigger } }
+      }
+      if (gn.nodeType === 'scheduleTrigger') {
+        return {
+          ...base,
+          data: {
+            label: gn.label || 'Schedule',
+            config: config as ScheduleTriggerConfig,
+            onEditConfig: handleEditScheduleConfig,
+            onTriggerNow: handleScheduleTrigger
+          }
+        }
       }
       if (gn.nodeType === 'debug') {
         return { ...base, data: { label: gn.label || 'Debug' } }
@@ -723,7 +950,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} duplicate node ids detected: ${Array.from(duplicateIds).join(', ')}`)
     }
     return mergedNodes
-  }, [tabs, gNodes, runningTabs, handleClose, handleTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
+  }, [tabs, gNodes, runningTabs, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
@@ -866,6 +1093,16 @@ function BrowserPageInner(): React.ReactElement {
     [createTab]
   )
 
+  useEffect(() => {
+    const onAddTab = (): void => {
+      void handleAddTab()
+    }
+    window.addEventListener('hoo:browser-add-tab', onAddTab)
+    return (): void => {
+      window.removeEventListener('hoo:browser-add-tab', onAddTab)
+    }
+  }, [handleAddTab])
+
   const handleDialogClose = useCallback(
     (open: boolean) => {
       setDialogOpen(open)
@@ -923,11 +1160,12 @@ function BrowserPageInner(): React.ReactElement {
   }, [contextMenu, handleAddTab])
 
   const handleContextAddGraphNode = useCallback(
-    async (nodeType: string, label: string) => {
+    async (nodeType: string, label: string, config?: Record<string, unknown>) => {
       if (contextMenu?.flowPosition) {
         await createNode({
           nodeType,
           label,
+          config: config ? JSON.stringify(config) : undefined,
           flowX: contextMenu.flowPosition.x,
           flowY: contextMenu.flowPosition.y
         })
@@ -1041,17 +1279,6 @@ function BrowserPageInner(): React.ReactElement {
 
   return (
     <div className="flex h-full flex-col" onClick={closeContextMenu}>
-      {/* Header */}
-      <div className="drag-region flex items-center justify-between border-b px-6 py-3">
-        <h2 className="text-lg font-semibold no-drag">Browser</h2>
-        <div className="no-drag">
-          <Button size="sm" onClick={() => handleAddTab()} className="gap-1">
-            <Plus className="h-4 w-4" />
-            Add Tab
-          </Button>
-        </div>
-      </div>
-
       {/* Canvas */}
       <div className="flex-1">
         <ReactFlow
@@ -1100,6 +1327,9 @@ function BrowserPageInner(): React.ReactElement {
         >
           {contextMenu.type === 'pane' && (
             <>
+              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Tabs
+              </div>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={handleContextAddTab}
@@ -1107,7 +1337,12 @@ function BrowserPageInner(): React.ReactElement {
                 <Plus className="h-4 w-4" />
                 Add new tab
               </button>
+
               <div className="my-1 h-px bg-border" />
+
+              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Triggers
+              </div>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={() => handleContextAddGraphNode('trigger', 'Run')}
@@ -1117,24 +1352,28 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => handleContextAddGraphNode('debug', 'Debug')}
+                onClick={() =>
+                  handleContextAddGraphNode('scheduleTrigger', 'Schedule', {
+                    enabled: true,
+                    prompt: 'every 10 minutes'
+                  } satisfies ScheduleTriggerConfig)
+                }
               >
-                <Bug className="h-4 w-4" />
-                Add Debug
+                <CalendarClock className="h-4 w-4" />
+                Add Schedule Trigger
               </button>
+
+              <div className="my-1 h-px bg-border" />
+
+              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Processing
+              </div>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={() => handleContextAddGraphNode('delay', 'Delay')}
               >
                 <Timer className="h-4 w-4" />
                 Add Delay
-              </button>
-              <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => handleContextAddGraphNode('notification', 'Notify')}
-              >
-                <Bell className="h-4 w-4" />
-                Add Notification
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
@@ -1152,6 +1391,26 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => handleContextAddGraphNode('file', 'File')}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Add File
+              </button>
+
+              <div className="my-1 h-px bg-border" />
+
+              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                Outputs
+              </div>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => handleContextAddGraphNode('notification', 'Notify')}
+              >
+                <Bell className="h-4 w-4" />
+                Add Notification
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={() => handleContextAddGraphNode('output', 'Output')}
               >
                 <FileText className="h-4 w-4" />
@@ -1159,10 +1418,10 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => handleContextAddGraphNode('file', 'File')}
+                onClick={() => handleContextAddGraphNode('debug', 'Debug')}
               >
-                <FolderOpen className="h-4 w-4" />
-                Add File
+                <Bug className="h-4 w-4" />
+                Add Debug
               </button>
             </>
           )}
