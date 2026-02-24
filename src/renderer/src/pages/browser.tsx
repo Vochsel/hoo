@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -20,12 +20,13 @@ import {
   type Connection
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, Type, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock } from 'lucide-react'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BrowserTabNode, type BrowserTabNodeData } from '@/components/browser/browser-tab-node'
 import { TriggerNode } from '@/components/browser/trigger-node'
 import { ScheduleTriggerNode, type ScheduleTriggerConfig } from '@/components/browser/schedule-trigger-node'
+import { FormTriggerNode, type FormTriggerConfig, type FormTriggerFieldConfig } from '@/components/browser/form-trigger-node'
 import { DebugNode } from '@/components/browser/debug-node'
 import { NotificationNode } from '@/components/browser/notification-node'
 import { DelayNode } from '@/components/browser/delay-node'
@@ -86,10 +87,65 @@ function parseNodeConfig(rawConfig: string): Record<string, unknown> {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function normalizeFormFieldList(rawFields: unknown): FormTriggerFieldConfig[] {
+  if (!Array.isArray(rawFields)) return []
+  const normalized = rawFields
+    .map((rawField, index) => {
+      const field = typeof rawField === 'object' && rawField !== null
+        ? (rawField as Partial<FormTriggerFieldConfig>)
+        : {}
+      const keyRaw = typeof field.key === 'string' ? field.key : ''
+      const labelRaw = typeof field.label === 'string' ? field.label : ''
+      const key = keyRaw
+        .toLowerCase()
+        .trim()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '') || `field_${index + 1}`
+      return {
+        id:
+          typeof field.id === 'string' && field.id.trim().length > 0
+            ? field.id.trim()
+            : `form-field-${index + 1}-${key}`,
+        key,
+        label: labelRaw.trim() || `Field ${index + 1}`,
+        placeholder: typeof field.placeholder === 'string' ? field.placeholder : '',
+        required: field.required === true,
+        multiline: field.multiline === true,
+        defaultValue: typeof field.defaultValue === 'string' ? field.defaultValue : ''
+      }
+    })
+    .filter((field) => field.key.trim().length > 0)
+  const seenKeys = new Map<string, number>()
+  return normalized.map((field) => {
+    const count = seenKeys.get(field.key) ?? 0
+    seenKeys.set(field.key, count + 1)
+    if (count === 0) return field
+    return { ...field, key: `${field.key}_${count + 1}` }
+  })
+}
+
+function formatFormSubmission(fields: FormTriggerFieldConfig[], values: Record<string, string>): string {
+  const lines: string[] = ['[Form Submission]']
+  if (fields.length === 0) {
+    lines.push('(No configured fields)')
+    return lines.join('\n')
+  }
+  for (const field of fields) {
+    const value = values[field.key] ?? ''
+    lines.push(`${field.label} (${field.key}): ${value || '(empty)'}`)
+  }
+  return lines.join('\n')
+}
+
 const nodeTypes: NodeTypes = {
   browserTab: BrowserTabNode as unknown as NodeTypes['browserTab'],
   trigger: TriggerNode as unknown as NodeTypes['trigger'],
   scheduleTrigger: ScheduleTriggerNode as unknown as NodeTypes['scheduleTrigger'],
+  formTrigger: FormTriggerNode as unknown as NodeTypes['formTrigger'],
   debug: DebugNode as unknown as NodeTypes['debug'],
   notification: NotificationNode as unknown as NodeTypes['notification'],
   delay: DelayNode as unknown as NodeTypes['delay'],
@@ -123,10 +179,12 @@ function BrowserPageInner(): React.ReactElement {
   const [selectedTab, setSelectedTab] = useState<BrowserTab | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
+  const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [monitorInput, setMonitorInput] = useState('')
   const [monitorNodeId, setMonitorNodeId] = useState<string | null>(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState<string | null>(null)
   const [runningTabs, setRunningTabs] = useState<Set<string>>(new Set())
+  const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const triggerWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
   const pendingPositionOverrides = useRef<Map<string, { x: number; y: number }>>(new Map())
   const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -355,21 +413,17 @@ function BrowserPageInner(): React.ReactElement {
           markdown
         ].join('\n')
 
-        const combined = agentSummary?.trim()
-          ? ['[Browser Agent Result]', agentSummary.trim(), '', snapshot].join('\n')
-          : snapshot
-
         const output =
-          combined.length > MAX_OUTPUT_CHARS
-            ? `${combined.slice(0, MAX_OUTPUT_CHARS)}\n\n[Truncated at ${MAX_OUTPUT_CHARS} chars]`
-            : combined
+          snapshot.length > MAX_OUTPUT_CHARS
+            ? `${snapshot.slice(0, MAX_OUTPUT_CHARS)}\n\n[Truncated at ${MAX_OUTPUT_CHARS} chars]`
+            : snapshot
 
         console.log(
-          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} output ready agentLen=${agentSummary?.length ?? 0} snapshotLen=${snapshot.length} combinedLen=${combined.length} outputLen=${output.length} outputPreview="${preview(output, 220)}"`
+          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} output ready agentLen=${agentSummary?.length ?? 0} snapshotLen=${snapshot.length} outputLen=${output.length} outputPreview="${preview(output, 220)}"`
         )
-        if (combined.length > MAX_OUTPUT_CHARS) {
+        if (snapshot.length > MAX_OUTPUT_CHARS) {
           console.warn(
-            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} output truncated from ${combined.length} to ${MAX_OUTPUT_CHARS}`
+            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} output truncated from ${snapshot.length} to ${MAX_OUTPUT_CHARS}`
           )
         }
         setNodeRuntimeStatus(tabNodeId, `Browser complete (${output.length} chars)`, false)
@@ -492,6 +546,96 @@ function BrowserPageInner(): React.ReactElement {
       })
     },
     [updateNode, gNodes]
+  )
+
+  const handleEditFormTriggerConfig = useCallback(
+    async (nodeId: string, config: FormTriggerConfig) => {
+      const node = gNodes.find((n) => n.id === nodeId)
+      const existingConfig = node ? parseNodeConfig(node.config) : {}
+      await updateNode(nodeId, {
+        config: JSON.stringify({
+          ...existingConfig,
+          ...config,
+          fields: normalizeFormFieldList(config.fields)
+        })
+      })
+    },
+    [updateNode, gNodes]
+  )
+
+  const handleSubmitFormTrigger = useCallback(
+    async (nodeId: string, values: Record<string, string>, config: FormTriggerConfig): Promise<void> => {
+      const runId = `form-submit-${Date.now().toString(36)}`
+      const normalizedFields = normalizeFormFieldList(config.fields)
+      const normalizedValues: Record<string, string> = {}
+      for (const field of normalizedFields) {
+        normalizedValues[field.key] = values[field.key] ?? ''
+      }
+
+      const submissionOutput = formatFormSubmission(normalizedFields, normalizedValues)
+      const nextConfig: FormTriggerConfig = {
+        ...config,
+        fields: normalizedFields,
+        lastSubmission: submissionOutput
+      }
+      const serializedConfig = JSON.stringify(nextConfig)
+
+      reactFlowInstance.setNodes((nds) =>
+        nds.map((n) =>
+          n.id === nodeId
+            ? {
+                ...n,
+                data: {
+                  ...(n.data as Record<string, unknown>),
+                  config: nextConfig
+                }
+              }
+            : n
+        )
+      )
+      void window.api.graphNodes
+        .update(nodeId, { config: serializedConfig })
+        .catch((error) => console.error(`${FLOW_TAG} failed to persist form trigger config node=${nodeId}:`, error))
+
+      setNodeRuntimeStatus(nodeId, `Form submitted (${submissionOutput.length} chars)`, true)
+
+      const liveNodes = reactFlowInstance.getNodes()
+      const currentNodes = liveNodes.map((node) =>
+        node.id === nodeId
+          ? {
+              ...node,
+              data: {
+                ...(node.data as Record<string, unknown>),
+                config: nextConfig
+              }
+            }
+          : node
+      )
+      const currentEdges = reactFlowInstance.getEdges()
+      const updateNodeData = (id: string, updater: (prev: Record<string, unknown>) => Record<string, unknown>): void => {
+        reactFlowInstance.setNodes((nds) =>
+          nds.map((n) => (n.id === id ? { ...n, data: updater(n.data as Record<string, unknown>) } : n))
+        )
+      }
+
+      try {
+        await executeFromTrigger(
+          nodeId,
+          currentEdges,
+          currentNodes,
+          updateNodeData,
+          submissionOutput,
+          executeBrowserTab,
+          undefined,
+          runId
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setNodeRuntimeStatus(nodeId, `Form submit failed: ${preview(message, 60)}`, false)
+        console.error(`${FLOW_TAG} form submit failed node=${nodeId} run=${runId}:`, error)
+      }
+    },
+    [reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus]
   )
 
   const handleEditScheduleConfig = useCallback(
@@ -863,6 +1007,17 @@ function BrowserPageInner(): React.ReactElement {
           }
         }
       }
+      if (gn.nodeType === 'formTrigger') {
+        return {
+          ...base,
+          data: {
+            label: gn.label || 'Form Trigger',
+            config: config as FormTriggerConfig,
+            onEditConfig: handleEditFormTriggerConfig,
+            onSubmit: handleSubmitFormTrigger
+          }
+        }
+      }
       if (gn.nodeType === 'debug') {
         return { ...base, data: { label: gn.label || 'Debug' } }
       }
@@ -897,10 +1052,11 @@ function BrowserPageInner(): React.ReactElement {
         }
       }
       if (gn.nodeType === 'text') {
+        const textLabel = !gn.label || gn.label === 'Text' ? 'Instructions' : gn.label
         return {
           ...base,
           data: {
-            label: gn.label || 'Text',
+            label: textLabel,
             config,
             onEditText: handleEditText
           }
@@ -950,7 +1106,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} duplicate node ids detected: ${Array.from(duplicateIds).join(', ')}`)
     }
     return mergedNodes
-  }, [tabs, gNodes, runningTabs, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
+  }, [tabs, gNodes, runningTabs, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
@@ -962,15 +1118,25 @@ function BrowserPageInner(): React.ReactElement {
       return initialNodes.map((nextNode) => {
         const prevNode = prevById.get(nextNode.id)
         if (!prevNode) return nextNode
+        const prevData = (prevNode.data as Record<string, unknown>) ?? {}
+        const nextData = (nextNode.data as Record<string, unknown>) ?? {}
+        const mergedData: Record<string, unknown> = {
+          ...prevData,
+          ...nextData
+        }
+        if (isRecord(prevData.config) && isRecord(nextData.config)) {
+          // Preserve runtime-enriched config fields (e.g. output markdown) until persisted state catches up.
+          mergedData.config = {
+            ...prevData.config,
+            ...nextData.config
+          }
+        }
         return {
           ...prevNode,
           ...nextNode,
           // Preserve in-flight local positioning and interaction state.
           position: prevNode.position ?? nextNode.position,
-          data: {
-            ...(prevNode.data as Record<string, unknown>),
-            ...(nextNode.data as Record<string, unknown>)
-          }
+          data: mergedData
         }
       })
     })
@@ -1103,6 +1269,52 @@ function BrowserPageInner(): React.ReactElement {
     }
   }, [handleAddTab])
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key.toLowerCase() !== 'f') return
+      if (event.metaKey || event.ctrlKey || event.altKey) return
+      if (event.repeat) return
+
+      const target = event.target as HTMLElement | null
+      if (target) {
+        const tag = target.tagName.toLowerCase()
+        if (
+          tag === 'input' ||
+          tag === 'textarea' ||
+          tag === 'select' ||
+          target.isContentEditable ||
+          target.closest('[contenteditable="true"], [role="textbox"]')
+        ) {
+          return
+        }
+      }
+
+      const currentNodes = reactFlowInstance.getNodes()
+      if (currentNodes.length === 0) return
+      const selectedNodes = currentNodes.filter((node) => node.selected)
+
+      event.preventDefault()
+      if (selectedNodes.length > 0) {
+        void reactFlowInstance.fitView({
+          nodes: selectedNodes,
+          padding: 0.35,
+          duration: 220
+        })
+        return
+      }
+
+      void reactFlowInstance.fitView({
+        padding: 0.5,
+        duration: 220
+      })
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return (): void => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [reactFlowInstance])
+
   const handleDialogClose = useCallback(
     (open: boolean) => {
       setDialogOpen(open)
@@ -1150,6 +1362,29 @@ function BrowserPageInner(): React.ReactElement {
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
   }, [])
+
+  useLayoutEffect(() => {
+    if (!contextMenu) {
+      setContextMenuPosition(null)
+      return
+    }
+
+    const clampToViewport = (): void => {
+      const menuEl = contextMenuRef.current
+      const menuWidth = menuEl?.offsetWidth ?? 220
+      const menuHeight = menuEl?.offsetHeight ?? 280
+      const pad = 8
+      const maxX = Math.max(pad, window.innerWidth - menuWidth - pad)
+      const maxY = Math.max(pad, window.innerHeight - menuHeight - pad)
+      const x = Math.min(Math.max(contextMenu.x, pad), maxX)
+      const y = Math.min(Math.max(contextMenu.y, pad), maxY)
+      setContextMenuPosition({ x, y })
+    }
+
+    clampToViewport()
+    window.addEventListener('resize', clampToViewport)
+    return (): void => window.removeEventListener('resize', clampToViewport)
+  }, [contextMenu])
 
   // Pane context menu actions
   const handleContextAddTab = useCallback(async () => {
@@ -1220,6 +1455,53 @@ function BrowserPageInner(): React.ReactElement {
     }
     setContextMenu(null)
   }, [contextMenu, tabs, createTab])
+
+  const handleContextExecuteNode = useCallback(() => {
+    const nodeId = contextMenu?.nodeId
+    if (!nodeId) {
+      setContextMenu(null)
+      return
+    }
+
+    const runId = `context-node-${Date.now().toString(36)}`
+    const currentNodes = reactFlowInstance.getNodes()
+    const currentEdges = reactFlowInstance.getEdges()
+    const targetNode = currentNodes.find((n) => n.id === nodeId)
+    if (!targetNode) {
+      setContextMenu(null)
+      return
+    }
+
+    const incomingOnlyEdges = currentEdges.filter((e) => e.target === nodeId)
+    const edgesForExecution =
+      targetNode.type === 'trigger' || targetNode.type === 'scheduleTrigger' || targetNode.type === 'formTrigger'
+        ? currentEdges
+        : incomingOnlyEdges
+    const updateNodeData = (id: string, updater: (prev: Record<string, unknown>) => Record<string, unknown>): void => {
+      reactFlowInstance.setNodes((nds) =>
+        nds.map((n) => (n.id === id ? { ...n, data: updater(n.data as Record<string, unknown>) } : n))
+      )
+    }
+
+    console.log(
+      `${FLOW_TAG} context execute node=${nodeId} type=${targetNode.type} incoming=${incomingOnlyEdges.length} edges=${edgesForExecution.length} run=${runId}`
+    )
+    setContextMenu(null)
+    void executeFromTrigger(
+      nodeId,
+      edgesForExecution,
+      currentNodes,
+      updateNodeData,
+      undefined,
+      executeBrowserTab,
+      undefined,
+      runId
+    ).catch((error) => {
+      const message = error instanceof Error ? error.message : String(error)
+      setNodeRuntimeStatus(nodeId, `Manual run failed: ${preview(message, 60)}`, false)
+      console.error(`${FLOW_TAG} context execute failed node=${nodeId} run=${runId}:`, error)
+    })
+  }, [contextMenu, reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus])
 
   const handleContextDeleteNode = useCallback(async () => {
     if (!contextMenu?.nodeId) {
@@ -1321,8 +1603,12 @@ function BrowserPageInner(): React.ReactElement {
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 min-w-[180px] rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
+          ref={contextMenuRef}
+          className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[180px] overflow-y-auto rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+          style={{
+            left: contextMenuPosition?.x ?? contextMenu.x,
+            top: contextMenuPosition?.y ?? contextMenu.y
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           {contextMenu.type === 'pane' && (
@@ -1349,6 +1635,24 @@ function BrowserPageInner(): React.ReactElement {
               >
                 <Play className="h-4 w-4" />
                 Add Trigger
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() =>
+                  handleContextAddGraphNode('formTrigger', 'Form Trigger', {
+                    fields: [
+                      {
+                        id: 'form-field-1',
+                        key: 'input',
+                        label: 'Input',
+                        required: true
+                      }
+                    ]
+                  } satisfies FormTriggerConfig)
+                }
+              >
+                <FormInput className="h-4 w-4" />
+                Add Form Trigger
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
@@ -1384,17 +1688,10 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => handleContextAddGraphNode('text', 'Text')}
+                onClick={() => handleContextAddGraphNode('text', 'Instructions')}
               >
-                <Type className="h-4 w-4" />
-                Add Text
-              </button>
-              <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => handleContextAddGraphNode('file', 'File')}
-              >
-                <FolderOpen className="h-4 w-4" />
-                Add File
+                <NotebookPen className="h-4 w-4" />
+                Add Instructions
               </button>
 
               <div className="my-1 h-px bg-border" />
@@ -1418,6 +1715,13 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => handleContextAddGraphNode('file', 'File')}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Add File
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={() => handleContextAddGraphNode('debug', 'Debug')}
               >
                 <Bug className="h-4 w-4" />
@@ -1427,6 +1731,14 @@ function BrowserPageInner(): React.ReactElement {
           )}
           {isBrowserTabNode && (
             <>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={handleContextExecuteNode}
+              >
+                <Play className="h-4 w-4" />
+                Execute node
+              </button>
+              <div className="my-1 h-px bg-border" />
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={handleContextOpenTab}
@@ -1468,6 +1780,14 @@ function BrowserPageInner(): React.ReactElement {
           )}
           {isGraphNode && (
             <>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={handleContextExecuteNode}
+              >
+                <Play className="h-4 w-4" />
+                Execute node
+              </button>
+              <div className="my-1 h-px bg-border" />
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
                 onClick={handleContextDeleteNode}

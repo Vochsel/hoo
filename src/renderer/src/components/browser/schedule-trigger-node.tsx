@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { resolveScheduleCron } from '@/lib/schedule-cron'
-import { NodeStatusBar } from './node-status-bar'
+import { NodeExecutionFooter } from './node-status-bar'
 
 export interface ScheduleTriggerConfig {
   prompt?: string
@@ -146,7 +146,11 @@ function ScheduleTriggerNodeInner({ id, data, selected }: NodeProps): React.Reac
           </Button>
         </div>
 
-        <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
+        <NodeExecutionFooter
+          status={runtimeStatus}
+          isRunning={isRunning}
+          className="-mb-3 -mx-3 mt-2 px-3 py-1.5"
+        />
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>

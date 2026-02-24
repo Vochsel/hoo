@@ -3,7 +3,7 @@ import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Globe, X, Radio, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BrowserTabMonitor } from '@/hooks/use-browser-tabs'
-import { NodeStatusBar } from './node-status-bar'
+import { NodeExecutionFooter } from './node-status-bar'
 
 export interface BrowserTabNodeData {
   title: string
@@ -30,11 +30,11 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
       )}
     >
       {/* Screenshot / Placeholder */}
-      <div className="relative aspect-video w-full overflow-hidden rounded-t-lg bg-muted">
+      <div className="relative w-full overflow-hidden rounded-t-lg bg-muted">
         {screenshot ? (
-          <img src={screenshot} alt={title} draggable={false} className="h-full w-full object-cover object-top" />
+          <img src={screenshot} alt={title} draggable={false} className="block h-auto w-full" />
         ) : (
-          <div className="flex h-full w-full items-center justify-center">
+          <div className="flex min-h-[135px] w-full items-center justify-center">
             <Globe className="h-8 w-8 text-muted-foreground/40" />
           </div>
         )}
@@ -106,15 +106,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
         </div>
       )}
 
-      {(runtimeStatus || isRunning) && (
-        <div className="border-t px-2.5 py-1.5">
-          <NodeStatusBar
-            status={runtimeStatus}
-            isRunning={isRunning}
-            className="border-0 bg-muted/40 px-1.5 py-1"
-          />
-        </div>
-      )}
+      <NodeExecutionFooter status={runtimeStatus} isRunning={isRunning} className="px-2.5 py-1.5" />
 
       {/* Default handles */}
       <Handle

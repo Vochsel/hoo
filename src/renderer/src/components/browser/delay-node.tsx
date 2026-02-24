@@ -2,7 +2,7 @@ import { memo, useState, useRef, useEffect } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Timer, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { NodeStatusBar } from './node-status-bar'
+import { NodeExecutionFooter } from './node-status-bar'
 
 export interface DelayNodeData {
   label: string
@@ -123,7 +123,11 @@ function DelayNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
         </p>
       )}
 
-      <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
+      <NodeExecutionFooter
+        status={runtimeStatus}
+        isRunning={isRunning}
+        className="-mb-3 -mx-3 mt-2 px-3 py-1.5"
+      />
     </div>
   )
 }

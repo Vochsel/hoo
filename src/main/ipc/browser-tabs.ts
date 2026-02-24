@@ -1,4 +1,4 @@
-import { ipcMain, webContents, Notification, dialog, BrowserWindow } from 'electron'
+import { ipcMain, webContents, Notification, dialog, BrowserWindow, nativeImage } from 'electron'
 import { exec } from 'child_process'
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
@@ -21,6 +21,29 @@ function preview(value: string | undefined, max = 180): string {
   const compact = value.replace(/\s+/g, ' ').trim()
   if (compact.length <= max) return compact
   return `${compact.slice(0, max)}...`
+}
+
+function flattenScreenshotOpaque(image: Electron.NativeImage): Electron.NativeImage {
+  const { width, height } = image.getSize()
+  if (width <= 0 || height <= 0) return image
+
+  const bitmap = image.toBitmap()
+  if (!bitmap || bitmap.length < width * height * 4) return image
+
+  // Flatten onto white to eliminate alpha/transparency entirely.
+  const out = Buffer.allocUnsafe(bitmap.length)
+  for (let i = 0; i < bitmap.length; i += 4) {
+    const b = bitmap[i]
+    const g = bitmap[i + 1]
+    const r = bitmap[i + 2]
+    const a = bitmap[i + 3] / 255
+    out[i] = Math.round(b * a + 255 * (1 - a))
+    out[i + 1] = Math.round(g * a + 255 * (1 - a))
+    out[i + 2] = Math.round(r * a + 255 * (1 - a))
+    out[i + 3] = 255
+  }
+
+  return nativeImage.createFromBitmap(out, { width, height })
 }
 
 async function execCommand(command: string): Promise<void> {
@@ -216,16 +239,21 @@ export function registerBrowserTabHandlers(): void {
         return null
       }
 
+      const opaque = flattenScreenshotOpaque(image)
+      const opaqueSize = opaque.getSize()
+
       // Resize to 480px width for thumbnail
       const targetWidth = 480
-      const scale = targetWidth / size.width
-      const resized = image.resize({
+      const scale = targetWidth / opaqueSize.width
+      const resized = opaque.resize({
         width: targetWidth,
-        height: Math.round(size.height * scale)
+        height: Math.round(opaqueSize.height * scale)
       })
 
       const dataUrl = `data:image/png;base64,${resized.toPNG().toString('base64')}`
-      console.log(`${TAG} Screenshot captured: ${size.width}x${size.height} → ${targetWidth}x${Math.round(size.height * scale)} (${Math.round(dataUrl.length / 1024)}KB)`)
+      console.log(
+        `${TAG} Screenshot captured: ${size.width}x${size.height} opaque=${opaqueSize.width}x${opaqueSize.height} → ${targetWidth}x${Math.round(opaqueSize.height * scale)} (${Math.round(dataUrl.length / 1024)}KB)`
+      )
       return dataUrl
     } catch (err) {
       console.error(`${TAG} Screenshot capture failed:`, err)
@@ -277,7 +305,7 @@ export function registerBrowserTabHandlers(): void {
       db.insert(graphNodes)
         .values({
           id,
-          nodeType: data.nodeType as 'trigger' | 'scheduleTrigger' | 'debug' | 'notification' | 'aiPrompt' | 'delay' | 'text' | 'output' | 'file',
+          nodeType: data.nodeType as 'trigger' | 'scheduleTrigger' | 'formTrigger' | 'debug' | 'notification' | 'aiPrompt' | 'delay' | 'text' | 'output' | 'file',
           label: data.label ?? '',
           config: data.config ?? '{}',
           flowX: data.flowX ?? 0,

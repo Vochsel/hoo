@@ -12,7 +12,7 @@ import {
   DialogTitle
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
-import { NodeStatusBar } from './node-status-bar'
+import { NodeExecutionFooter } from './node-status-bar'
 
 export interface FileNodeConfig {
   filePath?: string
@@ -143,7 +143,11 @@ function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
           </>
         )}
 
-        <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
+        <NodeExecutionFooter
+          status={runtimeStatus}
+          isRunning={isRunning}
+          className="-mb-3 -mx-3 mt-2 px-3 py-1.5"
+        />
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>

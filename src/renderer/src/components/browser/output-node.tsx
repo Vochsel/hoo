@@ -1,8 +1,14 @@
-import { memo, type ReactNode } from 'react'
+import { memo, useState, type ReactNode } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { NodeStatusBar } from './node-status-bar'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle
+} from '@/components/ui/dialog'
+import { NodeExecutionFooter } from './node-status-bar'
 
 export interface OutputNodeData {
   label: string
@@ -275,7 +281,7 @@ function renderInlineMarkdown(text: string): ReactNode[] {
   }
 }
 
-function MarkdownReport({ markdown }: { markdown: string }): React.ReactElement {
+function MarkdownReport({ markdown, compact = true }: { markdown: string; compact?: boolean }): React.ReactElement {
   let blocks: MarkdownBlock[] = []
   try {
     blocks = parseMarkdown(markdown)
@@ -287,7 +293,10 @@ function MarkdownReport({ markdown }: { markdown: string }): React.ReactElement 
           <span className="text-[10px] font-semibold text-muted-foreground">Report</span>
           <span className="text-[9px] text-muted-foreground">{markdown.length.toLocaleString()} chars</span>
         </div> */}
-        <pre className="max-h-[300px] overflow-auto text-left rounded bg-muted/70 p-2 text-[10px] leading-relaxed text-foreground whitespace-pre-wrap">
+        <pre className={cn(
+          'overflow-auto text-left rounded bg-muted/70 p-2 text-[10px] leading-relaxed text-foreground whitespace-pre-wrap',
+          compact ? 'max-h-[300px]' : 'max-h-[72vh]'
+        )}>
           {markdown}
         </pre>
       </div>
@@ -301,7 +310,10 @@ function MarkdownReport({ markdown }: { markdown: string }): React.ReactElement 
         <span className="text-[9px] text-muted-foreground">{markdown.length.toLocaleString()} chars</span>
       </div> */}
       <div
-        className="nowheel nodrag nopan max-h-[300px] text-left overflow-y-auto overflow-x-hidden pr-1 space-y-2 select-text"
+        className={cn(
+          'nowheel nodrag nopan text-left overflow-y-auto overflow-x-hidden pr-1 space-y-2 select-text',
+          compact ? 'max-h-[300px]' : 'max-h-[72vh]'
+        )}
         onWheel={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
       >
@@ -411,35 +423,59 @@ function MarkdownReport({ markdown }: { markdown: string }): React.ReactElement 
 function OutputNodeInner({ data, selected }: NodeProps): React.ReactElement {
   const { label, config, isRunning, runtimeStatus } = data as unknown as OutputNodeData
   const markdown = config?.markdown || ''
+  const [open, setOpen] = useState(false)
 
   return (
-    <div
-      className={cn(
-        'w-[360px] rounded-lg border bg-card p-3 shadow-sm transition-all hover:shadow-md',
-        selected && 'ring-2 ring-primary'
-      )}
-    >
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
-      />
+    <>
+      <div
+        className={cn(
+          'w-[360px] rounded-lg border bg-card p-3 shadow-sm transition-all hover:shadow-md',
+          selected && 'ring-2 ring-primary'
+        )}
+        onDoubleClick={(e) => {
+          e.stopPropagation()
+          if (markdown) setOpen(true)
+        }}
+      >
+        <Handle
+          type="target"
+          position={Position.Left}
+          className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
+        />
 
-      <div className="mb-2 flex items-center gap-2">
-        <FileText className="h-3.5 w-3.5 text-emerald-500" />
-        <span className="text-xs font-medium truncate">{label || 'Output'}</span>
+        <div className="mb-2 flex items-center gap-2">
+          <FileText className="h-3.5 w-3.5 text-emerald-500" />
+          <span className="text-xs font-medium truncate">{label || 'Output'}</span>
+        </div>
+
+        {markdown ? (
+          <MarkdownReport markdown={markdown} />
+        ) : (
+          <div className="rounded-md border border-dashed p-3 text-[11px] text-muted-foreground/70">
+            Connect this node to a browser or prompt node to capture markdown output.
+          </div>
+        )}
+
+        <NodeExecutionFooter
+          status={runtimeStatus}
+          isRunning={isRunning}
+          className="-mb-3 -mx-3 mt-2 px-3 py-1.5"
+        />
       </div>
 
-      {markdown ? (
-        <MarkdownReport markdown={markdown} />
-      ) : (
-        <div className="rounded-md border border-dashed p-3 text-[11px] text-muted-foreground/70">
-          Connect this node to a browser or prompt node to capture markdown output.
-        </div>
-      )}
-
-      <NodeStatusBar status={runtimeStatus} isRunning={isRunning} className="mt-2" />
-    </div>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent
+          className="w-[95vw] max-w-[1100px]"
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+        >
+          <DialogHeader>
+            <DialogTitle>{label || 'Output'} · {markdown.length.toLocaleString()} chars</DialogTitle>
+          </DialogHeader>
+          <MarkdownReport markdown={markdown} compact={false} />
+        </DialogContent>
+      </Dialog>
+    </>
   )
 }
 

@@ -37,6 +37,7 @@ function getCachedOutput(node: Node): string | undefined {
   if (!config) return undefined
 
   if (node.type === 'text') return (config.text as string) ?? undefined
+  if (node.type === 'formTrigger') return (config.lastSubmission as string) ?? undefined
   if (node.type === 'aiPrompt') return (config.lastOutput as string) ?? undefined
   if (node.type === 'output') return (config.markdown as string) ?? undefined
   if (node.type === 'file') return (config.lastReadPreview as string) ?? undefined
@@ -244,19 +245,39 @@ export async function executeFromTrigger(
     let output: string | undefined
     const nodeType = node.type
 
-    if (nodeType === 'trigger' || nodeType === 'scheduleTrigger') {
+    if (nodeType === 'trigger' || nodeType === 'scheduleTrigger' || nodeType === 'formTrigger') {
       // Trigger nodes themselves don't execute, they just release downstream flow.
-      output = initialInput
-      setNodeRuntime(current.nodeId, nodeType === 'scheduleTrigger' ? 'Schedule trigger fired' : 'Triggered')
-      console.log(
-        `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} ${nodeType} pass-through`
-      )
+      if (nodeType === 'formTrigger') {
+        const config = (node.data as { config?: { lastSubmission?: string } }).config ?? {}
+        output = initialInput ?? config.lastSubmission
+        if (initialInput !== undefined) {
+          const nextConfig = { ...config, lastSubmission: initialInput }
+          updateNodeData(current.nodeId, (prev) => ({
+            ...prev,
+            config: nextConfig
+          }))
+          void window.api.graphNodes.update(current.nodeId, {
+            config: JSON.stringify(nextConfig)
+          })
+          setNodeRuntime(current.nodeId, `Form submitted (${initialInput.length} chars)`, false)
+        } else {
+          setNodeRuntime(
+            current.nodeId,
+            output ? `Form trigger reused (${output.length} chars)` : 'Form trigger fired',
+            false
+          )
+        }
+      } else {
+        output = initialInput
+        setNodeRuntime(current.nodeId, nodeType === 'scheduleTrigger' ? 'Schedule trigger fired' : 'Triggered')
+      }
+      console.log(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} ${nodeType} pass-through`)
     } else if (nodeType === 'text') {
       const config = (node.data as { config?: { text?: string } }).config ?? {}
       if (inputData) {
         // Incoming data overwrites the text content
         output = inputData
-        setNodeRuntime(current.nodeId, `Text updated (${output.length} chars)`)
+        setNodeRuntime(current.nodeId, `Instructions updated (${output.length} chars)`)
         const updatedConfig = { ...config, text: inputData }
         updateNodeData(current.nodeId, (prev) => ({
           ...prev,
@@ -271,7 +292,7 @@ export async function executeFromTrigger(
         )
       } else {
         output = config.text ?? ''
-        setNodeRuntime(current.nodeId, `Text static (${output.length} chars)`)
+        setNodeRuntime(current.nodeId, `Instructions ready (${output.length} chars)`)
         console.log(
           `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} text static outputLen=${output.length}`
         )

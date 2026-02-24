@@ -28,3 +28,24 @@ export function NodeStatusBar({ status, isRunning, className }: NodeStatusBarPro
     </div>
   )
 }
+
+interface NodeExecutionFooterProps {
+  status?: string
+  isRunning?: boolean
+  className?: string
+}
+
+export function NodeExecutionFooter({
+  status,
+  isRunning,
+  className
+}: NodeExecutionFooterProps): React.ReactElement | null {
+  const message = status?.trim() || (isRunning ? 'Running...' : '')
+  if (!message) return null
+
+  return (
+    <div className={cn('border-t px-3 py-1.5', className)}>
+      <NodeStatusBar status={status} isRunning={isRunning} className="border-0 bg-muted/40 px-1.5 py-1" />
+    </div>
+  )
+}

@@ -1,4 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { AddressBar, type AddressBarHandle } from './address-bar'
 import { BrowserTabChat } from './browser-tab-chat'
@@ -31,6 +32,7 @@ export function BrowserTabDialog({
   const addressBarRef = useRef<AddressBarHandle>(null)
   const [currentUrl, setCurrentUrl] = useState(tab?.url ?? 'about:blank')
   const [pageLoading, setPageLoading] = useState(false)
+  const [chatCollapsed, setChatCollapsed] = useState(false)
   const pageLoadingRef = useRef(false)
 
   // Cmd+L / Ctrl+L focuses the address bar
@@ -674,8 +676,25 @@ export function BrowserTabDialog({
             </div>
           </div>
 
+          <button
+            type="button"
+            aria-controls="tab-ai-chat-sidebar"
+            aria-expanded={!chatCollapsed}
+            aria-label={chatCollapsed ? 'Expand AI chat sidebar' : 'Collapse AI chat sidebar'}
+            title={chatCollapsed ? 'Show AI chat' : 'Hide AI chat'}
+            onClick={() => setChatCollapsed((v) => !v)}
+            className="no-drag -ml-3 mr-1 mt-2 z-20 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border bg-background text-foreground/70 shadow-sm transition-colors hover:bg-muted hover:text-foreground"
+          >
+            {chatCollapsed ? <ChevronLeft className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+
           {/* Right: AI Chat */}
-          <div className="no-drag w-[320px] shrink-0 border-l">
+          <div
+            id="tab-ai-chat-sidebar"
+            className={`no-drag shrink-0 overflow-hidden border-l transition-[width,opacity] duration-200 ease-out ${
+              chatCollapsed ? 'w-0 border-l-0 opacity-0 pointer-events-none' : 'w-[320px] opacity-100'
+            }`}
+          >
             <BrowserTabChat
               tabId={tab.id}
               gatherPageContext={gatherPageContext}

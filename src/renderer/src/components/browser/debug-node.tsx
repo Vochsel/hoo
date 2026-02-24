@@ -2,7 +2,7 @@ import { memo, useState, useEffect, useRef } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Bug } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { NodeStatusBar } from './node-status-bar'
+import { NodeExecutionFooter } from './node-status-bar'
 
 export interface DebugNodeData {
   label: string
@@ -57,7 +57,11 @@ function DebugNodeInner({ data, selected }: NodeProps): React.ReactElement {
         <span className="text-xs font-medium truncate">{label || 'Debug'}</span>
       </div>
 
-      <NodeStatusBar status={runtimeStatus} isRunning={false} className="mt-2" />
+      <NodeExecutionFooter
+        status={runtimeStatus}
+        isRunning={false}
+        className="-mb-3 -mx-3 mt-2 px-3 py-1.5"
+      />
     </div>
   )
 }
