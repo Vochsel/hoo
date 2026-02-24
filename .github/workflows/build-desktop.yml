@@ -34,6 +34,12 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      - name: Validate icon assets
+        run: |
+          test -f build/icon.icns
+          test -f build/icon.ico
+          test -f build/icon.png
+
       - name: Build macOS artifacts
         run: bun run dist:mac:arm64
 
@@ -70,6 +76,13 @@ jobs:
 
       - name: Install dependencies
         run: bun install --frozen-lockfile
+
+      - name: Validate icon assets
+        shell: pwsh
+        run: |
+          if (!(Test-Path "build/icon.icns")) { throw "Missing build/icon.icns" }
+          if (!(Test-Path "build/icon.ico")) { throw "Missing build/icon.ico" }
+          if (!(Test-Path "build/icon.png")) { throw "Missing build/icon.png" }
 
       - name: Build Windows artifacts
         run: bun run dist:win:x64

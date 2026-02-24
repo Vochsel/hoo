@@ -12,6 +12,7 @@ asarUnpack:
   - node_modules/better-sqlite3/**
 
 mac:
+  icon: build/icon.icns
   category: public.app-category.productivity
   target:
     - target: dmg
@@ -23,6 +24,7 @@ mac:
   artifactName: Hoo-${version}-mac-${arch}.${ext}
 
 win:
+  icon: build/icon.ico
   target:
     - target: nsis
       arch:
@@ -36,3 +38,9 @@ nsis:
   oneClick: false
   perMachine: false
   allowToChangeInstallationDirectory: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeaderIcon: build/icon.ico
+
+linux:
+  icon: build/icon.png
