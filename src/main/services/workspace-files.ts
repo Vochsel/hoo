@@ -47,11 +47,15 @@ export interface WorkspaceSnapshot {
   plans: WorkspacePlanSnapshot[]
 }
 
+export type BoardViewMode = 'whiteboard' | 'tabs' | 'document'
+
 export interface BoardDocument {
   version: 1
   tabs: Array<Record<string, unknown>>
   graphNodes: Array<Record<string, unknown>>
   edges: Array<Record<string, unknown>>
+  documentHtml?: string
+  activeView?: BoardViewMode
 }
 
 function parseStringSetting(rawValue: string | null | undefined): string | null {
@@ -160,14 +164,25 @@ function defaultBoardDocument(): BoardDocument {
   }
 }
 
+function isValidBoardViewMode(v: unknown): v is BoardViewMode {
+  return v === 'whiteboard' || v === 'tabs' || v === 'document'
+}
+
 function normalizeBoardDocument(raw: unknown): BoardDocument {
   const value = typeof raw === 'object' && raw !== null ? (raw as Record<string, unknown>) : {}
-  return {
+  const doc: BoardDocument = {
     version: 1,
     tabs: Array.isArray(value.tabs) ? (value.tabs as Array<Record<string, unknown>>) : [],
     graphNodes: Array.isArray(value.graphNodes) ? (value.graphNodes as Array<Record<string, unknown>>) : [],
     edges: Array.isArray(value.edges) ? (value.edges as Array<Record<string, unknown>>) : []
   }
+  if (typeof value.documentHtml === 'string') {
+    doc.documentHtml = value.documentHtml
+  }
+  if (isValidBoardViewMode(value.activeView)) {
+    doc.activeView = value.activeView
+  }
+  return doc
 }
 
 function toBoardId(rootDir: string, absolutePath: string): string {

@@ -94,7 +94,11 @@ const api = {
       ipcRenderer.invoke('workspace:movePlan', planId, folderId),
     deletePlan: (planId: string) => ipcRenderer.invoke('workspace:deletePlan', planId),
     getPlanHtml: (planId: string) => ipcRenderer.invoke('workspace:getPlanHtml', planId),
-    setPlanHtml: (planId: string, html: string) => ipcRenderer.invoke('workspace:setPlanHtml', planId, html)
+    setPlanHtml: (planId: string, html: string) => ipcRenderer.invoke('workspace:setPlanHtml', planId, html),
+    getBoardActiveView: (boardId: string) => ipcRenderer.invoke('workspace:getBoardActiveView', boardId),
+    getBoardDocumentHtml: (boardId: string) => ipcRenderer.invoke('workspace:getBoardDocumentHtml', boardId),
+    setBoardDocumentHtml: (boardId: string, html: string) => ipcRenderer.invoke('workspace:setBoardDocumentHtml', boardId, html),
+    setBoardActiveView: (boardId: string, view: string) => ipcRenderer.invoke('workspace:setBoardActiveView', boardId, view)
   },
 
   terminal: {

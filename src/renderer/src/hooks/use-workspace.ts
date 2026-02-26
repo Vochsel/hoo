@@ -54,6 +54,9 @@ export function useWorkspace(): {
   deletePlan: (planId: string) => Promise<void>
   getPlanHtml: (planId: string) => Promise<string>
   setPlanHtml: (planId: string, html: string) => Promise<void>
+  getBoardDocumentHtml: (boardId: string) => Promise<string>
+  setBoardDocumentHtml: (boardId: string, html: string) => Promise<void>
+  setBoardActiveView: (boardId: string, view: string) => Promise<void>
 } {
   const [workspace, setWorkspace] = useState<WorkspaceState | null>(null)
   const [loading, setLoading] = useState(true)
@@ -184,6 +187,18 @@ export function useWorkspace(): {
     await window.api.workspace.setPlanHtml(planId, html)
   }, [])
 
+  const getBoardDocumentHtml = useCallback(async (boardId: string) => {
+    return window.api.workspace.getBoardDocumentHtml(boardId)
+  }, [])
+
+  const setBoardDocumentHtml = useCallback(async (boardId: string, html: string) => {
+    await window.api.workspace.setBoardDocumentHtml(boardId, html)
+  }, [])
+
+  const setBoardActiveView = useCallback(async (boardId: string, view: string) => {
+    await window.api.workspace.setBoardActiveView(boardId, view)
+  }, [])
+
   const activeBoard = useMemo(() => {
     if (!workspace?.activeBoardId) return null
     return workspace.boards.find((board) => board.id === workspace.activeBoardId) ?? null
@@ -208,6 +223,9 @@ export function useWorkspace(): {
     movePlan,
     deletePlan,
     getPlanHtml,
-    setPlanHtml
+    setPlanHtml,
+    getBoardDocumentHtml,
+    setBoardDocumentHtml,
+    setBoardActiveView
   }
 }

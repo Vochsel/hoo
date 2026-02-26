@@ -169,3 +169,61 @@ html.platform-darwin .titlebar-nav-offset {
 .plan-slash-empty {
   @apply px-3 py-1.5 text-sm text-muted-foreground;
 }
+
+/* ─── Board Document Editor ──────────────────────────────────── */
+
+.board-doc-editor-content {
+  @apply mx-auto w-full text-base leading-relaxed outline-none;
+  min-height: 60vh;
+}
+
+.board-doc-editor-content p {
+  @apply mb-1;
+}
+
+.board-doc-editor-content p.is-editor-empty:first-child::before {
+  @apply pointer-events-none float-left h-0 text-muted-foreground/50;
+  content: 'Start writing, or type / to embed a browser tab or terminal...';
+}
+
+.board-doc-editor-content h1 {
+  @apply mt-10 mb-3 text-3xl font-bold;
+}
+
+.board-doc-editor-content h2 {
+  @apply mt-8 mb-2 text-2xl font-bold;
+}
+
+.board-doc-editor-content h3 {
+  @apply mt-6 mb-1 text-xl font-semibold;
+}
+
+.board-doc-editor-content ul {
+  @apply mb-2 list-disc pl-5;
+}
+
+.browser-embed-card,
+.terminal-embed-card {
+  @apply my-3;
+}
+
+.board-doc-toolbar {
+  @apply sticky top-0 z-10 rounded-lg border bg-background/95 px-3 py-2 backdrop-blur;
+}
+
+.board-doc-slash-popup {
+  @apply z-[9999] min-w-[220px] max-w-[340px] rounded-lg border bg-popover p-1 shadow-lg;
+  position: fixed;
+}
+
+.board-doc-slash-item {
+  @apply block w-full truncate rounded-md px-3 py-1.5 text-left text-sm text-foreground/90 hover:bg-accent;
+}
+
+.board-doc-slash-item.active {
+  @apply bg-accent text-accent-foreground;
+}
+
+.board-doc-slash-empty {
+  @apply px-3 py-1.5 text-sm text-muted-foreground;
+}

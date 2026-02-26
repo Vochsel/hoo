@@ -20,7 +20,7 @@ import {
   type Connection
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal } from 'lucide-react'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BrowserTabNode, type BrowserTabNodeData } from '@/components/browser/browser-tab-node'
@@ -38,6 +38,8 @@ import { TerminalNode, type TerminalNodeConfig } from '@/components/browser/term
 import { TerminalDialog } from '@/components/browser/terminal-dialog'
 import { BrowserTabDialog } from '@/components/browser/browser-tab-dialog'
 import { MonitorWebviews } from '@/components/browser/monitor-webviews'
+import { BoardTabsView } from '@/components/browser/board-tabs-view'
+import { BoardDocumentView } from '@/components/browser/board-document-view'
 import { PlanEditor, type PlanTemplate, type PlanTaskStatus } from '@/components/plans/plan-editor'
 import { useBrowserTabs, type BrowserTab, type BrowserTabMonitor, type MonitorRule } from '@/hooks/use-browser-tabs'
 import { useSettings } from '@/hooks/use-settings'
@@ -320,7 +322,10 @@ function BrowserPageInner(): React.ReactElement {
     renamePlan,
     deletePlan,
     getPlanHtml,
-    setPlanHtml
+    setPlanHtml,
+    getBoardDocumentHtml,
+    setBoardDocumentHtml,
+    setBoardActiveView
   } = useWorkspace()
   const activeBoardId = workspace?.activeBoardId ?? null
   const { tabs, refresh, createTab, updateTab, deleteTab, savePositions: saveTabPositions } = useBrowserTabs(activeBoardId)
@@ -362,6 +367,10 @@ function BrowserPageInner(): React.ReactElement {
   const [planHtml, setPlanHtmlState] = useState('<p></p>')
   const [planLoading, setPlanLoading] = useState(false)
   const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>(DEFAULT_PLAN_TEMPLATES)
+  const [boardView, setBoardView] = useState<'whiteboard' | 'tabs' | 'document'>('whiteboard')
+  const [boardDocHtml, setBoardDocHtmlState] = useState('<p></p>')
+  const [boardDocLoading, setBoardDocLoading] = useState(false)
+  const boardDocSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const flowContainerRef = useRef<HTMLDivElement | null>(null)
   const lastMouseClientPositionRef = useRef<{ x: number; y: number } | null>(null)
@@ -378,6 +387,8 @@ function BrowserPageInner(): React.ReactElement {
   const flowInteractionMode: FlowInteractionMode =
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const isMapMode = flowInteractionMode === 'map'
+
+  const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
 
   useEffect(() => {
     if (!workspace?.folders) return
@@ -580,6 +591,92 @@ function BrowserPageInner(): React.ReactElement {
       }
     }
   }, [])
+
+  // Load board activeView when activeBoardId changes
+  useEffect(() => {
+    if (!activeBoardId) {
+      setBoardView('whiteboard')
+      return
+    }
+    let cancelled = false
+    void window.api.workspace.getBoardActiveView(activeBoardId)
+      .then((view) => {
+        if (cancelled) return
+        const v = view as string
+        if (v === 'whiteboard' || v === 'tabs' || v === 'document') {
+          setBoardView(v)
+        } else {
+          setBoardView('whiteboard')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBoardView('whiteboard')
+      })
+    return (): void => { cancelled = true }
+  }, [activeBoardId])
+
+  // Load board document HTML when switching to document view
+  useEffect(() => {
+    if (boardDocSaveTimerRef.current) {
+      clearTimeout(boardDocSaveTimerRef.current)
+      boardDocSaveTimerRef.current = null
+    }
+    if (boardView !== 'document' || !activeBoardId) {
+      return
+    }
+    let cancelled = false
+    setBoardDocLoading(true)
+    void getBoardDocumentHtml(activeBoardId)
+      .then((html) => {
+        if (cancelled) return
+        setBoardDocHtmlState(html || '<p></p>')
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error(`${FLOW_TAG} failed to load board document html:`, error)
+        setBoardDocHtmlState('<p></p>')
+      })
+      .finally(() => {
+        if (!cancelled) setBoardDocLoading(false)
+      })
+    return (): void => { cancelled = true }
+  }, [activeBoardId, boardView, getBoardDocumentHtml])
+
+  useEffect(() => {
+    return (): void => {
+      if (boardDocSaveTimerRef.current) {
+        clearTimeout(boardDocSaveTimerRef.current)
+      }
+    }
+  }, [])
+
+  const handleBoardViewChange = useCallback(
+    (view: 'whiteboard' | 'tabs' | 'document') => {
+      setBoardView(view)
+      if (activeBoardId) {
+        void setBoardActiveView(activeBoardId, view).catch((error) => {
+          console.error(`${FLOW_TAG} failed to persist board active view:`, error)
+        })
+      }
+    },
+    [activeBoardId, setBoardActiveView]
+  )
+
+  const handleBoardDocHtmlChange = useCallback(
+    (nextHtml: string) => {
+      setBoardDocHtmlState(nextHtml)
+      if (!activeBoardId) return
+      if (boardDocSaveTimerRef.current) {
+        clearTimeout(boardDocSaveTimerRef.current)
+      }
+      boardDocSaveTimerRef.current = setTimeout(() => {
+        void setBoardDocumentHtml(activeBoardId, nextHtml).catch((error) => {
+          console.error(`${FLOW_TAG} failed to persist board document html:`, error)
+        })
+      }, 450)
+    },
+    [activeBoardId, setBoardDocumentHtml]
+  )
 
   const handlePlanHtmlChange = useCallback(
     (nextHtml: string) => {
@@ -3365,7 +3462,36 @@ function BrowserPageInner(): React.ReactElement {
                     : 'Create a board to begin'}
               </p>
             </div>
+            {activeBoardId && (
+              <div className="flex items-center rounded-md border bg-muted/50 p-0.5">
+                <button
+                  type="button"
+                  className={`rounded px-2 py-1 text-xs transition-colors ${boardView === 'whiteboard' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => handleBoardViewChange('whiteboard')}
+                  title="Whiteboard"
+                >
+                  <LayoutGrid className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className={`rounded px-2 py-1 text-xs transition-colors ${boardView === 'tabs' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => handleBoardViewChange('tabs')}
+                  title="Tabs"
+                >
+                  <PanelTop className="h-3.5 w-3.5" />
+                </button>
+                <button
+                  type="button"
+                  className={`rounded px-2 py-1 text-xs transition-colors ${boardView === 'document' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => handleBoardViewChange('document')}
+                  title="Document"
+                >
+                  <FileText className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
           </div>
+          {boardView === 'whiteboard' && (
           <div ref={flowContainerRef} className="flex-1" onMouseMove={handleFlowContainerMouseMove}>
             <ReactFlow
               nodes={nodes}
@@ -3403,12 +3529,38 @@ function BrowserPageInner(): React.ReactElement {
               </Panel>
             </ReactFlow>
           </div>
+          )}
+          {boardView === 'tabs' && (
+            <BoardTabsView
+              tabs={tabs}
+              terminalNodes={terminalNodes}
+              activeBoardId={activeBoardId}
+              onTabUpdate={updateTab}
+              onCreateTab={() => void handleAddTab()}
+              onDeleteTab={(id) => void deleteTab(id)}
+              onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
+              onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
+              onUpdateNode={updateNode}
+            />
+          )}
+          {boardView === 'document' && (
+            <BoardDocumentView
+              boardId={activeBoardId}
+              html={boardDocHtml}
+              loading={boardDocLoading}
+              tabs={tabs}
+              terminalNodes={terminalNodes}
+              onChange={handleBoardDocHtmlChange}
+              onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
+              onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
+            />
+          )}
           </>
         )}
       </div>
 
       {/* Context Menu */}
-      {contextMenu && !selectedPlan && (
+      {contextMenu && !selectedPlan && boardView === 'whiteboard' && (
         <div
           ref={contextMenuRef}
           className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[180px] overflow-y-auto rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"

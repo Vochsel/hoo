@@ -19,7 +19,10 @@ import {
   deletePlanInWorkspace,
   readPlanHtml,
   writePlanHtml,
-  planExists
+  planExists,
+  readBoardDocument,
+  writeBoardDocument,
+  type BoardViewMode
 } from '../services/workspace-files'
 
 const WORKSPACE_TAG = '[workspace]'
@@ -132,6 +135,42 @@ export function registerWorkspaceHandlers(): void {
       throw new Error('Plan not found')
     }
     await writePlanHtml(planId, html)
+    return { success: true }
+  })
+
+  ipcMain.handle('workspace:getBoardActiveView', async (_event, boardId: string) => {
+    if (!(await boardExists(boardId))) {
+      return 'whiteboard'
+    }
+    const doc = await readBoardDocument(boardId)
+    return doc.activeView ?? 'whiteboard'
+  })
+
+  ipcMain.handle('workspace:getBoardDocumentHtml', async (_event, boardId: string) => {
+    if (!(await boardExists(boardId))) {
+      throw new Error('Board not found')
+    }
+    const doc = await readBoardDocument(boardId)
+    return doc.documentHtml ?? '<p></p>'
+  })
+
+  ipcMain.handle('workspace:setBoardDocumentHtml', async (_event, boardId: string, html: string) => {
+    if (!(await boardExists(boardId))) {
+      throw new Error('Board not found')
+    }
+    const doc = await readBoardDocument(boardId)
+    doc.documentHtml = html
+    await writeBoardDocument(boardId, doc)
+    return { success: true }
+  })
+
+  ipcMain.handle('workspace:setBoardActiveView', async (_event, boardId: string, view: BoardViewMode) => {
+    if (!(await boardExists(boardId))) {
+      throw new Error('Board not found')
+    }
+    const doc = await readBoardDocument(boardId)
+    doc.activeView = view
+    await writeBoardDocument(boardId, doc)
     return { success: true }
   })
 }
