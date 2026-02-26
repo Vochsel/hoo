@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, type KeyboardEvent, type ReactNode } from 
 import { Send, Square, Eye, EyeOff, Trash2, MousePointerClick, Keyboard, Navigation, ArrowUpDown, Sparkles, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { DialogClose } from '@/components/ui/dialog'
 import { useBrowserTabChat, type BrowserAction, type ActionResult, type PageContext } from '@/hooks/use-browser-tabs'
 import { cn } from '@/lib/utils'
 
@@ -12,9 +11,11 @@ const INLINE_TOKEN_REGEX = /(\*\*[^*\n]+?\*\*|__[^_\n]+?__|`[^`\n]+`|\[[^\]]+\]\
 
 interface BrowserTabChatProps {
   tabId: string
+  boardId: string | null
   gatherPageContext: (includeScreenshot: boolean) => Promise<PageContext>
   executeBrowserActions: (actions: BrowserAction[]) => Promise<ActionResult[]>
   waitForPageSettle: () => Promise<void>
+  onClose?: () => void
 }
 
 interface ActionEntry {
@@ -430,11 +431,13 @@ function MarkdownMessage({ markdown, isUser }: { markdown: string; isUser: boole
 
 export function BrowserTabChat({
   tabId,
+  boardId,
   gatherPageContext,
   executeBrowserActions,
-  waitForPageSettle
+  waitForPageSettle,
+  onClose
 }: BrowserTabChatProps): React.ReactElement {
-  const { messages, sending, sendMessage, clearMessages } = useBrowserTabChat(tabId)
+  const { messages, sending, sendMessage, clearMessages } = useBrowserTabChat(tabId, boardId)
   const [input, setInput] = useState('')
   const [screenshotEnabled, setScreenshotEnabled] = useState(true)
   const [actionEntries, setActionEntries] = useState<ActionEntry[]>([])
@@ -541,7 +544,7 @@ export function BrowserTabChat({
   const handleStop = async (): Promise<void> => {
     console.log(`${TAG} Stop button clicked`)
     abortedRef.current = true
-    await window.api.browserTabs.abortChat(tabId)
+    await window.api.browserTabs.abortChat(tabId, boardId ?? undefined)
   }
 
   const handleClear = async (): Promise<void> => {
@@ -593,9 +596,13 @@ export function BrowserTabChat({
               <Trash2 className="h-3.5 w-3.5" />
             </button>
           )}
-          <DialogClose className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/40 transition-colors hover:bg-muted hover:text-foreground">
+          <button
+            type="button"
+            onClick={onClose}
+            className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/40 transition-colors hover:bg-muted hover:text-foreground"
+          >
             <X className="h-3.5 w-3.5" />
-          </DialogClose>
+          </button>
         </div>
       </div>
 

@@ -5,9 +5,16 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { getDb } from './db/client'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerBrowserTabHandlers } from './ipc/browser-tabs'
+import { registerWorkspaceHandlers } from './ipc/workspace'
+import { registerTerminalHandlers, cleanupTerminalSessions } from './ipc/terminal'
 
 function resolveAppIconPath(): string | null {
-  const preferredFile = process.platform === 'win32' ? 'icon.ico' : 'icon.png'
+  const preferredFile =
+    process.platform === 'win32'
+      ? 'icon.ico'
+      : process.platform === 'darwin'
+        ? 'icon.icns'
+        : 'icon.png'
   const fallbackFile = 'icon.png'
   const baseDirs = [process.cwd(), join(__dirname, '../..'), app.getAppPath()]
   const candidates = baseDirs.flatMap((dir) =>
@@ -69,7 +76,11 @@ app.whenReady().then(() => {
   const iconPath = resolveAppIconPath()
 
   if (process.platform === 'darwin' && iconPath) {
-    app.dock?.setIcon(iconPath)
+    try {
+      app.dock?.setIcon(iconPath)
+    } catch (error) {
+      console.warn(`[main] Failed to set dock icon from ${iconPath}:`, error)
+    }
   }
 
   app.on('browser-window-created', (_, window) => {
@@ -78,13 +89,19 @@ app.whenReady().then(() => {
 
   getDb()
   registerSettingsHandlers()
+  registerWorkspaceHandlers()
   registerBrowserTabHandlers()
+  registerTerminalHandlers()
 
   createWindow(iconPath)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(iconPath)
   })
+})
+
+app.on('before-quit', () => {
+  cleanupTerminalSessions()
 })
 
 app.on('window-all-closed', () => {

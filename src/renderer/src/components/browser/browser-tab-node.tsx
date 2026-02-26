@@ -18,7 +18,7 @@ export interface BrowserTabNodeData {
 }
 
 function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { title, favicon, screenshot, monitors, isRunning, runtimeStatus, onClose } = data as unknown as BrowserTabNodeData
+  const { title, favicon, screenshot, monitors, isRunning, runtimeStatus, runtimeOutput, onClose } = data as unknown as BrowserTabNodeData
   const enabledMonitors = monitors?.filter((m) => m.enabled) ?? []
   const hasMonitors = enabledMonitors.length > 0
 
@@ -72,11 +72,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
       {/* Info */}
       <div className="px-2.5 py-2">
         <div className="flex items-center gap-1.5">
-          {favicon ? (
-            <img src={favicon} alt="" draggable={false} className="h-3.5 w-3.5 shrink-0" />
-          ) : (
-            <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          )}
+          {favicon ? <img src={favicon} alt="" draggable={false} className="h-3.5 w-3.5 shrink-0" /> : null}
           <span className="truncate text-xs font-medium">{title || 'New Tab'}</span>
         </div>
       </div>
@@ -106,7 +102,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
         </div>
       )}
 
-      <NodeExecutionFooter status={runtimeStatus} isRunning={isRunning} className="px-2.5 py-1.5" />
+      <NodeExecutionFooter status={runtimeStatus} isRunning={isRunning} runtimeOutput={runtimeOutput as string | undefined} className="px-2.5 py-1.5" />
 
       {/* Default handles */}
       <Handle

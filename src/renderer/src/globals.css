@@ -88,3 +88,84 @@
 html.platform-darwin .titlebar-nav-offset {
   padding-left: 4.25rem;
 }
+
+/* Plan editor – Notion-style clean layout */
+
+.plan-toolbar {
+  @apply mx-auto flex w-full max-w-[720px] items-center justify-between gap-2 px-0 py-2;
+}
+
+.plan-editor-content {
+  @apply mx-auto w-full max-w-[720px] text-base leading-relaxed outline-none;
+  min-height: 60vh;
+}
+
+.plan-editor-content p {
+  @apply mb-1;
+}
+
+.plan-editor-content p.is-editor-empty:first-child::before {
+  @apply pointer-events-none float-left h-0 text-muted-foreground/50;
+  content: attr(data-placeholder);
+}
+
+.plan-editor-content h1 {
+  @apply mt-10 mb-3 text-3xl font-bold;
+}
+
+.plan-editor-content h2 {
+  @apply mt-8 mb-2 text-2xl font-bold;
+}
+
+.plan-editor-content h3 {
+  @apply mt-6 mb-1 text-xl font-semibold;
+}
+
+.plan-editor-content h4 {
+  @apply mt-5 mb-1 text-lg font-semibold;
+}
+
+.plan-editor-content h5 {
+  @apply mt-4 mb-1 text-base font-semibold;
+}
+
+.plan-editor-content h6 {
+  @apply mt-3 mb-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground;
+}
+
+.plan-editor-content ul {
+  @apply mb-2 list-disc pl-5;
+}
+
+.plan-task-node {
+  @apply my-3 grid grid-cols-[20px_minmax(0,1fr)_120px_140px] items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 transition-colors hover:bg-muted/60;
+}
+
+.plan-task-name {
+  @apply h-8 rounded-md bg-transparent px-2 text-sm outline-none placeholder:text-muted-foreground/50 focus:bg-background focus:ring-1 focus:ring-ring;
+}
+
+.plan-task-status {
+  @apply h-8 cursor-pointer rounded-md bg-transparent px-2 text-xs text-muted-foreground outline-none focus:bg-background focus:ring-1 focus:ring-ring;
+}
+
+.plan-task-due {
+  @apply h-8 rounded-md bg-transparent px-2 text-xs text-muted-foreground outline-none focus:bg-background focus:ring-1 focus:ring-ring;
+}
+
+.plan-slash-popup {
+  @apply z-[9999] min-w-[200px] rounded-lg border bg-popover p-1 shadow-lg;
+  position: fixed;
+}
+
+.plan-slash-item {
+  @apply block w-full rounded-md px-3 py-1.5 text-left text-sm text-foreground/90 hover:bg-accent;
+}
+
+.plan-slash-item.active {
+  @apply bg-accent text-accent-foreground;
+}
+
+.plan-slash-empty {
+  @apply px-3 py-1.5 text-sm text-muted-foreground;
+}

@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map } from 'lucide-react'
+import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/use-settings'
+import { useWorkspace } from '@/hooks/use-workspace'
 import { useThemeContext } from '@/App'
 
 const BROWSER_MODELS = [
@@ -19,11 +20,14 @@ type FlowInteractionMode = 'design' | 'map'
 
 export function SettingsPage(): React.ReactElement {
   const { settings, getSetting, setSetting } = useSettings()
+  const { workspace, setRootDir } = useWorkspace()
   const { theme, setTheme } = useThemeContext()
 
   const [openAiKey, setOpenAiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
+  const [workspaceRoot, setWorkspaceRoot] = useState('')
   const [saving, setSaving] = useState(false)
+  const [savingWorkspace, setSavingWorkspace] = useState(false)
 
   const selectedModel = ((getSetting('browserAiModel') as string) ?? 'claude-sonnet-4-6').trim()
   const flowInteractionMode: FlowInteractionMode =
@@ -34,6 +38,10 @@ export function SettingsPage(): React.ReactElement {
     setAnthropicKey(((getSetting('anthropicApiKey') as string) ?? '').trim())
   }, [settings, getSetting])
 
+  useEffect(() => {
+    setWorkspaceRoot(workspace?.rootDir ?? '')
+  }, [workspace?.rootDir])
+
   const saveKeys = async (): Promise<void> => {
     setSaving(true)
     try {
@@ -43,6 +51,27 @@ export function SettingsPage(): React.ReactElement {
       ])
     } finally {
       setSaving(false)
+    }
+  }
+
+  const saveWorkspaceRoot = async (): Promise<void> => {
+    setSavingWorkspace(true)
+    try {
+      await setRootDir(workspaceRoot)
+    } finally {
+      setSavingWorkspace(false)
+    }
+  }
+
+  const browseWorkspaceRoot = async (): Promise<void> => {
+    const selected = await window.api.workspace.pickRootDir(workspaceRoot || workspace?.rootDir)
+    if (!selected) return
+    setWorkspaceRoot(selected)
+    setSavingWorkspace(true)
+    try {
+      await setRootDir(selected)
+    } finally {
+      setSavingWorkspace(false)
     }
   }
 
@@ -124,6 +153,35 @@ export function SettingsPage(): React.ReactElement {
             >
               <Map className="h-3.5 w-3.5" />
               Map Like
+            </Button>
+          </div>
+        </section>
+
+        <section className="rounded-lg border p-4 space-y-4">
+          <div>
+            <h2 className="text-base font-semibold">Workspace Storage</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Folders are real directories and each board is stored as a JSON file under this root directory.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Workspace Root Directory</label>
+            <Input
+              value={workspaceRoot}
+              onChange={(e) => setWorkspaceRoot(e.target.value)}
+              placeholder="Choose a directory for workspace data"
+            />
+          </div>
+
+          <div className="flex gap-2">
+            <Button variant="outline" className="gap-1.5" onClick={browseWorkspaceRoot} disabled={savingWorkspace}>
+              <Folder className="h-3.5 w-3.5" />
+              Browse
+            </Button>
+            <Button className="gap-1.5" onClick={saveWorkspaceRoot} disabled={savingWorkspace || workspaceRoot.trim().length === 0}>
+              <Save className="h-3.5 w-3.5" />
+              {savingWorkspace ? 'Saving...' : 'Save Workspace Root'}
             </Button>
           </div>
         </section>

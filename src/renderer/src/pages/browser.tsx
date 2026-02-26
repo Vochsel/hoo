@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect, Component, type ErrorInfo, type ReactNode } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -20,7 +20,7 @@ import {
   type Connection
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput } from 'lucide-react'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BrowserTabNode, type BrowserTabNodeData } from '@/components/browser/browser-tab-node'
@@ -34,12 +34,16 @@ import { AiPromptNode } from '@/components/browser/ai-prompt-node'
 import { TextNode } from '@/components/browser/text-node'
 import { OutputNode } from '@/components/browser/output-node'
 import { FileNode } from '@/components/browser/file-node'
+import { TerminalNode, type TerminalNodeConfig } from '@/components/browser/terminal-node'
+import { TerminalDialog } from '@/components/browser/terminal-dialog'
 import { BrowserTabDialog } from '@/components/browser/browser-tab-dialog'
 import { MonitorWebviews } from '@/components/browser/monitor-webviews'
+import { PlanEditor, type PlanTemplate, type PlanTaskStatus } from '@/components/plans/plan-editor'
 import { useBrowserTabs, type BrowserTab, type BrowserTabMonitor, type MonitorRule } from '@/hooks/use-browser-tabs'
 import { useSettings } from '@/hooks/use-settings'
-import { useGraphNodes } from '@/hooks/use-graph-nodes'
+import { useGraphNodes, type GraphNode } from '@/hooks/use-graph-nodes'
 import { useBrowserEdges } from '@/hooks/use-browser-edges'
+import { useWorkspace, type WorkspaceBoard, type WorkspacePlan } from '@/hooks/use-workspace'
 import { executeFromTrigger } from '@/services/graph-executor'
 import { runAgentOnWebview } from '@/services/browser-agent-runner'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
@@ -49,13 +53,21 @@ import TurndownService from 'turndown'
 const MONITOR_TAG = '[browser-monitor]'
 const SCHEDULE_TAG = '[schedule-trigger]'
 const BROWSER_EXEC_TAG = '[browser-exec]'
+const BROWSER_PREVIEW_TAG = '[browser-preview]'
 const FLOW_TAG = '[browser-flow]'
 const MAX_HTML_CHARS = 250_000
 const MAX_OUTPUT_CHARS = 60_000
 const SCHEDULE_POLL_INTERVAL_MS = 60_000
 const SCHEDULE_ALIGNMENT_GRACE_MS = 250
 const SCHEDULE_MIN_TIMER_DELAY_MS = 25
+const PREVIEW_LOAD_TIMEOUT_MS = 12_000
+const NETWORK_IDLE_POLL_MS = 300
+const NETWORK_IDLE_WAIT_MS = 600
+const NETWORK_IDLE_TIMEOUT_MS = 15_000
+const INTERACTIVE_SELECTOR =
+  'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
+const PLAN_TEMPLATES_SETTING_KEY = 'planTemplates'
 type FlowInteractionMode = 'design' | 'map'
 
 const turndown = new TurndownService({
@@ -64,11 +76,103 @@ const turndown = new TurndownService({
 })
 turndown.remove(['script', 'style', 'noscript'])
 
+const DEFAULT_PLAN_TEMPLATES: PlanTemplate[] = [
+  {
+    id: 'template-task',
+    name: 'Task',
+    type: 'task',
+    defaultStatus: 'todo'
+  }
+]
+
+function isPlanTaskStatus(value: unknown): value is PlanTaskStatus {
+  return value === 'todo' || value === 'in_progress' || value === 'done'
+}
+
+function normalizePlanTemplates(rawValue: unknown): PlanTemplate[] {
+  if (!Array.isArray(rawValue)) {
+    return DEFAULT_PLAN_TEMPLATES
+  }
+
+  const templates: PlanTemplate[] = []
+  for (let index = 0; index < rawValue.length; index += 1) {
+    const item = rawValue[index]
+    if (typeof item !== 'object' || item === null) continue
+    const record = item as Record<string, unknown>
+    const name = typeof record.name === 'string' ? record.name.trim() : ''
+    if (!name) continue
+    const idRaw = typeof record.id === 'string' ? record.id.trim() : ''
+    const defaultStatus = isPlanTaskStatus(record.defaultStatus) ? record.defaultStatus : 'todo'
+    templates.push({
+      id: idRaw || `template-${index + 1}`,
+      name,
+      type: 'task',
+      defaultStatus
+    })
+  }
+
+  if (templates.length === 0) {
+    return DEFAULT_PLAN_TEMPLATES
+  }
+  return templates
+}
+
 function preview(value: string | undefined, max = 160): string {
   if (!value) return ''
   const compact = value.replace(/\s+/g, ' ').trim()
   if (compact.length <= max) return compact
   return `${compact.slice(0, max)}...`
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName.toLowerCase()
+  return (
+    tag === 'input' ||
+    tag === 'textarea' ||
+    tag === 'select' ||
+    target.isContentEditable ||
+    !!target.closest('[contenteditable="true"], [role="textbox"]')
+  )
+}
+
+function normalizePastedUrl(input: string): string | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+  const cleaned = trimmed.replace(/^<|>$/g, '').replace(/^['"]|['"]$/g, '')
+  if (!cleaned || /\s/.test(cleaned)) return null
+  try {
+    const parsed = new URL(cleaned)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString()
+    }
+    return null
+  } catch {
+    // fall through to bare-domain parsing
+  }
+  if (/^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}([/?#:].*)?$/.test(cleaned)) {
+    try {
+      return new URL(`https://${cleaned}`).toString()
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function normalizeIconUrl(rawUrl: string | null | undefined): string | null {
+  if (!rawUrl) return null
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return null
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString()
+    }
+  } catch {
+    return null
+  }
+  return null
 }
 
 function getNextAlignedMinuteTick(nowTs: number): number {
@@ -152,7 +256,8 @@ const nodeTypes: NodeTypes = {
   aiPrompt: AiPromptNode as unknown as NodeTypes['aiPrompt'],
   text: TextNode as unknown as NodeTypes['text'],
   output: OutputNode as unknown as NodeTypes['output'],
-  file: FileNode as unknown as NodeTypes['file']
+  file: FileNode as unknown as NodeTypes['file'],
+  terminal: TerminalNode as unknown as NodeTypes['terminal']
 }
 
 interface ContextMenu {
@@ -164,39 +269,359 @@ interface ContextMenu {
   flowPosition?: { x: number; y: number }
 }
 
+interface PlanErrorBoundaryState {
+  hasError: boolean
+  message: string
+}
+
+class PlanErrorBoundary extends Component<{ children: ReactNode }, PlanErrorBoundaryState> {
+  constructor(props: { children: ReactNode }) {
+    super(props)
+    this.state = { hasError: false, message: '' }
+  }
+
+  static getDerivedStateFromError(error: unknown): PlanErrorBoundaryState {
+    const message = error instanceof Error ? error.message : String(error)
+    return { hasError: true, message }
+  }
+
+  componentDidCatch(error: unknown, errorInfo: ErrorInfo): void {
+    console.error(`${FLOW_TAG} plan editor crashed:`, error, errorInfo)
+  }
+
+  render(): ReactNode {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-full items-center justify-center p-4">
+          <div className="max-w-md rounded-md border bg-background p-4 text-sm">
+            <p className="font-medium">Plan editor failed to render.</p>
+            <p className="mt-1 text-muted-foreground">{this.state.message || 'Unknown error'}</p>
+          </div>
+        </div>
+      )
+    }
+    return this.props.children
+  }
+}
+
 function BrowserPageInner(): React.ReactElement {
-  const { tabs, refresh, createTab, updateTab, deleteTab, savePositions: saveTabPositions } = useBrowserTabs()
-  const { getSetting } = useSettings()
+  const {
+    workspace,
+    loading: workspaceLoading,
+    activeBoard,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    createBoard,
+    renameBoard,
+    deleteBoard,
+    setActiveBoard,
+    createPlan,
+    renamePlan,
+    deletePlan,
+    getPlanHtml,
+    setPlanHtml
+  } = useWorkspace()
+  const activeBoardId = workspace?.activeBoardId ?? null
+  const { tabs, refresh, createTab, updateTab, deleteTab, savePositions: saveTabPositions } = useBrowserTabs(activeBoardId)
+  const { getSetting, setSetting } = useSettings()
   const {
     graphNodes: gNodes,
     createNode,
     updateNode,
     deleteNode,
     savePositions: saveGraphPositions
-  } = useGraphNodes()
-  const { edges: savedEdges, saveEdges } = useBrowserEdges()
+  } = useGraphNodes(activeBoardId)
+  const { edges: savedEdges, saveEdges } = useBrowserEdges(activeBoardId)
 
   const [selectedTab, setSelectedTab] = useState<BrowserTab | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [terminalDialogNodeId, setTerminalDialogNodeId] = useState<string | null>(null)
+  const [pendingSidebarTabOpen, setPendingSidebarTabOpen] = useState<{ tabId: string; boardId: string } | null>(null)
+  const [pendingSidebarTerminalOpen, setPendingSidebarTerminalOpen] = useState<{ nodeId: string; boardId: string } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [monitorInput, setMonitorInput] = useState('')
   const [monitorNodeId, setMonitorNodeId] = useState<string | null>(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState<string | null>(null)
   const [runningTabs, setRunningTabs] = useState<Set<string>>(new Set())
+  const [previewingTabs, setPreviewingTabs] = useState<Set<string>>(new Set())
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const [collapsedBoards, setCollapsedBoards] = useState<Set<string>>(new Set())
+  const [boardTabsMap, setBoardTabsMap] = useState<Map<string, BrowserTab[]>>(new Map())
+  const [boardTerminalsMap, setBoardTerminalsMap] = useState<Map<string, GraphNode[]>>(new Map())
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
+  const [editingFolderName, setEditingFolderName] = useState('')
+  const [editingBoardId, setEditingBoardId] = useState<string | null>(null)
+  const [editingBoardName, setEditingBoardName] = useState('')
+  const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
+  const [editingPlanName, setEditingPlanName] = useState('')
+  const [editingTerminalId, setEditingTerminalId] = useState<string | null>(null)
+  const [editingTerminalName, setEditingTerminalName] = useState('')
+  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
+  const [planHtml, setPlanHtmlState] = useState('<p></p>')
+  const [planLoading, setPlanLoading] = useState(false)
+  const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>(DEFAULT_PLAN_TEMPLATES)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
+  const flowContainerRef = useRef<HTMLDivElement | null>(null)
+  const lastMouseClientPositionRef = useRef<{ x: number; y: number } | null>(null)
   const triggerWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
+  const dialogWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
+  const previewWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
+  const previewHydrationInFlightRef = useRef<Set<string>>(new Set())
   const pendingPositionOverrides = useRef<Map<string, { x: number; y: number }>>(new Map())
   const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleRunningRef = useRef(false)
   const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
+  const planSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const reactFlowInstance = useReactFlow()
   const flowInteractionMode: FlowInteractionMode =
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const isMapMode = flowInteractionMode === 'map'
 
+  useEffect(() => {
+    if (!workspace?.folders) return
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      for (const folder of workspace.folders) {
+        if (!next.has(folder.id)) {
+          next.add(folder.id)
+        }
+      }
+      return next
+    })
+  }, [workspace?.folders])
+
+  const boardsByFolderId = useMemo(() => {
+    const map = new Map<string, WorkspaceBoard[]>()
+    if (!workspace) return map
+    for (const board of workspace.boards) {
+      const key = board.folderId ?? '__ungrouped__'
+      const existing = map.get(key) ?? []
+      existing.push(board)
+      map.set(key, existing)
+    }
+    return map
+  }, [workspace])
+
+  const plansByFolderId = useMemo(() => {
+    const map = new Map<string, WorkspacePlan[]>()
+    if (!workspace) return map
+    for (const plan of workspace.plans) {
+      const key = plan.folderId ?? '__ungrouped__'
+      const existing = map.get(key) ?? []
+      existing.push(plan)
+      map.set(key, existing)
+    }
+    return map
+  }, [workspace])
+
+  useEffect(() => {
+    if (!workspace) return
+    let cancelled = false
+    const loadAllBoardTabs = async (): Promise<void> => {
+      const next = new Map<string, BrowserTab[]>()
+      for (const board of workspace.boards) {
+        const boardTabs = await window.api.browserTabs.list(board.id)
+        if (cancelled) return
+        next.set(board.id, boardTabs)
+      }
+      setBoardTabsMap(next)
+    }
+    void loadAllBoardTabs()
+    return () => { cancelled = true }
+  }, [workspace, tabs])
+
+  // Load terminal nodes for non-active boards (sidebar).
+  // Mirrors the boardTabsMap pattern — only re-fetches when workspace changes.
+  useEffect(() => {
+    if (!workspace) return
+    let cancelled = false
+    const loadOtherBoardTerminals = async (): Promise<void> => {
+      const next = new Map<string, GraphNode[]>()
+      for (const board of workspace.boards) {
+        if (board.id === activeBoardId) continue
+        const allNodes: GraphNode[] = await window.api.graphNodes.list(board.id)
+        if (cancelled) return
+        const terminals = allNodes.filter((n) => n.nodeType === 'terminal')
+        if (terminals.length > 0) next.set(board.id, terminals)
+      }
+      if (!cancelled) setBoardTerminalsMap((prev) => {
+        const merged = new Map(next)
+        // Preserve active board entry from the other effect
+        const active = prev.get(activeBoardId ?? '')
+        if (active && activeBoardId) merged.set(activeBoardId, active)
+        return merged
+      })
+    }
+    void loadOtherBoardTerminals()
+    return () => { cancelled = true }
+  }, [workspace, activeBoardId])
+
+  // Keep active board's terminal entries in sync from the already-loaded gNodes
+  // (no IPC, no async — just a derived update).
+  useEffect(() => {
+    if (!activeBoardId) return
+    const terminals = gNodes.filter((n) => n.nodeType === 'terminal')
+    setBoardTerminalsMap((prev) => {
+      const next = new Map(prev)
+      if (terminals.length > 0) {
+        next.set(activeBoardId, terminals)
+      } else {
+        next.delete(activeBoardId)
+      }
+      return next
+    })
+  }, [activeBoardId, gNodes])
+
+  const toggleBoardCollapsed = useCallback((boardId: string) => {
+    setCollapsedBoards((prev) => {
+      const next = new Set(prev)
+      if (next.has(boardId)) {
+        next.delete(boardId)
+      } else {
+        next.add(boardId)
+      }
+      return next
+    })
+  }, [])
+
+  useEffect(() => {
+    setRunningTabs(new Set())
+    setPreviewingTabs(new Set())
+    dialogWebviews.current.clear()
+    setMonitorNodeId(null)
+    setSelectedTab(null)
+    setDialogOpen(false)
+    setTerminalDialogNodeId(null)
+    setContextMenu(null)
+  }, [activeBoardId])
+
+  useEffect(() => {
+    if (!workspace) return
+    if (editingFolderId && !workspace.folders.some((folder) => folder.id === editingFolderId)) {
+      setEditingFolderId(null)
+      setEditingFolderName('')
+    }
+    if (editingBoardId && !workspace.boards.some((board) => board.id === editingBoardId)) {
+      setEditingBoardId(null)
+      setEditingBoardName('')
+    }
+    if (editingPlanId && !workspace.plans.some((plan) => plan.id === editingPlanId)) {
+      setEditingPlanId(null)
+      setEditingPlanName('')
+    }
+    if (selectedPlanId && !workspace.plans.some((plan) => plan.id === selectedPlanId)) {
+      setSelectedPlanId(null)
+    }
+    if (editingTerminalId) {
+      const allTerminals = Array.from(boardTerminalsMap.values()).flat()
+      if (!allTerminals.some((tn) => tn.id === editingTerminalId)) {
+        setEditingTerminalId(null)
+        setEditingTerminalName('')
+      }
+    }
+  }, [workspace, editingFolderId, editingBoardId, editingPlanId, selectedPlanId, editingTerminalId, boardTerminalsMap])
+
+  useEffect(() => {
+    if (!selectedPlanId) return
+    setContextMenu(null)
+    setDialogOpen(false)
+    setMonitorNodeId(null)
+  }, [selectedPlanId])
+
+  const selectedPlan = useMemo(() => {
+    if (!selectedPlanId || !workspace) return null
+    return workspace.plans.find((plan) => plan.id === selectedPlanId) ?? null
+  }, [workspace, selectedPlanId])
+
+  const rawPlanTemplates = getSetting(PLAN_TEMPLATES_SETTING_KEY)
+
+  useEffect(() => {
+    setPlanTemplates(normalizePlanTemplates(rawPlanTemplates))
+  }, [rawPlanTemplates])
+
+  useEffect(() => {
+    if (planSaveTimerRef.current) {
+      clearTimeout(planSaveTimerRef.current)
+      planSaveTimerRef.current = null
+    }
+    if (!selectedPlanId) {
+      setPlanHtmlState('<p></p>')
+      setPlanLoading(false)
+      return
+    }
+    let cancelled = false
+    setPlanLoading(true)
+    void getPlanHtml(selectedPlanId)
+      .then((html) => {
+        if (cancelled) return
+        setPlanHtmlState(html || '<p></p>')
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error(`${FLOW_TAG} failed to load plan html id=${selectedPlanId}:`, error)
+        setPlanHtmlState('<p></p>')
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setPlanLoading(false)
+        }
+      })
+    return (): void => {
+      cancelled = true
+    }
+  }, [selectedPlanId, getPlanHtml])
+
+  useEffect(() => {
+    return (): void => {
+      if (planSaveTimerRef.current) {
+        clearTimeout(planSaveTimerRef.current)
+      }
+    }
+  }, [])
+
+  const handlePlanHtmlChange = useCallback(
+    (nextHtml: string) => {
+      setPlanHtmlState(nextHtml)
+      if (!selectedPlanId) return
+      if (planSaveTimerRef.current) {
+        clearTimeout(planSaveTimerRef.current)
+      }
+      planSaveTimerRef.current = setTimeout(() => {
+        void setPlanHtml(selectedPlanId, nextHtml).catch((error) => {
+          console.error(`${FLOW_TAG} failed to persist plan html id=${selectedPlanId}:`, error)
+        })
+      }, 450)
+    },
+    [selectedPlanId, setPlanHtml]
+  )
+
+  const handleCreatePlanTemplate = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      const nextTemplates: PlanTemplate[] = [
+        ...planTemplates,
+        {
+          id: `template-${Date.now().toString(36)}`,
+          name: trimmed,
+          type: 'task',
+          defaultStatus: 'todo'
+        }
+      ]
+      setPlanTemplates(nextTemplates)
+      try {
+        await setSetting(PLAN_TEMPLATES_SETTING_KEY, nextTemplates)
+      } catch (error) {
+        console.error(`${FLOW_TAG} failed to save plan templates:`, error)
+      }
+    },
+    [planTemplates, setSetting]
+  )
+
   const setNodeRuntimeStatus = useCallback(
-    (nodeId: string, status: string, isRunning?: boolean): void => {
+    (nodeId: string, status: string, isRunning?: boolean, runtimeOutput?: string): void => {
       reactFlowInstance.setNodes((nds) =>
         nds.map((n) => {
           if (n.id !== nodeId) return n
@@ -208,6 +633,9 @@ function BrowserPageInner(): React.ReactElement {
           if (isRunning !== undefined) {
             nextData.isRunning = isRunning
           }
+          if (runtimeOutput !== undefined) {
+            nextData.runtimeOutput = runtimeOutput
+          }
           return { ...n, data: nextData }
         })
       )
@@ -215,7 +643,198 @@ function BrowserPageInner(): React.ReactElement {
     [reactFlowInstance]
   )
 
+  const hydratePastedTabPreview = useCallback(
+    async (tabNodeId: string, initialUrl?: string): Promise<void> => {
+      if (previewHydrationInFlightRef.current.has(tabNodeId)) return
+      previewHydrationInFlightRef.current.add(tabNodeId)
+      setPreviewingTabs((prev) => new Set(prev).add(tabNodeId))
+      setNodeRuntimeStatus(tabNodeId, 'Browser: preparing preview', true)
+
+      try {
+        let waitAttempts = 0
+        let webview = previewWebviews.current.get(tabNodeId)
+        if (!webview) {
+          await new Promise<void>((resolve, reject) => {
+            const maxAttempts = 120
+            const check = (): void => {
+              waitAttempts += 1
+              const candidate = previewWebviews.current.get(tabNodeId)
+              if (candidate) {
+                resolve()
+                return
+              }
+              if (waitAttempts >= maxAttempts) {
+                reject(new Error('Preview webview unavailable'))
+                return
+              }
+              setTimeout(check, 50)
+            }
+            setTimeout(check, 20)
+          })
+          webview = previewWebviews.current.get(tabNodeId)
+        }
+
+        if (!webview) {
+          throw new Error('Preview webview missing after wait')
+        }
+
+        const tab = tabs.find((item) => item.id === tabNodeId)
+        const sourceUrl = normalizePastedUrl(initialUrl ?? '') ?? normalizePastedUrl(tab?.url ?? '')
+        if (!sourceUrl) {
+          setNodeRuntimeStatus(tabNodeId, 'Browser: preview skipped (invalid URL)', false)
+          return
+        }
+
+        let faviconUrl: string | null = null
+        const onFaviconUpdated = ((event: Event): void => {
+          const eventData = event as unknown as { favicons?: string[] }
+          const first = eventData.favicons?.[0]
+          const normalized = normalizeIconUrl(first)
+          if (normalized) faviconUrl = normalized
+        }) as EventListener
+
+        webview.addEventListener('page-favicon-updated', onFaviconUpdated)
+        try {
+          setNodeRuntimeStatus(tabNodeId, `Browser: loading ${preview(sourceUrl, 60)}`, true)
+          await new Promise<void>((resolve) => {
+            let settled = false
+            const cleanup = (): void => {
+              webview.removeEventListener('did-stop-loading', onDidStopLoading)
+              webview.removeEventListener('did-fail-load', onDidFailLoad)
+              clearTimeout(timeout)
+            }
+            const finish = (): void => {
+              if (settled) return
+              settled = true
+              cleanup()
+              resolve()
+            }
+            const onDidStopLoading = (): void => finish()
+            const onDidFailLoad = (event: Event): void => {
+              const fail = event as unknown as { errorCode?: number; errorDescription?: string }
+              if (fail.errorCode === -3) return
+              console.warn(
+                `${BROWSER_PREVIEW_TAG} tab=${tabNodeId} did-fail-load code=${fail.errorCode ?? 'unknown'} error="${fail.errorDescription ?? 'unknown'}"`
+              )
+              finish()
+            }
+            const timeout = setTimeout(() => {
+              console.warn(
+                `${BROWSER_PREVIEW_TAG} tab=${tabNodeId} load timeout after ${PREVIEW_LOAD_TIMEOUT_MS}ms`
+              )
+              finish()
+            }, PREVIEW_LOAD_TIMEOUT_MS)
+
+            webview.addEventListener('did-stop-loading', onDidStopLoading)
+            webview.addEventListener('did-fail-load', onDidFailLoad)
+            webview.loadURL(sourceUrl).catch((error: Error) => {
+              if (error.message?.includes('ERR_ABORTED')) {
+                finish()
+                return
+              }
+              console.warn(`${BROWSER_PREVIEW_TAG} tab=${tabNodeId} loadURL error:`, error)
+              finish()
+            })
+          })
+
+          await new Promise((resolve) => setTimeout(resolve, 500))
+
+          const currentUrl = webview.getURL()
+          const finalUrl = normalizePastedUrl(currentUrl) ?? sourceUrl
+          let finalTitle = webview.getTitle().trim()
+          if (!finalTitle) {
+            try {
+              const domTitle = (await webview.executeJavaScript('document.title')) as string
+              finalTitle = domTitle?.trim() ?? ''
+            } catch {
+              finalTitle = ''
+            }
+          }
+
+          if (!faviconUrl) {
+            try {
+              const iconHref = (await webview.executeJavaScript(`
+                (() => {
+                  const selectors = [
+                    'link[rel="icon"]',
+                    'link[rel="shortcut icon"]',
+                    'link[rel*="icon"]'
+                  ]
+                  for (const selector of selectors) {
+                    const el = document.querySelector(selector)
+                    const href = el?.getAttribute('href')
+                    if (!href) continue
+                    try {
+                      return new URL(href, location.href).toString()
+                    } catch {
+                      continue
+                    }
+                  }
+                  return null
+                })()
+              `)) as string | null
+              faviconUrl = normalizeIconUrl(iconHref)
+            } catch {
+              faviconUrl = null
+            }
+          }
+
+          const screenshot = await window.api.browserTabs.captureScreenshot(webview.getWebContentsId())
+
+          const updates: Record<string, unknown> = {}
+          if (finalUrl) updates.url = finalUrl
+          if (finalTitle) updates.title = finalTitle
+          if (faviconUrl) updates.favicon = faviconUrl
+          if (screenshot) updates.screenshot = screenshot
+
+          if (Object.keys(updates).length > 0) {
+            await updateTab(tabNodeId, updates)
+            reactFlowInstance.setNodes((nds) =>
+              nds.map((n) =>
+                n.id === tabNodeId
+                  ? { ...n, data: { ...n.data, ...updates } }
+                  : n
+              )
+            )
+          }
+
+          const metadataKeys = Object.keys(updates).filter((k) => k !== 'screenshot')
+          const summary =
+            metadataKeys.length > 0
+              ? `Browser: preview ready (${metadataKeys.join(', ')})`
+              : 'Browser: preview ready'
+          setNodeRuntimeStatus(tabNodeId, summary, false)
+          console.log(
+            `${BROWSER_PREVIEW_TAG} tab=${tabNodeId} preview ready waitAttempts=${waitAttempts} keys=${Object.keys(updates).join(',') || 'none'} title="${preview(finalTitle, 70)}"`
+          )
+        } finally {
+          webview.removeEventListener('page-favicon-updated', onFaviconUpdated)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setNodeRuntimeStatus(tabNodeId, `Browser: preview failed (${preview(message, 55)})`, false)
+        console.warn(`${BROWSER_PREVIEW_TAG} tab=${tabNodeId} preview failed:`, error)
+      } finally {
+        previewHydrationInFlightRef.current.delete(tabNodeId)
+        setPreviewingTabs((prev) => {
+          const next = new Set(prev)
+          next.delete(tabNodeId)
+          return next
+        })
+      }
+    },
+    [reactFlowInstance, setNodeRuntimeStatus, tabs, updateTab]
+  )
+
   // ─── Browser tab agent execution ───────────────────────────────────────
+
+  const handleDialogWebviewStateChange = useCallback((tabId: string, webview: Electron.WebviewTag | null) => {
+    if (webview) {
+      dialogWebviews.current.set(tabId, webview)
+    } else {
+      dialogWebviews.current.delete(tabId)
+    }
+  }, [])
 
   const executeBrowserTab = useCallback(
     async (tabNodeId: string, inputData?: string, runId?: string): Promise<string | undefined> => {
@@ -229,19 +848,24 @@ function BrowserPageInner(): React.ReactElement {
 
       const startTs = Date.now()
       setNodeRuntimeStatus(tabNodeId, 'Browser: preparing webview', true)
-      // Mark tab as running
-      setRunningTabs((prev) => new Set(prev).add(tabNodeId))
+      const dialogWebview = dialogWebviews.current.get(tabNodeId)
+      const usingLiveDialogWebview = Boolean(dialogWebview)
+      if (!usingLiveDialogWebview) {
+        // Mark tab as running so the hidden execution webview mounts.
+        setRunningTabs((prev) => new Set(prev).add(tabNodeId))
+      }
       console.log(
-        `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} start url=${tab.url} inputLen=${inputData?.length ?? 0} inputPreview="${preview(inputData)}"`
+        `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} start url=${tab.url} inputLen=${inputData?.length ?? 0} inputPreview="${preview(inputData)}" source=${usingLiveDialogWebview ? 'dialog' : 'hidden'}`
       )
 
       try {
-        // Get or wait for the hidden webview
+        // Prefer the currently open dialog webview for this tab so execution uses
+        // the exact same in-memory page/session state the user sees.
         const webviewWaitStart = Date.now()
         let waitAttempts = 0
-        let webview = triggerWebviews.current.get(tabNodeId)
+        let webview = dialogWebview ?? triggerWebviews.current.get(tabNodeId)
 
-        if (!webview) {
+        if (!webview && !usingLiveDialogWebview) {
           // Wait for React to render the hidden webview
           setNodeRuntimeStatus(tabNodeId, 'Browser: waiting for hidden webview', true)
           await new Promise<void>((resolve) => {
@@ -260,7 +884,7 @@ function BrowserPageInner(): React.ReactElement {
           webview = triggerWebviews.current.get(tabNodeId)
         }
         console.log(
-          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webviewLookup waitMs=${Date.now() - webviewWaitStart} attempts=${waitAttempts}`
+          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webviewLookup waitMs=${Date.now() - webviewWaitStart} attempts=${waitAttempts} source=${usingLiveDialogWebview ? 'dialog' : 'hidden'}`
         )
 
         if (!webview) {
@@ -272,33 +896,134 @@ function BrowserPageInner(): React.ReactElement {
           console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} using webview userAgent attribute`)
         }
 
-        // Load the tab URL and wait for it
-        const loadStart = Date.now()
-        setNodeRuntimeStatus(tabNodeId, `Browser: loading ${preview(tab.url, 60)}`, true)
-        console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} loading url=${tab.url}`)
-        webview.loadURL(tab.url)
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(() => {
-            console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webview load timeout after 15000ms`)
-            resolve()
-          }, 15000)
+        // If we're attached to the live dialog webview, keep its current state.
+        // Hidden webviews still navigate to the persisted tab URL before execution.
+        const currentWebviewUrl = webview.getURL()
+        const shouldLoadTabUrl =
+          !usingLiveDialogWebview ||
+          !currentWebviewUrl ||
+          currentWebviewUrl === 'about:blank'
 
-          const handler = (): void => {
-            clearTimeout(timeout)
-            webview!.removeEventListener('did-stop-loading', handler)
-            resolve()
-          }
-          webview!.addEventListener('did-stop-loading', handler)
-        })
-        console.log(
-          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} load completed ms=${Date.now() - loadStart}`
-        )
+        if (shouldLoadTabUrl) {
+          const loadStart = Date.now()
+          setNodeRuntimeStatus(tabNodeId, `Browser: loading ${preview(tab.url, 60)}`, true)
+          console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} loading url=${tab.url}`)
+          webview.loadURL(tab.url)
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(() => {
+              console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webview load timeout after 15000ms`)
+              resolve()
+            }, 15000)
 
-        // Extra settle time
+            const handler = (): void => {
+              clearTimeout(timeout)
+              webview!.removeEventListener('did-stop-loading', handler)
+              resolve()
+            }
+            webview!.addEventListener('did-stop-loading', handler)
+          })
+          console.log(
+            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} load completed ms=${Date.now() - loadStart}`
+          )
+        } else {
+          setNodeRuntimeStatus(tabNodeId, 'Browser: using live dialog session', true)
+          console.log(
+            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} reusing dialog webview currentUrl=${currentWebviewUrl}`
+          )
+        }
+
+        // Inject a PerformanceObserver to track in-flight network requests, then
+        // poll until no new resources have started/completed for a quiet window.
         setNodeRuntimeStatus(tabNodeId, 'Browser: waiting for page settle', true)
-        await new Promise((r) => setTimeout(r, 1000))
+        const networkIdleStart = Date.now()
+        if (usingLiveDialogWebview) {
+          // Never monkeypatch fetch/XHR on the user's visible page.
+          await new Promise((r) => setTimeout(r, 700))
+        } else {
+          try {
+            await webview.executeJavaScript(`
+              (() => {
+                if (window.__hooNetIdle) return;
+                window.__hooNetIdle = { pending: 0, lastActivity: Date.now() };
+                const s = window.__hooNetIdle;
+                const ob = new PerformanceObserver((list) => {
+                  for (const e of list.getEntries()) {
+                    s.lastActivity = Date.now();
+                    if (e.entryType === 'resource') {
+                      if (e.responseEnd === 0) { s.pending++; }
+                      else if (s.pending > 0) { s.pending--; }
+                    }
+                  }
+                });
+                ob.observe({ entryTypes: ['resource'] });
+                const orig = window.XMLHttpRequest.prototype.open;
+                let inflight = 0;
+                window.XMLHttpRequest.prototype.open = function(...args) {
+                  inflight++;
+                  s.pending++;
+                  s.lastActivity = Date.now();
+                  this.addEventListener('loadend', () => {
+                    inflight = Math.max(0, inflight - 1);
+                    s.pending = Math.max(0, s.pending - 1);
+                    s.lastActivity = Date.now();
+                  }, { once: true });
+                  return orig.apply(this, args);
+                };
+                const origFetch = window.fetch;
+                window.fetch = function(...args) {
+                  s.pending++;
+                  s.lastActivity = Date.now();
+                  return origFetch.apply(this, args).then(
+                    (r) => { s.pending = Math.max(0, s.pending - 1); s.lastActivity = Date.now(); return r; },
+                    (e) => { s.pending = Math.max(0, s.pending - 1); s.lastActivity = Date.now(); throw e; }
+                  );
+                };
+              })();
+            `)
+
+            // Poll until pending === 0 and no activity for NETWORK_IDLE_WAIT_MS
+            await new Promise<void>((resolve) => {
+              const deadline = setTimeout(() => {
+                console.warn(
+                  `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} network idle timeout after ${NETWORK_IDLE_TIMEOUT_MS}ms`
+                )
+                clearInterval(poller)
+                resolve()
+              }, NETWORK_IDLE_TIMEOUT_MS)
+
+              const poller = setInterval(() => {
+                webview!
+                  .executeJavaScript(
+                    `JSON.stringify({ pending: window.__hooNetIdle?.pending ?? 0, lastActivity: window.__hooNetIdle?.lastActivity ?? 0 })`
+                  )
+                  .then((raw: string) => {
+                    const state = JSON.parse(raw) as { pending: number; lastActivity: number }
+                    const quietMs = Date.now() - state.lastActivity
+                    if (state.pending <= 0 && quietMs >= NETWORK_IDLE_WAIT_MS) {
+                      clearInterval(poller)
+                      clearTimeout(deadline)
+                      resolve()
+                    }
+                  })
+                  .catch(() => {
+                    // page navigated or crashed — stop waiting
+                    clearInterval(poller)
+                    clearTimeout(deadline)
+                    resolve()
+                  })
+              }, NETWORK_IDLE_POLL_MS)
+            })
+          } catch {
+            // executeJavaScript failed (e.g. page doesn't allow scripts) — fall back to fixed wait
+            await new Promise((r) => setTimeout(r, 1000))
+          }
+
+          // Extra settle delay for late-rendering JS (e.g. client-side hydration)
+          await new Promise((r) => setTimeout(r, 1000))
+        }
+
         console.log(
-          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} page settled url=${webview.getURL()} title="${preview(webview.getTitle(), 90)}"`
+          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} page settled ms=${Date.now() - networkIdleStart} url=${webview.getURL()} title="${preview(webview.getTitle(), 90)}"`
         )
 
         let agentSummary: string | undefined
@@ -370,7 +1095,58 @@ function BrowserPageInner(): React.ReactElement {
           console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} final state sync skipped:`, syncErr)
         }
 
-        // Extract full HTML and convert to markdown for downstream prompt nodes.
+        // Capture text-first context (more reliable for SPAs) plus HTML→markdown fallback.
+        const contextCaptureStart = Date.now()
+        setNodeRuntimeStatus(tabNodeId, 'Browser: extracting page snapshot', true)
+        let visibleText = ''
+        let interactiveElements = ''
+        try {
+          const selectorLiteral = JSON.stringify(INTERACTIVE_SELECTOR)
+          const contextCapture = (await webview.executeJavaScript(`
+            (() => {
+              const sel = ${selectorLiteral};
+              const isVisible = (el) => {
+                const r = el.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                return true;
+              };
+              const bodyText = (document.body && document.body.innerText) || (document.documentElement && document.documentElement.innerText) || '';
+              const text = bodyText.replace(/\\s+/g, ' ').trim().slice(0, 12000);
+              const elements = Array.from(document.querySelectorAll(sel))
+                .filter(isVisible)
+                .slice(0, 120)
+                .map((el, i) => {
+                  const tag = el.tagName.toLowerCase();
+                  const role = el.getAttribute('role') || '';
+                  const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+                  const ariaLabel = el.getAttribute('aria-label') || '';
+                  const title = el.getAttribute('title') || '';
+                  const placeholder = el.getAttribute('placeholder') || '';
+                  const href = el.getAttribute('href') || '';
+                  let desc = '[' + i + '] <' + tag + '>';
+                  if (role) desc += ' role=' + role;
+                  if (text) desc += ' text="' + text + '"';
+                  if (ariaLabel) desc += ' aria-label="' + ariaLabel + '"';
+                  if (title) desc += ' title="' + title + '"';
+                  if (placeholder) desc += ' placeholder="' + placeholder + '"';
+                  if (href) desc += ' href="' + href + '"';
+                  return desc;
+                })
+                .join('\\n');
+              return { text, elements };
+            })()
+          `)) as { text?: string; elements?: string }
+          visibleText = (contextCapture?.text ?? '').trim()
+          interactiveElements = (contextCapture?.elements ?? '').trim()
+          console.log(
+            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} context captured ms=${Date.now() - contextCaptureStart} textLen=${visibleText.length} elements=${interactiveElements ? interactiveElements.split('\n').filter(Boolean).length : 0}`
+          )
+        } catch (error) {
+          console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} context capture failed:`, error)
+        }
+
         const htmlCaptureStart = Date.now()
         setNodeRuntimeStatus(tabNodeId, 'Browser: extracting HTML snapshot', true)
         const htmlCapture = (await webview.executeJavaScript(`
@@ -405,13 +1181,24 @@ function BrowserPageInner(): React.ReactElement {
 
         const finalUrl = webview.getURL()
         const finalTitle = webview.getTitle()
-        const snapshot = [
+        const snapshotSections = [
           '[Web Content Snapshot]',
           `URL: ${finalUrl}`,
           `Title: ${finalTitle}`,
-          '',
-          markdown
-        ].join('\n')
+          ''
+        ]
+        if (interactiveElements) {
+          snapshotSections.push('[Interactive Elements]', interactiveElements, '')
+        }
+        if (visibleText) {
+          snapshotSections.push('[Visible Text]', visibleText, '')
+        }
+        if (markdown.trim()) {
+          snapshotSections.push('[DOM Markdown]', markdown)
+        } else if (!visibleText && !interactiveElements) {
+          snapshotSections.push('(No readable page content captured)')
+        }
+        const snapshot = snapshotSections.join('\n')
 
         const output =
           snapshot.length > MAX_OUTPUT_CHARS
@@ -426,7 +1213,7 @@ function BrowserPageInner(): React.ReactElement {
             `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} output truncated from ${snapshot.length} to ${MAX_OUTPUT_CHARS}`
           )
         }
-        setNodeRuntimeStatus(tabNodeId, `Browser complete (${output.length} chars)`, false)
+        setNodeRuntimeStatus(tabNodeId, `Browser complete (${output.length} chars)`, false, output)
         return output
       } catch (err) {
         setNodeRuntimeStatus(
@@ -440,11 +1227,13 @@ function BrowserPageInner(): React.ReactElement {
         console.log(
           `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} complete totalMs=${Date.now() - startTs}`
         )
-        setRunningTabs((prev) => {
-          const next = new Set(prev)
-          next.delete(tabNodeId)
-          return next
-        })
+        if (!usingLiveDialogWebview) {
+          setRunningTabs((prev) => {
+            const next = new Set(prev)
+            next.delete(tabNodeId)
+            return next
+          })
+        }
         reactFlowInstance.setNodes((nds) =>
           nds.map((n) => {
             if (n.id !== tabNodeId) return n
@@ -476,9 +1265,19 @@ function BrowserPageInner(): React.ReactElement {
         )
       }
 
-      executeFromTrigger(nodeId, currentEdges, currentNodes, updateNodeData, undefined, executeBrowserTab)
+      executeFromTrigger(
+        nodeId,
+        currentEdges,
+        currentNodes,
+        updateNodeData,
+        undefined,
+        executeBrowserTab,
+        undefined,
+        undefined,
+        activeBoardId ?? undefined
+      )
     },
-    [reactFlowInstance, executeBrowserTab]
+    [reactFlowInstance, executeBrowserTab, activeBoardId]
   )
 
   const runFromTriggerNode = useCallback(
@@ -490,9 +1289,19 @@ function BrowserPageInner(): React.ReactElement {
           nds.map((n) => (n.id === id ? { ...n, data: updater(n.data as Record<string, unknown>) } : n))
         )
       }
-      await executeFromTrigger(nodeId, currentEdges, currentNodes, updateNodeData, undefined, executeBrowserTab, undefined, runId)
+      await executeFromTrigger(
+        nodeId,
+        currentEdges,
+        currentNodes,
+        updateNodeData,
+        undefined,
+        executeBrowserTab,
+        undefined,
+        runId,
+        activeBoardId ?? undefined
+      )
     },
-    [reactFlowInstance, executeBrowserTab]
+    [reactFlowInstance, executeBrowserTab, activeBoardId]
   )
 
   const handleScheduleTrigger = useCallback(
@@ -594,7 +1403,7 @@ function BrowserPageInner(): React.ReactElement {
         )
       )
       void window.api.graphNodes
-        .update(nodeId, { config: serializedConfig })
+        .update(nodeId, { config: serializedConfig }, activeBoardId ?? undefined)
         .catch((error) => console.error(`${FLOW_TAG} failed to persist form trigger config node=${nodeId}:`, error))
 
       setNodeRuntimeStatus(nodeId, `Form submitted (${submissionOutput.length} chars)`, true)
@@ -627,7 +1436,8 @@ function BrowserPageInner(): React.ReactElement {
           submissionOutput,
           executeBrowserTab,
           undefined,
-          runId
+          runId,
+          activeBoardId ?? undefined
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -635,7 +1445,7 @@ function BrowserPageInner(): React.ReactElement {
         console.error(`${FLOW_TAG} form submit failed node=${nodeId} run=${runId}:`, error)
       }
     },
-    [reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus]
+    [reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus, activeBoardId]
   )
 
   const handleEditScheduleConfig = useCallback(
@@ -761,12 +1571,13 @@ function BrowserPageInner(): React.ReactElement {
           undefined,
           executeBrowserTab,
           preseededOutputs,
-          edgeRunId
+          edgeRunId,
+          activeBoardId ?? undefined
         )
         console.log(`${MONITOR_TAG} run=${monitorRunId} edge execution complete id=${edge.id} graphRun=${edgeRunId}`)
       }
     },
-    [tabs, updateTab, reactFlowInstance, executeBrowserTab]
+    [tabs, updateTab, reactFlowInstance, executeBrowserTab, activeBoardId]
   )
 
   // Called once when AI generates a rule for a monitor — persist it
@@ -980,7 +1791,7 @@ function BrowserPageInner(): React.ReactElement {
         favicon: tab.favicon,
         screenshot: tab.screenshot,
         monitors: parseMonitors(tab),
-        isRunning: runningTabs.has(tab.id),
+        isRunning: runningTabs.has(tab.id) || previewingTabs.has(tab.id),
         onClose: handleClose
       } satisfies BrowserTabNodeData
     }))
@@ -1089,6 +1900,15 @@ function BrowserPageInner(): React.ReactElement {
           }
         }
       }
+      if (gn.nodeType === 'terminal') {
+        return {
+          ...base,
+          data: {
+            label: gn.label || 'Terminal',
+            config
+          }
+        }
+      }
       return { ...base, data: { label: gn.label } }
     })
 
@@ -1106,7 +1926,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} duplicate node ids detected: ${Array.from(duplicateIds).join(', ')}`)
     }
     return mergedNodes
-  }, [tabs, gNodes, runningTabs, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
+  }, [tabs, gNodes, runningTabs, previewingTabs, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
@@ -1188,7 +2008,10 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      onNodesChange(changes)
+      // Filter out 'remove' changes — deletion is handled via context menu only
+      const filtered = changes.filter((c) => c.type !== 'remove')
+      if (filtered.length === 0) return
+      onNodesChange(filtered)
 
       const positionChanges = changes.filter(
         (c): c is NodePositionChange => c.type === 'position' && c.dragging === false && c.position !== undefined
@@ -1239,11 +2062,16 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
-      // Only open dialog for browser tabs (graph nodes handle their own double-click)
+      // Open dialog for browser tabs
       const tab = tabs.find((t) => t.id === node.id)
       if (tab) {
         setSelectedTab(tab)
         setDialogOpen(true)
+        return
+      }
+      // Open interactive terminal for terminal nodes
+      if (node.type === 'terminal') {
+        setTerminalDialogNodeId(node.id)
       }
     },
     [tabs]
@@ -1251,13 +2079,108 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleAddTab = useCallback(
     async (flowX?: number, flowY?: number) => {
+      if (!activeBoardId) return
       await createTab({
         flowX: flowX ?? 100 + Math.random() * 200,
         flowY: flowY ?? 100 + Math.random() * 200
       })
     },
-    [createTab]
+    [createTab, activeBoardId]
   )
+
+  const handleSidebarTabClick = useCallback(
+    (tabId: string, boardId: string) => {
+      if (boardId !== activeBoardId) {
+        setPendingSidebarTabOpen({ tabId, boardId })
+        void setActiveBoard(boardId)
+        return
+      }
+      const tab = tabs.find((t) => t.id === tabId)
+      if (!tab) return
+      setPendingSidebarTabOpen(null)
+      setSelectedTab(tab)
+      setDialogOpen(true)
+    },
+    [tabs, activeBoardId, setActiveBoard]
+  )
+
+  const handleSidebarTerminalClick = useCallback(
+    (nodeId: string, boardId: string) => {
+      if (boardId !== activeBoardId) {
+        setPendingSidebarTerminalOpen({ nodeId, boardId })
+        void setActiveBoard(boardId)
+        return
+      }
+      setPendingSidebarTerminalOpen(null)
+      setTerminalDialogNodeId(nodeId)
+    },
+    [activeBoardId, setActiveBoard]
+  )
+
+  useEffect(() => {
+    if (!pendingSidebarTabOpen) return
+    if (!activeBoardId || activeBoardId !== pendingSidebarTabOpen.boardId) return
+    const tab = tabs.find((entry) => entry.id === pendingSidebarTabOpen.tabId)
+    if (!tab) return
+    setSelectedTab(tab)
+    setDialogOpen(true)
+    setPendingSidebarTabOpen(null)
+  }, [pendingSidebarTabOpen, activeBoardId, tabs])
+
+  useEffect(() => {
+    if (!pendingSidebarTerminalOpen) return
+    if (!activeBoardId || activeBoardId !== pendingSidebarTerminalOpen.boardId) return
+    const node = gNodes.find((entry) => entry.id === pendingSidebarTerminalOpen.nodeId && entry.nodeType === 'terminal')
+    if (!node) return
+    setTerminalDialogNodeId(node.id)
+    setPendingSidebarTerminalOpen(null)
+  }, [pendingSidebarTerminalOpen, activeBoardId, gNodes])
+
+  const startInlineTerminalEdit = useCallback((nodeId: string, name: string) => {
+    setEditingFolderId(null)
+    setEditingFolderName('')
+    setEditingBoardId(null)
+    setEditingBoardName('')
+    setEditingPlanId(null)
+    setEditingPlanName('')
+    setEditingTerminalId(nodeId)
+    setEditingTerminalName(name)
+  }, [])
+
+  const cancelInlineTerminalEdit = useCallback(() => {
+    setEditingTerminalId(null)
+    setEditingTerminalName('')
+  }, [])
+
+  const saveInlineTerminalEdit = useCallback(async () => {
+    if (!editingTerminalId) return
+    const nodeId = editingTerminalId
+    const nextName = editingTerminalName.trim()
+    setEditingTerminalId(null)
+    setEditingTerminalName('')
+    // Find which board owns this terminal
+    let ownerBoardId: string | null = null
+    for (const [boardId, terminals] of boardTerminalsMap) {
+      if (terminals.some((tn) => tn.id === nodeId)) {
+        ownerBoardId = boardId
+        break
+      }
+    }
+    const allTerminals = Array.from(boardTerminalsMap.values()).flat()
+    const currentName = allTerminals.find((tn) => tn.id === nodeId)?.label ?? ''
+    if (nextName.length === 0 || nextName === currentName || !ownerBoardId) return
+    try {
+      if (ownerBoardId === activeBoardId) {
+        await updateNode(nodeId, { label: nextName })
+      } else {
+        await window.api.graphNodes.update(nodeId, { label: nextName }, ownerBoardId)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename terminal node id=${nodeId}:`, error)
+      window.alert(`Failed to rename terminal: ${message}`)
+    }
+  }, [editingTerminalId, editingTerminalName, boardTerminalsMap, updateNode, activeBoardId])
 
   useEffect(() => {
     const onAddTab = (): void => {
@@ -1275,19 +2198,7 @@ function BrowserPageInner(): React.ReactElement {
       if (event.metaKey || event.ctrlKey || event.altKey) return
       if (event.repeat) return
 
-      const target = event.target as HTMLElement | null
-      if (target) {
-        const tag = target.tagName.toLowerCase()
-        if (
-          tag === 'input' ||
-          tag === 'textarea' ||
-          tag === 'select' ||
-          target.isContentEditable ||
-          target.closest('[contenteditable="true"], [role="textbox"]')
-        ) {
-          return
-        }
-      }
+      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) return
 
       const currentNodes = reactFlowInstance.getNodes()
       if (currentNodes.length === 0) return
@@ -1315,6 +2226,49 @@ function BrowserPageInner(): React.ReactElement {
     }
   }, [reactFlowInstance])
 
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent): void => {
+      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) return
+      const pastedText = event.clipboardData?.getData('text/plain') ?? event.clipboardData?.getData('text') ?? ''
+      const normalizedUrl = normalizePastedUrl(pastedText)
+      if (!normalizedUrl) return
+
+      const flowRect = flowContainerRef.current?.getBoundingClientRect()
+      let clientPosition = lastMouseClientPositionRef.current
+      if (!clientPosition && flowRect) {
+        clientPosition = {
+          x: flowRect.left + flowRect.width / 2,
+          y: flowRect.top + flowRect.height / 2
+        }
+      }
+      if (!clientPosition) return
+
+      if (flowRect) {
+        clientPosition = {
+          x: Math.min(Math.max(clientPosition.x, flowRect.left), flowRect.right),
+          y: Math.min(Math.max(clientPosition.y, flowRect.top), flowRect.bottom)
+        }
+      }
+
+      const flowPosition = reactFlowInstance.screenToFlowPosition(clientPosition)
+      event.preventDefault()
+      void createTab({
+        url: normalizedUrl,
+        flowX: flowPosition.x,
+        flowY: flowPosition.y
+      })
+        .then((createdTab) => hydratePastedTabPreview(createdTab.id, normalizedUrl))
+        .catch((error) => {
+          console.error(`${FLOW_TAG} failed to create tab from paste:`, error)
+        })
+    }
+
+    window.addEventListener('paste', onPaste)
+    return (): void => {
+      window.removeEventListener('paste', onPaste)
+    }
+  }, [createTab, hydratePastedTabPreview, reactFlowInstance])
+
   const handleDialogClose = useCallback(
     (open: boolean) => {
       setDialogOpen(open)
@@ -1325,6 +2279,17 @@ function BrowserPageInner(): React.ReactElement {
     },
     [tabs, selectedTab]
   )
+
+  useEffect(() => {
+    if (!selectedTab) return
+    const updated = tabs.find((tab) => tab.id === selectedTab.id)
+    if (!updated) {
+      setSelectedTab(null)
+      setDialogOpen(false)
+      return
+    }
+    setSelectedTab(updated)
+  }, [tabs, selectedTab])
 
   // ─── Context Menus ──────────────────────────────────────────────────────────
 
@@ -1495,13 +2460,91 @@ function BrowserPageInner(): React.ReactElement {
       undefined,
       executeBrowserTab,
       undefined,
-      runId
+      runId,
+      activeBoardId ?? undefined
     ).catch((error) => {
       const message = error instanceof Error ? error.message : String(error)
       setNodeRuntimeStatus(nodeId, `Manual run failed: ${preview(message, 60)}`, false)
       console.error(`${FLOW_TAG} context execute failed node=${nodeId} run=${runId}:`, error)
     })
-  }, [contextMenu, reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus])
+  }, [contextMenu, reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus, activeBoardId])
+
+  const handleContextRenameNode = useCallback(async () => {
+    const nodeId = contextMenu?.nodeId
+    if (!nodeId) {
+      setContextMenu(null)
+      return
+    }
+
+    const isGraph = nodeId.startsWith('gn-')
+    if (isGraph) {
+      const node = gNodes.find((item) => item.id === nodeId)
+      if (!node) {
+        setContextMenu(null)
+        return
+      }
+      const fallbackName = (
+        {
+          trigger: 'Run',
+          scheduleTrigger: 'Schedule',
+          formTrigger: 'Form Trigger',
+          debug: 'Debug',
+          notification: 'Notify',
+          delay: 'Delay',
+          aiPrompt: 'AI Prompt',
+          text: 'Instructions',
+          output: 'Output',
+          file: 'File',
+          terminal: 'Terminal'
+        } as const
+      )[node.nodeType] ?? 'Node'
+      const currentName = node.label?.trim() || fallbackName
+      const nextName = window.prompt('Rename node', currentName)
+      if (nextName === null) {
+        setContextMenu(null)
+        return
+      }
+      const trimmed = nextName.trim()
+      if (!trimmed || trimmed === currentName) {
+        setContextMenu(null)
+        return
+      }
+      try {
+        await updateNode(nodeId, { label: trimmed })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to rename graph node id=${nodeId}:`, error)
+        window.alert(`Failed to rename node: ${message}`)
+      }
+      setContextMenu(null)
+      return
+    }
+
+    const tab = tabs.find((item) => item.id === nodeId)
+    if (!tab) {
+      setContextMenu(null)
+      return
+    }
+    const currentTitle = tab.title?.trim() || 'New Tab'
+    const nextTitle = window.prompt('Rename tab', currentTitle)
+    if (nextTitle === null) {
+      setContextMenu(null)
+      return
+    }
+    const trimmedTitle = nextTitle.trim()
+    if (!trimmedTitle || trimmedTitle === currentTitle) {
+      setContextMenu(null)
+      return
+    }
+    try {
+      await updateTab(nodeId, { title: trimmedTitle })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename tab id=${nodeId}:`, error)
+      window.alert(`Failed to rename tab: ${message}`)
+    }
+    setContextMenu(null)
+  }, [contextMenu, gNodes, tabs, updateNode, updateTab])
 
   const handleContextDeleteNode = useCallback(async () => {
     if (!contextMenu?.nodeId) {
@@ -1509,6 +2552,14 @@ function BrowserPageInner(): React.ReactElement {
       return
     }
     if (contextMenu.nodeId.startsWith('gn-')) {
+      // Kill orphaned PTY if this is a terminal node
+      const gn = gNodes.find((n) => n.id === contextMenu.nodeId)
+      if (gn?.nodeType === 'terminal') {
+        window.api.terminal.kill(`pty-${contextMenu.nodeId}`).catch(() => {})
+        if (terminalDialogNodeId === contextMenu.nodeId) {
+          setTerminalDialogNodeId(null)
+        }
+      }
       await deleteNode(contextMenu.nodeId)
       // Also remove edges connected to this node
       const currentEdges = reactFlowInstance.getEdges()
@@ -1521,7 +2572,7 @@ function BrowserPageInner(): React.ReactElement {
       await deleteTab(contextMenu.nodeId)
     }
     setContextMenu(null)
-  }, [contextMenu, deleteTab, deleteNode, reactFlowInstance, setEdges, saveEdges])
+  }, [contextMenu, deleteTab, deleteNode, reactFlowInstance, setEdges, saveEdges, gNodes, terminalDialogNodeId])
 
   // ─── Monitor Dialog ─────────────────────────────────────────────────────────
 
@@ -1558,50 +2609,806 @@ function BrowserPageInner(): React.ReactElement {
 
   const isBrowserTabNode = contextMenu?.type === 'node' && !contextMenu.nodeId?.startsWith('gn-')
   const isGraphNode = contextMenu?.type === 'node' && contextMenu.nodeId?.startsWith('gn-')
+  const handleFlowContainerMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    lastMouseClientPositionRef.current = { x: event.clientX, y: event.clientY }
+  }, [])
+
+  const ungroupedBoards = workspace ? boardsByFolderId.get('__ungrouped__') ?? [] : []
+  const ungroupedPlans = workspace ? plansByFolderId.get('__ungrouped__') ?? [] : []
+
+  const toggleFolderExpanded = useCallback((folderId: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(folderId)) {
+        next.delete(folderId)
+      } else {
+        next.add(folderId)
+      }
+      return next
+    })
+  }, [])
+
+  const handleCreateFolder = useCallback(async () => {
+    try {
+      await createFolder()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to create folder:`, error)
+      window.alert(`Failed to create folder: ${message}`)
+    }
+  }, [createFolder])
+
+  const startInlineFolderEdit = useCallback((folderId: string, name: string) => {
+    setEditingBoardId(null)
+    setEditingBoardName('')
+    setEditingPlanId(null)
+    setEditingPlanName('')
+    setEditingFolderId(folderId)
+    setEditingFolderName(name)
+  }, [])
+
+  const cancelInlineFolderEdit = useCallback(() => {
+    setEditingFolderId(null)
+    setEditingFolderName('')
+  }, [])
+
+  const saveInlineFolderEdit = useCallback(async () => {
+    if (!editingFolderId) return
+    const folderId = editingFolderId
+    const nextName = editingFolderName.trim()
+    const currentName = workspace?.folders.find((folder) => folder.id === folderId)?.name ?? ''
+    setEditingFolderId(null)
+    setEditingFolderName('')
+    if (nextName.length === 0 || nextName === currentName) return
+    try {
+      await renameFolder(folderId, nextName)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename folder id=${folderId}:`, error)
+      window.alert(`Failed to rename folder: ${message}`)
+    }
+  }, [editingFolderId, editingFolderName, workspace, renameFolder])
+
+  const handleDeleteFolder = useCallback(
+    async (folderId: string, folderName: string) => {
+      const confirmed = window.confirm(
+        `Delete folder "${folderName}"? Boards and plans in this folder will be moved to Ungrouped.`
+      )
+      if (!confirmed) return
+      await deleteFolder(folderId)
+    },
+    [deleteFolder]
+  )
+
+  const handleCreateBoard = useCallback(
+    async (folderId?: string | null) => {
+      try {
+        await createBoard({ folderId: folderId ?? null })
+        setSelectedPlanId(null)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to create board:`, error)
+        window.alert(`Failed to create board: ${message}`)
+      }
+    },
+    [createBoard]
+  )
+
+  const startInlineBoardEdit = useCallback((boardId: string, name: string) => {
+    setEditingFolderId(null)
+    setEditingFolderName('')
+    setEditingPlanId(null)
+    setEditingPlanName('')
+    setEditingBoardId(boardId)
+    setEditingBoardName(name)
+  }, [])
+
+  const cancelInlineBoardEdit = useCallback(() => {
+    setEditingBoardId(null)
+    setEditingBoardName('')
+  }, [])
+
+  const saveInlineBoardEdit = useCallback(async () => {
+    if (!editingBoardId) return
+    const boardId = editingBoardId
+    const nextName = editingBoardName.trim()
+    const currentName = workspace?.boards.find((board) => board.id === boardId)?.name ?? ''
+    setEditingBoardId(null)
+    setEditingBoardName('')
+    if (nextName.length === 0 || nextName === currentName) return
+    try {
+      await renameBoard(boardId, nextName)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename board id=${boardId}:`, error)
+      window.alert(`Failed to rename board: ${message}`)
+    }
+  }, [editingBoardId, editingBoardName, workspace, renameBoard])
+
+  const handleDeleteBoard = useCallback(
+    async (boardId: string, boardName: string) => {
+      const confirmed = window.confirm(`Delete board "${boardName}"?`)
+      if (!confirmed) return
+      await deleteBoard(boardId)
+    },
+    [deleteBoard]
+  )
+
+  const handleCreatePlan = useCallback(
+    async (folderId?: string | null) => {
+      try {
+        await createPlan({ folderId: folderId ?? null })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to create plan:`, error)
+        window.alert(`Failed to create plan: ${message}`)
+      }
+    },
+    [createPlan]
+  )
+
+  const startInlinePlanEdit = useCallback((planId: string, name: string) => {
+    setEditingFolderId(null)
+    setEditingFolderName('')
+    setEditingBoardId(null)
+    setEditingBoardName('')
+    setEditingPlanId(planId)
+    setEditingPlanName(name)
+  }, [])
+
+  const cancelInlinePlanEdit = useCallback(() => {
+    setEditingPlanId(null)
+    setEditingPlanName('')
+  }, [])
+
+  const saveInlinePlanEdit = useCallback(async () => {
+    if (!editingPlanId) return
+    const planId = editingPlanId
+    const nextName = editingPlanName.trim()
+    const currentName = workspace?.plans.find((plan) => plan.id === planId)?.name ?? ''
+    setEditingPlanId(null)
+    setEditingPlanName('')
+    if (nextName.length === 0 || nextName === currentName) return
+    try {
+      await renamePlan(planId, nextName)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename plan id=${planId}:`, error)
+      window.alert(`Failed to rename plan: ${message}`)
+    }
+  }, [editingPlanId, editingPlanName, workspace, renamePlan])
+
+  const handleDeletePlan = useCallback(
+    async (planId: string, planName: string) => {
+      const confirmed = window.confirm(`Delete plan "${planName}"?`)
+      if (!confirmed) return
+      await deletePlan(planId)
+      if (selectedPlanId === planId) {
+        setSelectedPlanId(null)
+      }
+    },
+    [deletePlan, selectedPlanId]
+  )
+
+  const handleSelectBoard = useCallback(
+    async (boardId: string) => {
+      setSelectedPlanId(null)
+      await setActiveBoard(boardId)
+    },
+    [setActiveBoard]
+  )
 
   return (
-    <div className="flex h-full flex-col" onClick={closeContextMenu}>
-      {/* Canvas */}
-      <div className="flex-1">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={handleNodesChange}
-          onEdgesChange={handleEdgesChange}
-          onConnect={handleConnect}
-          onReconnect={handleReconnect}
-          onNodeDoubleClick={handleNodeDoubleClick}
-          onPaneContextMenu={handlePaneContextMenu}
-          onNodeContextMenu={handleNodeContextMenu}
-          fitView
-          fitViewOptions={{ padding: 0.5 }}
-          minZoom={0.3}
-          maxZoom={2}
-          nodesDraggable={!isMapMode}
-          nodesConnectable={!isMapMode}
-          elementsSelectable={!isMapMode}
-          selectionOnDrag={!isMapMode}
-          selectionMode={isMapMode ? SelectionMode.Full : SelectionMode.Partial}
-          panOnDrag={isMapMode ? [0, 1] : [1]}
-          panOnScroll={!isMapMode}
-          panOnScrollMode={PanOnScrollMode.Free}
-          zoomOnScroll={isMapMode}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background />
-          <Panel position="bottom-center">
-            <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border">
-              {isMapMode
-                ? 'Map mode: drag to pan and scroll to zoom'
-                : 'Design mode: scroll to pan · drag-select supports partial overlap'}
-            </p>
-          </Panel>
-        </ReactFlow>
+    <div className="flex h-full min-h-0" onClick={closeContextMenu}>
+      <aside className="w-80 shrink-0 border-r bg-muted/20">
+        <div className="flex h-full min-h-0 flex-col">
+          <div className="space-y-3 border-b px-3 py-3">
+            <div>
+              <h2 className="text-sm font-semibold">Workspace</h2>
+              <p className="text-[11px] text-muted-foreground truncate" title={workspace?.rootDir}>
+                {workspace?.rootDir ?? 'Loading workspace...'}
+              </p>
+            </div>
+            <div className="flex gap-1.5">
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 text-xs"
+                onClick={() => void handleCreateFolder()}
+              >
+                <Folder className="h-3.5 w-3.5" />
+                Folder
+              </Button>
+              <Button
+                size="sm"
+                className="h-7 gap-1.5 text-xs"
+                onClick={() => void handleCreateBoard(null)}
+              >
+                <Workflow className="h-3.5 w-3.5" />
+                Board
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 gap-1.5 text-xs"
+                onClick={() => void handleCreatePlan(null)}
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Plan
+              </Button>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto p-2">
+            <div className="space-y-2">
+              {workspace?.folders.map((folder) => {
+                const folderBoards = boardsByFolderId.get(folder.id) ?? []
+                const folderPlans = plansByFolderId.get(folder.id) ?? []
+                const expanded = expandedFolders.has(folder.id)
+                return (
+                  <section key={folder.id} className="rounded-md border bg-background">
+                    <div className="flex items-center gap-1 px-2 py-1.5">
+                      <button
+                        type="button"
+                        className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        onClick={() => toggleFolderExpanded(folder.id)}
+                      >
+                        {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+                      </button>
+                      {editingFolderId === folder.id ? (
+                        <Input
+                          value={editingFolderName}
+                          onChange={(event) => setEditingFolderName(event.target.value)}
+                          onBlur={() => void saveInlineFolderEdit()}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.currentTarget.blur()
+                              return
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              cancelInlineFolderEdit()
+                            }
+                          }}
+                          className="h-7 flex-1 text-xs"
+                          autoFocus
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                          onClick={() => toggleFolderExpanded(folder.id)}
+                          onDoubleClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            startInlineFolderEdit(folder.id, folder.name)
+                          }}
+                        >
+                          <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="truncate text-xs font-medium">{folder.name}</span>
+                          <span className="text-[10px] text-muted-foreground">{folderBoards.length + folderPlans.length}</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        onClick={() => void handleCreateBoard(folder.id)}
+                        title="New board in folder"
+                      >
+                        <Workflow className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        onClick={() => void handleCreatePlan(folder.id)}
+                        title="New plan in folder"
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        onClick={() => void handleDeleteFolder(folder.id, folder.name)}
+                        title="Delete folder"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {expanded && (
+                      <div className="space-y-1 border-t p-1.5">
+                        {folderBoards.length === 0 && folderPlans.length === 0 ? (
+                          <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
+                        ) : (
+                          <>
+                            {folderBoards.map((board) => {
+                              const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
+                              const collapsed = collapsedBoards.has(board.id)
+                              return (
+                              <div
+                                key={board.id}
+                                className={[
+                                  'rounded-md border px-2 py-1.5',
+                                  !selectedPlanId && board.id === activeBoardId
+                                    ? 'border-primary/50 bg-primary/10'
+                                    : 'border-transparent hover:bg-accent/50'
+                                ].join(' ')}
+                              >
+                                <div className="flex items-center gap-1">
+                                  {editingBoardId === board.id ? (
+                                    <Input
+                                      value={editingBoardName}
+                                      onChange={(event) => setEditingBoardName(event.target.value)}
+                                      onBlur={() => void saveInlineBoardEdit()}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter') {
+                                          event.currentTarget.blur()
+                                          return
+                                        }
+                                        if (event.key === 'Escape') {
+                                          event.preventDefault()
+                                          cancelInlineBoardEdit()
+                                        }
+                                      }}
+                                      className="h-7 flex-1 text-xs"
+                                      autoFocus
+                                    />
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="group/board flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
+                                      onClick={() => void handleSelectBoard(board.id)}
+                                      onDoubleClick={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        startInlineBoardEdit(board.id, board.name)
+                                      }}
+                                    >
+                                      <span
+                                        className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                        onClick={(event) => {
+                                          event.preventDefault()
+                                          event.stopPropagation()
+                                          toggleBoardCollapsed(board.id)
+                                        }}
+                                      >
+                                        <Workflow className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" />
+                                        {collapsed ? (
+                                          <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                        ) : (
+                                          <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                        )}
+                                      </span>
+                                      <span className="truncate">{board.name}</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                    onClick={() => void handleDeleteBoard(board.id, board.name)}
+                                    title="Delete board"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </div>
+                                {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
+                                  <div className="ml-5 mt-1 space-y-0.5">
+                                    {bTabs.map((tab) => (
+                                      <button
+                                        key={tab.id}
+                                        type="button"
+                                        onClick={() => handleSidebarTabClick(tab.id, board.id)}
+                                        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                                      >
+                                        {tab.favicon ? (
+                                          <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
+                                        ) : (
+                                          <Globe className="h-3.5 w-3.5" />
+                                        )}
+                                        <span className="truncate">{tab.title || tab.url || 'New Tab'}</span>
+                                      </button>
+                                    ))}
+                                    {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
+                                      <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground">
+                                        <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                                        {editingTerminalId === tn.id ? (
+                                          <Input
+                                            value={editingTerminalName}
+                                            onChange={(event) => setEditingTerminalName(event.target.value)}
+                                            onBlur={() => void saveInlineTerminalEdit()}
+                                            onKeyDown={(event) => {
+                                              if (event.key === 'Enter') {
+                                                event.currentTarget.blur()
+                                                return
+                                              }
+                                              if (event.key === 'Escape') {
+                                                event.preventDefault()
+                                                cancelInlineTerminalEdit()
+                                              }
+                                            }}
+                                            className="h-5 flex-1 text-xs px-1 py-0"
+                                            autoFocus
+                                          />
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            className="min-w-0 flex-1 truncate text-left"
+                                            onClick={() => handleSidebarTerminalClick(tn.id, board.id)}
+                                            onDoubleClick={(event) => {
+                                              event.preventDefault()
+                                              event.stopPropagation()
+                                              startInlineTerminalEdit(tn.id, tn.label || 'Terminal')
+                                            }}
+                                          >
+                                            {tn.label || 'Terminal'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              )
+                            })}
+                            {folderPlans.map((plan) => (
+                              <div
+                                key={plan.id}
+                                className={[
+                                  'rounded-md border px-2 py-1.5',
+                                  selectedPlanId === plan.id
+                                    ? 'border-primary/50 bg-primary/10'
+                                    : 'border-transparent hover:bg-accent/50'
+                                ].join(' ')}
+                              >
+                                <div className="flex items-center gap-1">
+                                  {editingPlanId === plan.id ? (
+                                    <Input
+                                      value={editingPlanName}
+                                      onChange={(event) => setEditingPlanName(event.target.value)}
+                                      onBlur={() => void saveInlinePlanEdit()}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter') {
+                                          event.currentTarget.blur()
+                                          return
+                                        }
+                                        if (event.key === 'Escape') {
+                                          event.preventDefault()
+                                          cancelInlinePlanEdit()
+                                        }
+                                      }}
+                                      className="h-7 flex-1 text-xs"
+                                      autoFocus
+                                    />
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
+                                      onClick={() => setSelectedPlanId(plan.id)}
+                                      onDoubleClick={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        startInlinePlanEdit(plan.id, plan.name)
+                                      }}
+                                    >
+                                      <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                                      <span className="truncate">{plan.name}</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                    onClick={() => void handleDeletePlan(plan.id, plan.name)}
+                                    title="Delete plan"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              </div>
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )
+              })}
+
+              <section className="rounded-md border bg-background">
+                <div className="flex items-center gap-1 px-2 py-1.5">
+                  <Folder className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="flex-1 text-xs font-medium">Ungrouped</span>
+                  <span className="text-[10px] text-muted-foreground">{ungroupedBoards.length + ungroupedPlans.length}</span>
+                  <button
+                    type="button"
+                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={() => void handleCreateBoard(null)}
+                    title="New ungrouped board"
+                  >
+                    <Workflow className="h-3.5 w-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={() => void handleCreatePlan(null)}
+                    title="New ungrouped plan"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+                <div className="space-y-1 border-t p-1.5">
+                  {ungroupedBoards.length === 0 && ungroupedPlans.length === 0 ? (
+                    <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
+                  ) : (
+                    <>
+                      {ungroupedBoards.map((board) => {
+                        const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
+                        const collapsed = collapsedBoards.has(board.id)
+                        return (
+                        <div
+                          key={board.id}
+                          className={[
+                            'rounded-md border px-2 py-1.5',
+                            !selectedPlanId && board.id === activeBoardId
+                              ? 'border-primary/50 bg-primary/10'
+                              : 'border-transparent hover:bg-accent/50'
+                          ].join(' ')}
+                        >
+                          <div className="flex items-center gap-1">
+                            {editingBoardId === board.id ? (
+                              <Input
+                                value={editingBoardName}
+                                onChange={(event) => setEditingBoardName(event.target.value)}
+                                onBlur={() => void saveInlineBoardEdit()}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    event.currentTarget.blur()
+                                    return
+                                  }
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault()
+                                    cancelInlineBoardEdit()
+                                  }
+                                }}
+                                className="h-7 flex-1 text-xs"
+                                autoFocus
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="group/board flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
+                                onClick={() => void handleSelectBoard(board.id)}
+                                onDoubleClick={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  startInlineBoardEdit(board.id, board.name)
+                                }}
+                              >
+                                <span
+                                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                  onClick={(event) => {
+                                    event.preventDefault()
+                                    event.stopPropagation()
+                                    toggleBoardCollapsed(board.id)
+                                  }}
+                                >
+                                  <Workflow className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" />
+                                  {collapsed ? (
+                                    <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                  ) : (
+                                    <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                  )}
+                                </span>
+                                <span className="truncate">{board.name}</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => void handleDeleteBoard(board.id, board.name)}
+                              title="Delete board"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                          {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
+                            <div className="ml-5 mt-1 space-y-0.5">
+                              {bTabs.map((tab) => (
+                                <button
+                                  key={tab.id}
+                                  type="button"
+                                  onClick={() => handleSidebarTabClick(tab.id, board.id)}
+                                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                                >
+                                  {tab.favicon ? (
+                                    <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
+                                  ) : (
+                                    <Globe className="h-3.5 w-3.5" />
+                                  )}
+                                  <span className="truncate">{tab.title || tab.url || 'New Tab'}</span>
+                                </button>
+                              ))}
+                              {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
+                                <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground">
+                                  <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                                  {editingTerminalId === tn.id ? (
+                                    <Input
+                                      value={editingTerminalName}
+                                      onChange={(event) => setEditingTerminalName(event.target.value)}
+                                      onBlur={() => void saveInlineTerminalEdit()}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter') {
+                                          event.currentTarget.blur()
+                                          return
+                                        }
+                                        if (event.key === 'Escape') {
+                                          event.preventDefault()
+                                          cancelInlineTerminalEdit()
+                                        }
+                                      }}
+                                      className="h-5 flex-1 text-xs px-1 py-0"
+                                      autoFocus
+                                    />
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="min-w-0 flex-1 truncate text-left"
+                                      onClick={() => handleSidebarTerminalClick(tn.id, board.id)}
+                                      onDoubleClick={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        startInlineTerminalEdit(tn.id, tn.label || 'Terminal')
+                                      }}
+                                    >
+                                      {tn.label || 'Terminal'}
+                                    </button>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        )
+                      })}
+                      {ungroupedPlans.map((plan) => (
+                        <div
+                          key={plan.id}
+                          className={[
+                            'rounded-md border px-2 py-1.5',
+                            selectedPlanId === plan.id
+                              ? 'border-primary/50 bg-primary/10'
+                              : 'border-transparent hover:bg-accent/50'
+                          ].join(' ')}
+                        >
+                          <div className="flex items-center gap-1">
+                            {editingPlanId === plan.id ? (
+                              <Input
+                                value={editingPlanName}
+                                onChange={(event) => setEditingPlanName(event.target.value)}
+                                onBlur={() => void saveInlinePlanEdit()}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    event.currentTarget.blur()
+                                    return
+                                  }
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault()
+                                    cancelInlinePlanEdit()
+                                  }
+                                }}
+                                className="h-7 flex-1 text-xs"
+                                autoFocus
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
+                                onClick={() => setSelectedPlanId(plan.id)}
+                                onDoubleClick={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  startInlinePlanEdit(plan.id, plan.name)
+                                }}
+                              >
+                                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+                                <span className="truncate">{plan.name}</span>
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              onClick={() => void handleDeletePlan(plan.id, plan.name)}
+                              title="Delete plan"
+                            >
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              </section>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div className="flex min-h-0 flex-1 flex-col">
+        {selectedPlan ? (
+          <div className="min-h-0 flex-1 flex flex-col">
+            {/* Notion-style plan header */}
+            <div className="mx-auto w-full max-w-[720px] px-6 pt-8 pb-1">
+              <p className="text-3xl font-bold tracking-tight">{selectedPlan.name}</p>
+            </div>
+            {planLoading ? (
+              <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Loading plan...</div>
+            ) : (
+              <PlanErrorBoundary>
+                <PlanEditor
+                  value={planHtml}
+                  templates={planTemplates}
+                  onChange={handlePlanHtmlChange}
+                  onCreateTemplate={handleCreatePlanTemplate}
+                />
+              </PlanErrorBoundary>
+            )}
+          </div>
+        ) : (
+          <>
+          <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-medium">{activeBoard?.name ?? 'No item selected'}</p>
+              <p className="text-[11px] text-muted-foreground">
+                {workspaceLoading
+                  ? 'Loading workspace...'
+                  : activeBoardId
+                    ? 'Active board'
+                    : 'Create a board to begin'}
+              </p>
+            </div>
+          </div>
+          <div ref={flowContainerRef} className="flex-1" onMouseMove={handleFlowContainerMouseMove}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={handleNodesChange}
+              onEdgesChange={handleEdgesChange}
+              onConnect={handleConnect}
+              onReconnect={handleReconnect}
+              onNodeDoubleClick={handleNodeDoubleClick}
+              onPaneContextMenu={handlePaneContextMenu}
+              onNodeContextMenu={handleNodeContextMenu}
+              fitView
+              fitViewOptions={{ padding: 0.5 }}
+              minZoom={0.3}
+              maxZoom={2}
+              nodesDraggable={!isMapMode}
+              nodesConnectable={!isMapMode}
+              elementsSelectable={!isMapMode}
+              selectionOnDrag={!isMapMode}
+              selectionMode={isMapMode ? SelectionMode.Full : SelectionMode.Partial}
+              panOnDrag={isMapMode ? [0, 1] : [1]}
+              panOnScroll={!isMapMode}
+              panOnScrollMode={PanOnScrollMode.Free}
+              zoomOnScroll={isMapMode}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background />
+              <Panel position="bottom-center">
+                <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border">
+                  {isMapMode
+                    ? 'Map mode: drag to pan and scroll to zoom'
+                    : 'Design mode: scroll to pan · drag-select supports partial overlap'}
+                </p>
+              </Panel>
+            </ReactFlow>
+          </div>
+          </>
+        )}
       </div>
 
       {/* Context Menu */}
-      {contextMenu && (
+      {contextMenu && !selectedPlan && (
         <div
           ref={contextMenuRef}
           className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[180px] overflow-y-auto rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
@@ -1693,6 +3500,13 @@ function BrowserPageInner(): React.ReactElement {
                 <NotebookPen className="h-4 w-4" />
                 Add Instructions
               </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => handleContextAddGraphNode('terminal', 'Terminal')}
+              >
+                <Terminal className="h-4 w-4" />
+                Add Terminal
+              </button>
 
               <div className="my-1 h-px bg-border" />
 
@@ -1737,6 +3551,13 @@ function BrowserPageInner(): React.ReactElement {
               >
                 <Play className="h-4 w-4" />
                 Execute node
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleContextRenameNode()}
+              >
+                <NotebookPen className="h-4 w-4" />
+                Rename tab
               </button>
               <div className="my-1 h-px bg-border" />
               <button
@@ -1786,6 +3607,13 @@ function BrowserPageInner(): React.ReactElement {
               >
                 <Play className="h-4 w-4" />
                 Execute node
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleContextRenameNode()}
+              >
+                <NotebookPen className="h-4 w-4" />
+                Rename node
               </button>
               <div className="my-1 h-px bg-border" />
               <button
@@ -1938,6 +3766,40 @@ function BrowserPageInner(): React.ReactElement {
         />
       )}
 
+      {/* Hidden webviews for pasted-tab preview hydration */}
+      {previewingTabs.size > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            width: '1px',
+            height: '1px',
+            opacity: 0,
+            pointerEvents: 'none',
+            overflow: 'hidden'
+          }}
+        >
+          {Array.from(previewingTabs).map((tabId) => {
+            const tab = tabs.find((item) => item.id === tabId)
+            return (
+              <webview
+                key={`preview-${tabId}`}
+                ref={(el) => {
+                  if (el) {
+                    previewWebviews.current.set(tabId, el as unknown as Electron.WebviewTag)
+                  } else {
+                    previewWebviews.current.delete(tabId)
+                  }
+                }}
+                src={tab?.url && tab.url !== 'about:blank' ? tab.url : 'about:blank'}
+                partition="persist:browser-tabs"
+                useragent={WEBVIEW_USER_AGENT}
+                style={{ width: '1280px', height: '800px' }}
+              />
+            )
+          })}
+        </div>
+      )}
+
       {/* Hidden webviews for graph-triggered browser tab agent runs */}
       {runningTabs.size > 0 && (
         <div
@@ -1963,8 +3825,6 @@ function BrowserPageInner(): React.ReactElement {
               src="about:blank"
               partition="persist:browser-tabs"
               useragent={WEBVIEW_USER_AGENT}
-              // @ts-expect-error webview attributes aren't fully typed in React
-              allowpopups="true"
               style={{ width: '1024px', height: '768px' }}
             />
           ))}
@@ -1973,12 +3833,34 @@ function BrowserPageInner(): React.ReactElement {
 
       {/* Dialog */}
       <BrowserTabDialog
+        key={selectedTab?.id ?? 'browser-tab-dialog-empty'}
         tab={selectedTab}
+        boardId={activeBoardId}
         open={dialogOpen}
         onOpenChange={handleDialogClose}
         onTabUpdate={updateTab}
         onRecaptureScreenshot={refresh}
+        onWebviewStateChange={handleDialogWebviewStateChange}
       />
+
+      {(() => {
+        const gn = terminalDialogNodeId ? gNodes.find((n) => n.id === terminalDialogNodeId) : null
+        const cfg = gn ? (parseNodeConfig(gn.config) as TerminalNodeConfig) : {}
+        return (
+          <TerminalDialog
+            key={terminalDialogNodeId ?? 'terminal-dialog-empty'}
+            open={!!terminalDialogNodeId}
+            onOpenChange={(o) => { if (!o) setTerminalDialogNodeId(null) }}
+            sessionId={terminalDialogNodeId ? `pty-${terminalDialogNodeId}` : ''}
+            config={cfg}
+            onUpdateConfig={(nextCfg) => {
+              if (terminalDialogNodeId) {
+                void updateNode(terminalDialogNodeId, { config: JSON.stringify(nextCfg) })
+              }
+            }}
+          />
+        )
+      })()}
     </div>
   )
 }
