@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect, Component, type ErrorInfo, type ReactNode } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect, useLayoutEffect } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -41,12 +41,11 @@ import { BrowserTabDialog } from '@/components/browser/browser-tab-dialog'
 import { MonitorWebviews } from '@/components/browser/monitor-webviews'
 import { BoardTabsView } from '@/components/browser/board-tabs-view'
 import { BoardDocumentView } from '@/components/browser/board-document-view'
-import { PlanEditor, type PlanTemplate, type PlanTaskStatus } from '@/components/plans/plan-editor'
 import { useBrowserTabs, type BrowserTab, type BrowserTabMonitor, type MonitorRule } from '@/hooks/use-browser-tabs'
 import { useSettings } from '@/hooks/use-settings'
 import { useGraphNodes, type GraphNode } from '@/hooks/use-graph-nodes'
 import { useBrowserEdges } from '@/hooks/use-browser-edges'
-import { useWorkspace, type WorkspaceBoard, type WorkspacePlan } from '@/hooks/use-workspace'
+import { useWorkspace, type WorkspaceBoard } from '@/hooks/use-workspace'
 import { executeFromTrigger } from '@/services/graph-executor'
 import { runAgentOnWebview } from '@/services/browser-agent-runner'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
@@ -70,7 +69,6 @@ const NETWORK_IDLE_TIMEOUT_MS = 15_000
 const INTERACTIVE_SELECTOR =
   'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
-const PLAN_TEMPLATES_SETTING_KEY = 'planTemplates'
 type FlowInteractionMode = 'design' | 'map'
 
 const turndown = new TurndownService({
@@ -79,46 +77,6 @@ const turndown = new TurndownService({
 })
 turndown.remove(['script', 'style', 'noscript'])
 
-const DEFAULT_PLAN_TEMPLATES: PlanTemplate[] = [
-  {
-    id: 'template-task',
-    name: 'Task',
-    type: 'task',
-    defaultStatus: 'todo'
-  }
-]
-
-function isPlanTaskStatus(value: unknown): value is PlanTaskStatus {
-  return value === 'todo' || value === 'in_progress' || value === 'done'
-}
-
-function normalizePlanTemplates(rawValue: unknown): PlanTemplate[] {
-  if (!Array.isArray(rawValue)) {
-    return DEFAULT_PLAN_TEMPLATES
-  }
-
-  const templates: PlanTemplate[] = []
-  for (let index = 0; index < rawValue.length; index += 1) {
-    const item = rawValue[index]
-    if (typeof item !== 'object' || item === null) continue
-    const record = item as Record<string, unknown>
-    const name = typeof record.name === 'string' ? record.name.trim() : ''
-    if (!name) continue
-    const idRaw = typeof record.id === 'string' ? record.id.trim() : ''
-    const defaultStatus = isPlanTaskStatus(record.defaultStatus) ? record.defaultStatus : 'todo'
-    templates.push({
-      id: idRaw || `template-${index + 1}`,
-      name,
-      type: 'task',
-      defaultStatus
-    })
-  }
-
-  if (templates.length === 0) {
-    return DEFAULT_PLAN_TEMPLATES
-  }
-  return templates
-}
 
 function preview(value: string | undefined, max = 160): string {
   if (!value) return ''
@@ -236,11 +194,13 @@ function normalizeFormFieldList(rawFields: unknown): FormTriggerFieldConfig[] {
 }
 
 function formatFormSubmission(fields: FormTriggerFieldConfig[], values: Record<string, string>): string {
-  const lines: string[] = ['[Form Submission]']
-  if (fields.length === 0) {
-    lines.push('(No configured fields)')
-    return lines.join('\n')
+  if (fields.length === 0) return '(No configured fields)'
+  // Single field → output the raw value directly
+  if (fields.length === 1) {
+    return values[fields[0].key] ?? ''
   }
+  // Multiple fields → labelled output
+  const lines: string[] = []
   for (const field of fields) {
     const value = values[field.key] ?? ''
     lines.push(`${field.label} (${field.key}): ${value || '(empty)'}`)
@@ -272,40 +232,6 @@ interface ContextMenu {
   flowPosition?: { x: number; y: number }
 }
 
-interface PlanErrorBoundaryState {
-  hasError: boolean
-  message: string
-}
-
-class PlanErrorBoundary extends Component<{ children: ReactNode }, PlanErrorBoundaryState> {
-  constructor(props: { children: ReactNode }) {
-    super(props)
-    this.state = { hasError: false, message: '' }
-  }
-
-  static getDerivedStateFromError(error: unknown): PlanErrorBoundaryState {
-    const message = error instanceof Error ? error.message : String(error)
-    return { hasError: true, message }
-  }
-
-  componentDidCatch(error: unknown, errorInfo: ErrorInfo): void {
-    console.error(`${FLOW_TAG} plan editor crashed:`, error, errorInfo)
-  }
-
-  render(): ReactNode {
-    if (this.state.hasError) {
-      return (
-        <div className="flex h-full items-center justify-center p-4">
-          <div className="max-w-md rounded-md border bg-background p-4 text-sm">
-            <p className="font-medium">Plan editor failed to render.</p>
-            <p className="mt-1 text-muted-foreground">{this.state.message || 'Unknown error'}</p>
-          </div>
-        </div>
-      )
-    }
-    return this.props.children
-  }
-}
 
 function BrowserPageInner(): React.ReactElement {
   const {
@@ -319,18 +245,13 @@ function BrowserPageInner(): React.ReactElement {
     renameBoard,
     deleteBoard,
     setActiveBoard,
-    createPlan,
-    renamePlan,
-    deletePlan,
-    getPlanHtml,
-    setPlanHtml,
     getBoardDocumentHtml,
     setBoardDocumentHtml,
     setBoardActiveView
   } = useWorkspace()
   const activeBoardId = workspace?.activeBoardId ?? null
   const { tabs, refresh, createTab, updateTab, deleteTab, savePositions: saveTabPositions } = useBrowserTabs(activeBoardId)
-  const { getSetting, setSetting } = useSettings()
+  const { getSetting, setSetting, loading: settingsLoading } = useSettings()
   const {
     graphNodes: gNodes,
     createNode,
@@ -352,33 +273,19 @@ function BrowserPageInner(): React.ReactElement {
   const [expandedMonitorId, setExpandedMonitorId] = useState<string | null>(null)
   const [runningTabs, setRunningTabs] = useState<Set<string>>(new Set())
   const [previewingTabs, setPreviewingTabs] = useState<Set<string>>(new Set())
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
-    const saved = getSetting('expandedFolders')
-    if (Array.isArray(saved)) return new Set(saved as string[])
-    return new Set<string>()
-  })
-  const expandedFoldersInitializedRef = useRef(Array.isArray(getSetting('expandedFolders')))
-  const [collapsedBoards, setCollapsedBoards] = useState<Set<string>>(() => {
-    const saved = getSetting('collapsedBoards')
-    if (Array.isArray(saved)) return new Set(saved as string[])
-    return new Set<string>()
-  })
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const expandedFoldersInitializedRef = useRef(false)
+  const [collapsedBoards, setCollapsedBoards] = useState<Set<string>>(new Set())
   const [boardTabsMap, setBoardTabsMap] = useState<Map<string, BrowserTab[]>>(new Map())
   const [boardTerminalsMap, setBoardTerminalsMap] = useState<Map<string, GraphNode[]>>(new Map())
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
   const [editingFolderName, setEditingFolderName] = useState('')
   const [editingBoardId, setEditingBoardId] = useState<string | null>(null)
   const [editingBoardName, setEditingBoardName] = useState('')
-  const [editingPlanId, setEditingPlanId] = useState<string | null>(null)
-  const [editingPlanName, setEditingPlanName] = useState('')
   const [editingTerminalId, setEditingTerminalId] = useState<string | null>(null)
   const [editingTerminalName, setEditingTerminalName] = useState('')
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const createMenuRef = useRef<HTMLDivElement | null>(null)
-  const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
-  const [planHtml, setPlanHtmlState] = useState('<p></p>')
-  const [planLoading, setPlanLoading] = useState(false)
-  const [planTemplates, setPlanTemplates] = useState<PlanTemplate[]>(DEFAULT_PLAN_TEMPLATES)
   const [boardView, setBoardView] = useState<'whiteboard' | 'tabs' | 'document'>('whiteboard')
   const [boardDocHtml, setBoardDocHtmlState] = useState('<p></p>')
   const [boardDocLoading, setBoardDocLoading] = useState(false)
@@ -394,7 +301,6 @@ function BrowserPageInner(): React.ReactElement {
   const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleRunningRef = useRef(false)
   const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
-  const planSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pendingBoardRenameRef = useRef(false)
   const pendingFolderRenameRef = useRef(false)
   const boardTabsViewRef = useRef<import('@/components/browser/board-tabs-view').BoardTabsViewHandle | null>(null)
@@ -408,20 +314,26 @@ function BrowserPageInner(): React.ReactElement {
   const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
   const outputNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'output'), [gNodes])
 
+  // Hydrate folder/board collapse state once settings have loaded
   useEffect(() => {
+    if (settingsLoading) return
     if (!workspace?.folders) return
     if (expandedFoldersInitializedRef.current) return
     expandedFoldersInitializedRef.current = true
-    setExpandedFolders((prev) => {
-      const next = new Set(prev)
-      for (const folder of workspace.folders) {
-        if (!next.has(folder.id)) {
-          next.add(folder.id)
-        }
-      }
-      return next
-    })
-  }, [workspace?.folders])
+
+    const savedFolders = getSetting('expandedFolders')
+    if (Array.isArray(savedFolders)) {
+      setExpandedFolders(new Set(savedFolders as string[]))
+    } else {
+      // No saved state — default all folders to expanded
+      setExpandedFolders(new Set(workspace.folders.map((f) => f.id)))
+    }
+
+    const savedBoards = getSetting('collapsedBoards')
+    if (Array.isArray(savedBoards)) {
+      setCollapsedBoards(new Set(savedBoards as string[]))
+    }
+  }, [settingsLoading, workspace?.folders, getSetting])
 
   useEffect(() => {
     if (!createMenuOpen) return
@@ -441,18 +353,6 @@ function BrowserPageInner(): React.ReactElement {
       const key = board.folderId ?? '__ungrouped__'
       const existing = map.get(key) ?? []
       existing.push(board)
-      map.set(key, existing)
-    }
-    return map
-  }, [workspace])
-
-  const plansByFolderId = useMemo(() => {
-    const map = new Map<string, WorkspacePlan[]>()
-    if (!workspace) return map
-    for (const plan of workspace.plans) {
-      const key = plan.folderId ?? '__ungrouped__'
-      const existing = map.get(key) ?? []
-      existing.push(plan)
       map.set(key, existing)
     }
     return map
@@ -551,13 +451,6 @@ function BrowserPageInner(): React.ReactElement {
       setEditingBoardId(null)
       setEditingBoardName('')
     }
-    if (editingPlanId && !workspace.plans.some((plan) => plan.id === editingPlanId)) {
-      setEditingPlanId(null)
-      setEditingPlanName('')
-    }
-    if (selectedPlanId && !workspace.plans.some((plan) => plan.id === selectedPlanId)) {
-      setSelectedPlanId(null)
-    }
     if (editingTerminalId) {
       const allTerminals = Array.from(boardTerminalsMap.values()).flat()
       if (!allTerminals.some((tn) => tn.id === editingTerminalId)) {
@@ -565,65 +458,7 @@ function BrowserPageInner(): React.ReactElement {
         setEditingTerminalName('')
       }
     }
-  }, [workspace, editingFolderId, editingBoardId, editingPlanId, selectedPlanId, editingTerminalId, boardTerminalsMap])
-
-  useEffect(() => {
-    if (!selectedPlanId) return
-    setContextMenu(null)
-    setDialogOpen(false)
-    setMonitorNodeId(null)
-  }, [selectedPlanId])
-
-  const selectedPlan = useMemo(() => {
-    if (!selectedPlanId || !workspace) return null
-    return workspace.plans.find((plan) => plan.id === selectedPlanId) ?? null
-  }, [workspace, selectedPlanId])
-
-  const rawPlanTemplates = getSetting(PLAN_TEMPLATES_SETTING_KEY)
-
-  useEffect(() => {
-    setPlanTemplates(normalizePlanTemplates(rawPlanTemplates))
-  }, [rawPlanTemplates])
-
-  useEffect(() => {
-    if (planSaveTimerRef.current) {
-      clearTimeout(planSaveTimerRef.current)
-      planSaveTimerRef.current = null
-    }
-    if (!selectedPlanId) {
-      setPlanHtmlState('<p></p>')
-      setPlanLoading(false)
-      return
-    }
-    let cancelled = false
-    setPlanLoading(true)
-    void getPlanHtml(selectedPlanId)
-      .then((html) => {
-        if (cancelled) return
-        setPlanHtmlState(html || '<p></p>')
-      })
-      .catch((error) => {
-        if (cancelled) return
-        console.error(`${FLOW_TAG} failed to load plan html id=${selectedPlanId}:`, error)
-        setPlanHtmlState('<p></p>')
-      })
-      .finally(() => {
-        if (!cancelled) {
-          setPlanLoading(false)
-        }
-      })
-    return (): void => {
-      cancelled = true
-    }
-  }, [selectedPlanId, getPlanHtml])
-
-  useEffect(() => {
-    return (): void => {
-      if (planSaveTimerRef.current) {
-        clearTimeout(planSaveTimerRef.current)
-      }
-    }
-  }, [])
+  }, [workspace, editingFolderId, editingBoardId, editingTerminalId, boardTerminalsMap])
 
   // Load board activeView when activeBoardId changes
   useEffect(() => {
@@ -686,6 +521,11 @@ function BrowserPageInner(): React.ReactElement {
   const handleBoardViewChange = useCallback(
     (view: 'whiteboard' | 'tabs' | 'document') => {
       setBoardView(view)
+      // Close terminal dialog when switching to tab/document view to avoid
+      // competing xterm instances for the same PTY session
+      if (view !== 'whiteboard') {
+        setTerminalDialogNodeId(null)
+      }
       if (activeBoardId) {
         void setBoardActiveView(activeBoardId, view).catch((error) => {
           console.error(`${FLOW_TAG} failed to persist board active view:`, error)
@@ -709,45 +549,6 @@ function BrowserPageInner(): React.ReactElement {
       }, 450)
     },
     [activeBoardId, setBoardDocumentHtml]
-  )
-
-  const handlePlanHtmlChange = useCallback(
-    (nextHtml: string) => {
-      setPlanHtmlState(nextHtml)
-      if (!selectedPlanId) return
-      if (planSaveTimerRef.current) {
-        clearTimeout(planSaveTimerRef.current)
-      }
-      planSaveTimerRef.current = setTimeout(() => {
-        void setPlanHtml(selectedPlanId, nextHtml).catch((error) => {
-          console.error(`${FLOW_TAG} failed to persist plan html id=${selectedPlanId}:`, error)
-        })
-      }, 450)
-    },
-    [selectedPlanId, setPlanHtml]
-  )
-
-  const handleCreatePlanTemplate = useCallback(
-    async (name: string) => {
-      const trimmed = name.trim()
-      if (!trimmed) return
-      const nextTemplates: PlanTemplate[] = [
-        ...planTemplates,
-        {
-          id: `template-${Date.now().toString(36)}`,
-          name: trimmed,
-          type: 'task',
-          defaultStatus: 'todo'
-        }
-      ]
-      setPlanTemplates(nextTemplates)
-      try {
-        await setSetting(PLAN_TEMPLATES_SETTING_KEY, nextTemplates)
-      } catch (error) {
-        console.error(`${FLOW_TAG} failed to save plan templates:`, error)
-      }
-    },
-    [planTemplates, setSetting]
   )
 
   const setNodeRuntimeStatus = useCallback(
@@ -1557,6 +1358,12 @@ function BrowserPageInner(): React.ReactElement {
         )
       }
 
+      // Pre-seed per-field outputs so field-specific handles resolve correctly
+      const preseededOutputs = new Map<string, string>()
+      for (const field of normalizedFields) {
+        preseededOutputs.set(`${nodeId}:field:${field.key}`, normalizedValues[field.key] ?? '')
+      }
+
       try {
         await executeFromTrigger(
           nodeId,
@@ -1565,7 +1372,7 @@ function BrowserPageInner(): React.ReactElement {
           updateNodeData,
           submissionOutput,
           executeBrowserTab,
-          undefined,
+          preseededOutputs,
           runId,
           activeBoardId ?? undefined
         )
@@ -2320,8 +2127,6 @@ function BrowserPageInner(): React.ReactElement {
     setEditingFolderName('')
     setEditingBoardId(null)
     setEditingBoardName('')
-    setEditingPlanId(null)
-    setEditingPlanName('')
     setEditingTerminalId(nodeId)
     setEditingTerminalName(name)
   }, [])
@@ -2845,7 +2650,6 @@ function BrowserPageInner(): React.ReactElement {
   }, [])
 
   const ungroupedBoards = workspace ? boardsByFolderId.get('__ungrouped__') ?? [] : []
-  const ungroupedPlans = workspace ? plansByFolderId.get('__ungrouped__') ?? [] : []
 
   const toggleFolderExpanded = useCallback((folderId: string) => {
     setExpandedFolders((prev) => {
@@ -2873,8 +2677,6 @@ function BrowserPageInner(): React.ReactElement {
   const startInlineFolderEdit = useCallback((folderId: string, name: string) => {
     setEditingBoardId(null)
     setEditingBoardName('')
-    setEditingPlanId(null)
-    setEditingPlanName('')
     setEditingFolderId(folderId)
     setEditingFolderName(name)
   }, [])
@@ -2907,7 +2709,7 @@ function BrowserPageInner(): React.ReactElement {
   const handleDeleteFolder = useCallback(
     async (folderId: string, folderName: string) => {
       const confirmed = window.confirm(
-        `Delete folder "${folderName}"? Boards and plans in this folder will be moved to Ungrouped.`
+        `Delete folder "${folderName}"? Boards in this folder will be moved to Ungrouped.`
       )
       if (!confirmed) return
       await deleteFolder(folderId)
@@ -2919,7 +2721,6 @@ function BrowserPageInner(): React.ReactElement {
     async (folderId?: string | null) => {
       try {
         await createBoard({ folderId: folderId ?? null })
-        setSelectedPlanId(null)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         console.error(`${FLOW_TAG} failed to create board:`, error)
@@ -2932,8 +2733,6 @@ function BrowserPageInner(): React.ReactElement {
   const startInlineBoardEdit = useCallback((boardId: string, name: string) => {
     setEditingFolderId(null)
     setEditingFolderName('')
-    setEditingPlanId(null)
-    setEditingPlanName('')
     setEditingBoardId(boardId)
     setEditingBoardName(name)
   }, [])
@@ -2972,68 +2771,8 @@ function BrowserPageInner(): React.ReactElement {
     [deleteBoard]
   )
 
-  const handleCreatePlan = useCallback(
-    async (folderId?: string | null) => {
-      try {
-        await createPlan({ folderId: folderId ?? null })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        console.error(`${FLOW_TAG} failed to create plan:`, error)
-        window.alert(`Failed to create plan: ${message}`)
-      }
-    },
-    [createPlan]
-  )
-
-  const startInlinePlanEdit = useCallback((planId: string, name: string) => {
-    setEditingFolderId(null)
-    setEditingFolderName('')
-    setEditingBoardId(null)
-    setEditingBoardName('')
-    setEditingPlanId(planId)
-    setEditingPlanName(name)
-  }, [])
-
-  const cancelInlinePlanEdit = useCallback(() => {
-    setEditingPlanId(null)
-    setEditingPlanName('')
-  }, [])
-
-  const saveInlinePlanEdit = useCallback(async () => {
-    if (!editingPlanId) return
-    const planId = editingPlanId
-    const nextName = editingPlanName.trim()
-    const currentName = workspace?.plans.find((plan) => plan.id === planId)?.name ?? ''
-    setEditingPlanId(null)
-    setEditingPlanName('')
-    if (nextName.length === 0 || nextName === currentName) return
-    try {
-      const nextPlanId = await renamePlan(planId, nextName)
-      if (selectedPlanId === planId) {
-        setSelectedPlanId(nextPlanId)
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.error(`${FLOW_TAG} failed to rename plan id=${planId}:`, error)
-      window.alert(`Failed to rename plan: ${message}`)
-    }
-  }, [editingPlanId, editingPlanName, workspace, renamePlan, selectedPlanId])
-
-  const handleDeletePlan = useCallback(
-    async (planId: string, planName: string) => {
-      const confirmed = window.confirm(`Delete plan "${planName}"?`)
-      if (!confirmed) return
-      await deletePlan(planId)
-      if (selectedPlanId === planId) {
-        setSelectedPlanId(null)
-      }
-    },
-    [deletePlan, selectedPlanId]
-  )
-
   const handleSelectBoard = useCallback(
     async (boardId: string) => {
-      setSelectedPlanId(null)
       await setActiveBoard(boardId)
     },
     [setActiveBoard]
@@ -3077,14 +2816,6 @@ function BrowserPageInner(): React.ReactElement {
                     <Workflow className="h-3.5 w-3.5" />
                     Board
                   </button>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
-                    onClick={() => { setCreateMenuOpen(false); void handleCreatePlan(null) }}
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                    Plan
-                  </button>
                 </div>
               )}
             </div>
@@ -3094,7 +2825,6 @@ function BrowserPageInner(): React.ReactElement {
             <div className="space-y-2">
               {workspace?.folders.map((folder) => {
                 const folderBoards = boardsByFolderId.get(folder.id) ?? []
-                const folderPlans = plansByFolderId.get(folder.id) ?? []
                 const expanded = expandedFolders.has(folder.id)
                 return (
                   <section key={folder.id} className="rounded-md border bg-background">
@@ -3137,7 +2867,7 @@ function BrowserPageInner(): React.ReactElement {
                         >
                           <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
                           <span className="truncate text-xs font-medium">{folder.name}</span>
-                          <span className="text-[10px] text-muted-foreground">{folderBoards.length + folderPlans.length}</span>
+                          <span className="text-[10px] text-muted-foreground">{folderBoards.length}</span>
                         </button>
                       )}
                       <button
@@ -3150,14 +2880,6 @@ function BrowserPageInner(): React.ReactElement {
                       </button>
                       <button
                         type="button"
-                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                        onClick={() => void handleCreatePlan(folder.id)}
-                        title="New plan in folder"
-                      >
-                        <FileText className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
                         className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => void handleDeleteFolder(folder.id, folder.name)}
                         title="Delete folder"
@@ -3167,7 +2889,7 @@ function BrowserPageInner(): React.ReactElement {
                     </div>
                     {expanded && (
                       <div className="space-y-1 border-t p-1.5">
-                        {folderBoards.length === 0 && folderPlans.length === 0 ? (
+                        {folderBoards.length === 0 ? (
                           <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
                         ) : (
                           <>
@@ -3179,7 +2901,7 @@ function BrowserPageInner(): React.ReactElement {
                                 key={board.id}
                                 className={[
                                   'group/boardItem rounded-md border px-2 py-1.5',
-                                  !selectedPlanId && board.id === activeBoardId
+                                  board.id === activeBoardId
                                     ? 'border-primary/50 bg-primary/10'
                                     : 'border-transparent hover:bg-accent/50'
                                 ].join(' ')}
@@ -3300,61 +3022,6 @@ function BrowserPageInner(): React.ReactElement {
                               </div>
                               )
                             })}
-                            {folderPlans.map((plan) => (
-                              <div
-                                key={plan.id}
-                                className={[
-                                  'group/planItem rounded-md border px-2 py-1.5',
-                                  selectedPlanId === plan.id
-                                    ? 'border-primary/50 bg-primary/10'
-                                    : 'border-transparent hover:bg-accent/50'
-                                ].join(' ')}
-                              >
-                                <div className="flex items-center gap-1">
-                                  {editingPlanId === plan.id ? (
-                                    <Input
-                                      value={editingPlanName}
-                                      onChange={(event) => setEditingPlanName(event.target.value)}
-                                      onBlur={() => void saveInlinePlanEdit()}
-                                      onKeyDown={(event) => {
-                                        if (event.key === 'Enter') {
-                                          event.currentTarget.blur()
-                                          return
-                                        }
-                                        if (event.key === 'Escape') {
-                                          event.preventDefault()
-                                          cancelInlinePlanEdit()
-                                        }
-                                      }}
-                                      className="h-7 flex-1 text-xs"
-                                      autoFocus
-                                    />
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
-                                      onClick={() => setSelectedPlanId(plan.id)}
-                                      onDoubleClick={(event) => {
-                                        event.preventDefault()
-                                        event.stopPropagation()
-                                        startInlinePlanEdit(plan.id, plan.name)
-                                      }}
-                                    >
-                                      <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                                      <span className="truncate">{plan.name}</span>
-                                    </button>
-                                  )}
-                                  <button
-                                    type="button"
-                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/planItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
-                                    onClick={() => void handleDeletePlan(plan.id, plan.name)}
-                                    title="Delete plan"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
                           </>
                         )}
                       </div>
@@ -3367,7 +3034,7 @@ function BrowserPageInner(): React.ReactElement {
                 <div className="flex items-center gap-1 px-2 py-1.5">
                   <Folder className="h-3.5 w-3.5 text-muted-foreground" />
                   <span className="flex-1 text-xs font-medium">Ungrouped</span>
-                  <span className="text-[10px] text-muted-foreground">{ungroupedBoards.length + ungroupedPlans.length}</span>
+                  <span className="text-[10px] text-muted-foreground">{ungroupedBoards.length}</span>
                   <button
                     type="button"
                     className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -3376,17 +3043,9 @@ function BrowserPageInner(): React.ReactElement {
                   >
                     <Workflow className="h-3.5 w-3.5" />
                   </button>
-                  <button
-                    type="button"
-                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                    onClick={() => void handleCreatePlan(null)}
-                    title="New ungrouped plan"
-                  >
-                    <FileText className="h-3.5 w-3.5" />
-                  </button>
                 </div>
                 <div className="space-y-1 border-t p-1.5">
-                  {ungroupedBoards.length === 0 && ungroupedPlans.length === 0 ? (
+                  {ungroupedBoards.length === 0 ? (
                     <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
                   ) : (
                     <>
@@ -3398,7 +3057,7 @@ function BrowserPageInner(): React.ReactElement {
                           key={board.id}
                           className={[
                             'group/boardItem rounded-md border px-2 py-1.5',
-                            !selectedPlanId && board.id === activeBoardId
+                            board.id === activeBoardId
                               ? 'border-primary/50 bg-primary/10'
                               : 'border-transparent hover:bg-accent/50'
                           ].join(' ')}
@@ -3519,61 +3178,6 @@ function BrowserPageInner(): React.ReactElement {
                         </div>
                         )
                       })}
-                      {ungroupedPlans.map((plan) => (
-                        <div
-                          key={plan.id}
-                          className={[
-                            'group/planItem rounded-md border px-2 py-1.5',
-                            selectedPlanId === plan.id
-                              ? 'border-primary/50 bg-primary/10'
-                              : 'border-transparent hover:bg-accent/50'
-                          ].join(' ')}
-                        >
-                          <div className="flex items-center gap-1">
-                            {editingPlanId === plan.id ? (
-                              <Input
-                                value={editingPlanName}
-                                onChange={(event) => setEditingPlanName(event.target.value)}
-                                onBlur={() => void saveInlinePlanEdit()}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter') {
-                                    event.currentTarget.blur()
-                                    return
-                                  }
-                                  if (event.key === 'Escape') {
-                                    event.preventDefault()
-                                    cancelInlinePlanEdit()
-                                  }
-                                }}
-                                className="h-7 flex-1 text-xs"
-                                autoFocus
-                              />
-                            ) : (
-                              <button
-                                type="button"
-                                className="flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
-                                onClick={() => setSelectedPlanId(plan.id)}
-                                onDoubleClick={(event) => {
-                                  event.preventDefault()
-                                  event.stopPropagation()
-                                  startInlinePlanEdit(plan.id, plan.name)
-                                }}
-                              >
-                                <FileText className="h-3.5 w-3.5 text-muted-foreground" />
-                                <span className="truncate">{plan.name}</span>
-                              </button>
-                            )}
-                            <button
-                              type="button"
-                              className="rounded p-1 text-muted-foreground opacity-0 group-hover/planItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
-                              onClick={() => void handleDeletePlan(plan.id, plan.name)}
-                              title="Delete plan"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
-                          </div>
-                        </div>
-                      ))}
                     </>
                   )}
                 </div>
@@ -3584,24 +3188,6 @@ function BrowserPageInner(): React.ReactElement {
       </aside>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        {selectedPlan ? (
-          <div className="min-h-0 flex-1 flex flex-col">
-            {planLoading ? (
-              <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Loading plan...</div>
-            ) : (
-              <PlanErrorBoundary>
-                <PlanEditor
-                  value={planHtml}
-                  templates={planTemplates}
-                  planName={selectedPlan.name}
-                  onChange={handlePlanHtmlChange}
-                  onCreateTemplate={handleCreatePlanTemplate}
-                />
-              </PlanErrorBoundary>
-            )}
-          </div>
-        ) : (
-          <>
           <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5">
             <div className="min-w-0">
               <p className="truncate text-sm font-medium">{activeBoard?.name ?? 'No item selected'}</p>
@@ -3723,12 +3309,10 @@ function BrowserPageInner(): React.ReactElement {
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
             />
           )}
-          </>
-        )}
       </div>
 
       {/* Context Menu */}
-      {contextMenu && !selectedPlan && boardView === 'whiteboard' && (
+      {contextMenu && boardView === 'whiteboard' && (
         <div
           ref={contextMenuRef}
           className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[180px] overflow-y-auto rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"

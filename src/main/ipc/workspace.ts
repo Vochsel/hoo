@@ -13,13 +13,6 @@ import {
   deleteBoardInWorkspace,
   setWorkspaceActiveBoardId,
   boardExists,
-  createPlanInWorkspace,
-  renamePlanInWorkspace,
-  movePlanInWorkspace,
-  deletePlanInWorkspace,
-  readPlanHtml,
-  writePlanHtml,
-  planExists,
   readBoardDocument,
   writeBoardDocument,
   type BoardViewMode
@@ -103,42 +96,6 @@ export function registerWorkspaceHandlers(): void {
       // ignore invalid board ids from stale UI state
     }
     return getWorkspaceSnapshot()
-  })
-
-  ipcMain.handle('workspace:createPlan', async (_event, payload?: { name?: string; folderId?: string | null }) => {
-    await createPlanInWorkspace(payload)
-    return getWorkspaceSnapshot()
-  })
-
-  ipcMain.handle('workspace:renamePlan', async (_event, planId: string, name: string) => {
-    const nextPlanId = await renamePlanInWorkspace(planId, name)
-    const snapshot = await getWorkspaceSnapshot()
-    return { snapshot, nextPlanId }
-  })
-
-  ipcMain.handle('workspace:movePlan', async (_event, planId: string, folderId?: string | null) => {
-    await movePlanInWorkspace(planId, folderId)
-    return getWorkspaceSnapshot()
-  })
-
-  ipcMain.handle('workspace:deletePlan', async (_event, planId: string) => {
-    await deletePlanInWorkspace(planId)
-    return getWorkspaceSnapshot()
-  })
-
-  ipcMain.handle('workspace:getPlanHtml', async (_event, planId: string) => {
-    if (!(await planExists(planId))) {
-      throw new Error('Plan not found')
-    }
-    return readPlanHtml(planId)
-  })
-
-  ipcMain.handle('workspace:setPlanHtml', async (_event, planId: string, html: string) => {
-    if (!(await planExists(planId))) {
-      throw new Error('Plan not found')
-    }
-    await writePlanHtml(planId, html)
-    return { success: true }
   })
 
   ipcMain.handle('workspace:getBoardActiveView', async (_event, boardId: string) => {

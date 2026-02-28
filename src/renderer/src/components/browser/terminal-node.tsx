@@ -1,8 +1,9 @@
 import { memo } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
 import { Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { HandleWithTooltip } from './handle-with-tooltip'
 import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
 
 export interface TerminalNodeConfig {
@@ -92,12 +93,14 @@ function TerminalNodeInner({ id: _id, data, selected }: NodeProps): React.ReactE
       <NodeExecutionFooter status={runtimeStatus} isRunning={isRunning} className="px-2.5 py-1.5" />
 
       {/* Handles */}
-      <Handle
+      <HandleWithTooltip
+        label="Input"
         type="target"
         position={targetPos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
-      <Handle
+      <HandleWithTooltip
+        label="Output"
         type="source"
         position={sourcePos}
         className="!w-3 !h-3 !bg-green-500 !border-2 !border-green-300"

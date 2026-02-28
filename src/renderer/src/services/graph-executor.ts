@@ -50,6 +50,9 @@ function getCachedOutput(node: Node): string | undefined {
  * Checks the shared `outputs` map first (node already ran), then falls back
  * to `getCachedOutput` for static / previously-computed data.
  *
+ * When an edge has a `sourceHandle` like "field-{key}", the output is resolved
+ * from `{sourceId}:field:{key}` in the outputs map (per-field form outputs).
+ *
  * Returns:
  *  - undefined  → no inputs available
  *  - raw string → exactly one input
@@ -57,15 +60,16 @@ function getCachedOutput(node: Node): string | undefined {
  */
 function gatherInputs(
   nodeId: string,
-  incomingEdges: Map<string, string[]>,
+  incomingEdges: Map<string, Edge[]>,
   nodeById: Map<string, Node>,
   outputs: Map<string, string>
 ): { value?: string; sources: InputSourceInfo[] } {
-  const sources = incomingEdges.get(nodeId) ?? []
+  const edges = incomingEdges.get(nodeId) ?? []
   const parts: Array<{ label: string; content: string }> = []
   const sourceInfo: InputSourceInfo[] = []
 
-  for (const srcId of sources) {
+  for (const edge of edges) {
+    const srcId = edge.source
     const srcNode = nodeById.get(srcId)
     const label =
       (srcNode?.data as { label?: string })?.label ||
@@ -74,12 +78,18 @@ function gatherInputs(
     let content: string | undefined
     let source: InputSourceInfo['source'] = 'unavailable'
 
-    // Prefer output from this execution run
-    if (outputs.has(srcId)) {
+    // Resolve per-field output if edge uses a field handle
+    const handle = edge.sourceHandle
+    const fieldMatch = handle?.match(/^field-(.+)$/)
+    const fieldOutputKey = fieldMatch ? `${srcId}:field:${fieldMatch[1]}` : null
+
+    if (fieldOutputKey && outputs.has(fieldOutputKey)) {
+      content = outputs.get(fieldOutputKey)
+      source = 'run-output'
+    } else if (outputs.has(srcId)) {
       content = outputs.get(srcId)
       source = 'run-output'
     } else {
-      // Fall back to cached / static data
       if (srcNode) content = getCachedOutput(srcNode)
       if (content !== undefined) source = 'cached'
     }
@@ -144,11 +154,11 @@ export async function executeFromTrigger(
     adjacency.set(edge.source, existing)
   }
 
-  // Build reverse adjacency: target → sources
-  const incomingEdges = new Map<string, string[]>()
+  // Build reverse adjacency: target → edges (preserves sourceHandle info)
+  const incomingEdges = new Map<string, Edge[]>()
   for (const edge of edges) {
     const existing = incomingEdges.get(edge.target) ?? []
-    existing.push(edge.source)
+    existing.push(edge)
     incomingEdges.set(edge.target, existing)
   }
 
@@ -195,7 +205,8 @@ export async function executeFromTrigger(
     }
 
     if (executeBrowserTab && node.type !== 'browserTab' && !skipUpstreamExec && incomingSources.length > 0) {
-      for (const srcId of incomingSources) {
+      for (const inEdge of incomingSources) {
+        const srcId = inEdge.source
         if (outputs.has(srcId) || srcId === current.nodeId) continue
         const srcNode = nodeById.get(srcId)
         if (!srcNode || srcNode.type !== 'browserTab') continue
@@ -267,10 +278,10 @@ export async function executeFromTrigger(
     if (nodeType === 'trigger' || nodeType === 'scheduleTrigger' || nodeType === 'formTrigger') {
       // Trigger nodes themselves don't execute, they just release downstream flow.
       if (nodeType === 'formTrigger') {
-        const config = (node.data as { config?: { lastSubmission?: string } }).config ?? {}
-        output = initialInput ?? config.lastSubmission
+        const formConfig = (node.data as { config?: { lastSubmission?: string; fields?: Array<{ key: string }> } }).config ?? {}
+        output = initialInput ?? formConfig.lastSubmission
         if (initialInput !== undefined) {
-          const nextConfig = { ...config, lastSubmission: initialInput }
+          const nextConfig = { ...formConfig, lastSubmission: initialInput }
           updateNodeData(current.nodeId, (prev) => ({
             ...prev,
             config: nextConfig
@@ -285,6 +296,17 @@ export async function executeFromTrigger(
             output ? `Form trigger reused (${output.length} chars)` : 'Form trigger fired',
             false
           )
+        }
+        // Populate per-field outputs from pre-seeded map (set by handleSubmitFormTrigger)
+        // These enable field-specific handles like "field-{key}" on edges
+        if (formConfig.fields) {
+          for (const field of formConfig.fields) {
+            const fieldKey = `${current.nodeId}:field:${field.key}`
+            if (!outputs.has(fieldKey) && formConfig.fields.length === 1 && output !== undefined) {
+              // Single field: the combined output IS the field value
+              outputs.set(fieldKey, output)
+            }
+          }
         }
       } else {
         output = initialInput
@@ -557,52 +579,78 @@ export async function executeFromTrigger(
         }, boardId ?? undefined)
       }
 
-      let command = config.command?.trim() || ''
-      if (!command && inputData) {
-        command = inputData.trim()
-      } else if (command && inputData) {
-        command = `echo ${JSON.stringify(inputData)} | ${command}`
-      }
+      // Check if an interactive PTY session is already running for this node
+      const ptySessionId = `pty-${current.nodeId}`
+      const hasLiveSession = await window.api.terminal.hasSession(ptySessionId).catch(() => false)
 
-      if (!command) {
-        const msg = 'No command configured and no input received'
-        setNodeRuntime(current.nodeId, msg, false)
-        persistConfig({ ...config, lastRunAt: runAt, lastError: msg })
-        console.warn(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal skipped: ${msg}`)
-      } else {
-        setNodeRuntime(current.nodeId, `Terminal: ${preview(command, 40)}`, true)
+      if (hasLiveSession && inputData) {
+        // Write input directly to the live interactive session (like typing + enter)
+        const text = inputData.trim()
+        setNodeRuntime(current.nodeId, `Sent to terminal: ${preview(text, 40)}`, true)
         console.log(
-          `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal execute command="${preview(command, 200)}"`
+          `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal write to live session="${preview(text, 200)}"`
         )
         try {
-          const result = await window.api.terminal.execute(
-            command,
-            config.cwd || undefined,
-            config.shell || undefined,
-            config.timeout ?? 30
-          )
-          output = result.stdout
-          const nextConfig = {
-            ...config,
-            lastOutput: result.stdout,
-            lastError: result.error || (result.success ? undefined : `Exit code ${result.exitCode}`),
-            lastExitCode: result.exitCode,
-            lastRunAt: runAt
-          }
-          persistConfig(nextConfig)
-          if (result.success) {
-            setNodeRuntime(current.nodeId, `Terminal complete (exit 0, ${result.stdout.length} chars)`, false, result.stdout)
-          } else {
-            setNodeRuntime(current.nodeId, `Terminal exit ${result.exitCode}${result.error ? `: ${preview(result.error, 40)}` : ''}`, false)
-          }
-          console.log(
-            `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal done exitCode=${result.exitCode} outputLen=${result.stdout.length}`
-          )
+          await window.api.terminal.write(ptySessionId, text)
+          await window.api.terminal.write(ptySessionId, '\r')
+          output = text
+          persistConfig({ ...config, lastRunAt: runAt, lastOutput: text, lastError: undefined })
+          setNodeRuntime(current.nodeId, `Sent to terminal (${text.length} chars)`, false, text)
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
-          setNodeRuntime(current.nodeId, `Terminal error: ${preview(msg, 60)}`, false)
-          persistConfig({ ...config, lastRunAt: runAt, lastError: msg, lastExitCode: -1 })
-          console.error(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal exception:`, err)
+          setNodeRuntime(current.nodeId, `Terminal write error: ${preview(msg, 60)}`, false)
+          persistConfig({ ...config, lastRunAt: runAt, lastError: msg })
+          console.error(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal write exception:`, err)
+        }
+      } else {
+        // No live session — execute as a one-shot command
+        let command = config.command?.trim() || ''
+        if (!command && inputData) {
+          command = inputData.trim()
+        } else if (command && inputData) {
+          command = `echo ${JSON.stringify(inputData)} | ${command}`
+        }
+
+        if (!command) {
+          const msg = 'No command configured and no input received'
+          setNodeRuntime(current.nodeId, msg, false)
+          persistConfig({ ...config, lastRunAt: runAt, lastError: msg })
+          console.warn(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal skipped: ${msg}`)
+        } else {
+          setNodeRuntime(current.nodeId, `Terminal: ${preview(command, 40)}`, true)
+          console.log(
+            `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal execute command="${preview(command, 200)}"`
+          )
+          try {
+            const result = await window.api.terminal.execute(
+              command,
+              config.cwd || undefined,
+              config.shell || undefined,
+              config.timeout ?? 30
+            )
+            output = result.stdout
+            const nextConfig = {
+              ...config,
+              lastOutput: result.stdout,
+              lastError: result.error || (result.success ? undefined : `Exit code ${result.exitCode}`),
+              lastExitCode: result.exitCode,
+              lastRunAt: runAt
+            }
+            persistConfig(nextConfig)
+            if (result.success) {
+              setNodeRuntime(current.nodeId, `Terminal complete (exit 0, ${result.stdout.length} chars)`, false, result.stdout)
+            } else {
+              setNodeRuntime(current.nodeId, `Terminal exit ${result.exitCode}${result.error ? `: ${preview(result.error, 40)}` : ''}`, false)
+            }
+            console.log(
+              `${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal done exitCode=${result.exitCode} outputLen=${result.stdout.length}`
+            )
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            setNodeRuntime(current.nodeId, `Terminal error: ${preview(msg, 60)}`, false)
+            persistConfig({ ...config, lastRunAt: runAt, lastError: msg, lastExitCode: -1 })
+            console.error(`${GRAPH_EXEC_TAG} run=${execRunId} node=${current.nodeId} terminal exception:`, err)
+          }
         }
       }
     } else {

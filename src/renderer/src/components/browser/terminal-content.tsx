@@ -90,6 +90,10 @@ export function TerminalContent({
         return
       }
       spawnedRef.current = true
+      // Run configured command on restart
+      if (cfg.command?.trim()) {
+        window.api.terminal.write(sid, cfg.command.trim() + '\n').catch(() => {})
+      }
       try {
         fitAddon?.fit()
         window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
@@ -112,134 +116,148 @@ export function TerminalContent({
     return () => { detachTerminal() }
   }, [detachTerminal])
 
+  const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   const containerCallbackRef = useCallback(
     (el: HTMLDivElement | null) => {
       if (!el) {
+        if (initTimerRef.current) { clearTimeout(initTimerRef.current); initTimerRef.current = null }
         detachTerminal()
         return
       }
       if (termRef.current) return
 
-      const sid = sessionIdRef.current
-      const cfg = configRef.current
+      // Defer xterm initialization until after browser layout so the container
+      // has non-zero dimensions. xterm's renderer needs measured dimensions
+      // during open() to properly create its canvases.
+      initTimerRef.current = setTimeout(() => {
+        initTimerRef.current = null
+        if (!el.isConnected) return
 
-      const term = new Terminal({
-        cursorBlink: true,
-        fontSize: 13,
-        fontFamily: 'Menlo, Monaco, "Courier New", monospace',
-        theme: {
-          background: '#1a1a2e',
-          foreground: '#e0e0e0',
-          cursor: '#e0e0e0',
-          selectionBackground: '#3a3a5c'
-        }
-      })
-      const fitAddon = new FitAddon()
-      term.loadAddon(fitAddon)
-      term.open(el)
+        const sid = sessionIdRef.current
+        const cfg = configRef.current
 
-      termRef.current = term
-      fitRef.current = fitAddon
+        const term = new Terminal({
+          cursorBlink: true,
+          fontSize: 13,
+          fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+          theme: {
+            background: '#1a1a2e',
+            foreground: '#e0e0e0',
+            cursor: '#e0e0e0',
+            selectionBackground: '#3a3a5c'
+          }
+        })
+        const fitAddon = new FitAddon()
+        term.loadAddon(fitAddon)
+        term.open(el)
 
-      const fitTimer = setTimeout(() => {
+        termRef.current = term
+        fitRef.current = fitAddon
+
         try { fitAddon.fit() } catch {}
-      }, 100)
 
-      window.api.terminal
-        .hasSession(sid)
-        .then(async (alive) => {
-          if (alive) {
-            const buffer = await window.api.terminal.getBuffer(sid)
-            if (buffer) term.write(buffer)
-            spawnedRef.current = true
-            try {
-              fitAddon.fit()
-              window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
-            } catch {}
-          } else {
-            if (cfg.lastScrollback) {
-              term.write('\x1b[2m')
-              term.write(cfg.lastScrollback.replace(/\n/g, '\r\n'))
-              term.write('\x1b[0m\r\n')
+        window.api.terminal
+          .hasSession(sid)
+          .then(async (alive) => {
+            if (alive) {
+              const buffer = await window.api.terminal.getBuffer(sid)
+              if (buffer) term.write(buffer)
+              spawnedRef.current = true
+              try {
+                fitAddon.fit()
+                window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
+              } catch {}
+            } else {
+              if (cfg.lastScrollback) {
+                term.write('\x1b[2m')
+                term.write(cfg.lastScrollback.replace(/\n/g, '\r\n'))
+                term.write('\x1b[0m\r\n')
+              }
+              const result = await window.api.terminal.spawn(sid, {
+                shell: cfg.shell || undefined,
+                cwd: cfg.cwd || workspaceRootDir || undefined,
+                cols: term.cols || 80,
+                rows: term.rows || 24
+              })
+              if (!result.success) {
+                term.writeln(`\r\nFailed to spawn terminal: ${result.error ?? 'unknown error'}`)
+                return
+              }
+              spawnedRef.current = true
+              // Run configured command on startup
+              if (cfg.command?.trim()) {
+                window.api.terminal.write(sid, cfg.command.trim() + '\n').catch(() => {})
+              }
+              try {
+                fitAddon.fit()
+                window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
+              } catch {}
             }
-            const result = await window.api.terminal.spawn(sid, {
-              shell: cfg.shell || undefined,
-              cwd: cfg.cwd || workspaceRootDir || undefined,
-              cols: term.cols || 80,
-              rows: term.rows || 24
-            })
-            if (!result.success) {
-              term.writeln(`\r\nFailed to spawn terminal: ${result.error ?? 'unknown error'}`)
-              return
+          })
+          .catch((err: unknown) => {
+            term.writeln(`\r\nError: ${err instanceof Error ? err.message : String(err)}`)
+          })
+
+        const removeDataListener = window.api.terminal.onData(
+          (incomingSessionId: string, data: string) => {
+            if (incomingSessionId === sid) term.write(data)
+          }
+        )
+
+        const disposable = term.onData((data) => {
+          window.api.terminal.write(sid, data).catch(() => {})
+        })
+
+        const removeExitListener = window.api.terminal.onExit(
+          (incomingSessionId: string, exitCode: number) => {
+            if (incomingSessionId === sid) {
+              term.writeln(`\r\n[Process exited with code ${exitCode}]`)
+              spawnedRef.current = false
             }
-            spawnedRef.current = true
-            try {
-              fitAddon.fit()
+          }
+        )
+
+        cleanupListenersRef.current = () => {
+          disposable.dispose()
+          removeDataListener()
+          removeExitListener()
+        }
+
+        const observer = new ResizeObserver(() => {
+          try {
+            fitAddon.fit()
+            if (spawnedRef.current) {
               window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
-            } catch {}
-          }
+            }
+          } catch {}
         })
-        .catch((err: unknown) => {
-          term.writeln(`\r\nError: ${err instanceof Error ? err.message : String(err)}`)
-        })
-
-      const removeDataListener = window.api.terminal.onData(
-        (incomingSessionId: string, data: string) => {
-          if (incomingSessionId === sid) term.write(data)
-        }
-      )
-
-      const disposable = term.onData((data) => {
-        window.api.terminal.write(sid, data).catch(() => {})
-      })
-
-      const removeExitListener = window.api.terminal.onExit(
-        (incomingSessionId: string, exitCode: number) => {
-          if (incomingSessionId === sid) {
-            term.writeln(`\r\n[Process exited with code ${exitCode}]`)
-            spawnedRef.current = false
-          }
-        }
-      )
-
-      cleanupListenersRef.current = () => {
-        clearTimeout(fitTimer)
-        disposable.dispose()
-        removeDataListener()
-        removeExitListener()
-      }
-
-      const observer = new ResizeObserver(() => {
-        try {
-          fitAddon.fit()
-          if (spawnedRef.current) {
-            window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
-          }
-        } catch {}
-      })
-      observer.observe(el)
-      observerRef.current = observer
+        observer.observe(el)
+        observerRef.current = observer
+      }, 0)
     },
     [detachTerminal]
   )
 
   return (
-    <div className="flex flex-1 flex-col min-h-0">
+    <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
       <div className="flex items-center gap-2 border-b px-4 py-2">
         <span className="text-sm font-medium shrink-0">Terminal</span>
         {config.command && (
           <span className="truncate text-xs text-muted-foreground font-mono">$ {config.command}</span>
         )}
       </div>
-      <div
-        ref={containerCallbackRef}
-        className="relative flex-1 min-h-0 p-1"
-        style={{ background: '#1a1a2e' }}
-        onContextMenu={(e) => {
-          e.preventDefault()
-          setTermContextMenu({ x: e.clientX, y: e.clientY })
-        }}
-      />
+      <div className="relative flex-1 min-h-0">
+        <div
+          ref={containerCallbackRef}
+          className="absolute inset-0 p-1"
+          style={{ background: '#1a1a2e' }}
+          onContextMenu={(e) => {
+            e.preventDefault()
+            setTermContextMenu({ x: e.clientX, y: e.clientY })
+          }}
+        />
+      </div>
       {termContextMenu && (
         <div
           className="fixed z-[100] rounded-md border bg-popover p-1 shadow-md"

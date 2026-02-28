@@ -22,16 +22,6 @@ export interface WorkspaceState {
   activeBoardId: string | null
   folders: WorkspaceFolder[]
   boards: WorkspaceBoard[]
-  plans: WorkspacePlan[]
-}
-
-export interface WorkspacePlan {
-  id: string
-  folderId: string | null
-  name: string
-  sortOrder: number
-  createdAt: string
-  updatedAt: string
 }
 
 export function useWorkspace(): {
@@ -48,12 +38,6 @@ export function useWorkspace(): {
   moveBoard: (boardId: string, folderId?: string | null) => Promise<void>
   deleteBoard: (boardId: string) => Promise<void>
   setActiveBoard: (boardId: string) => Promise<void>
-  createPlan: (payload?: { name?: string; folderId?: string | null }) => Promise<void>
-  renamePlan: (planId: string, name: string) => Promise<string>
-  movePlan: (planId: string, folderId?: string | null) => Promise<void>
-  deletePlan: (planId: string) => Promise<void>
-  getPlanHtml: (planId: string) => Promise<string>
-  setPlanHtml: (planId: string, html: string) => Promise<void>
   getBoardDocumentHtml: (boardId: string) => Promise<string>
   setBoardDocumentHtml: (boardId: string, html: string) => Promise<void>
   setBoardActiveView: (boardId: string, view: string) => Promise<void>
@@ -163,48 +147,6 @@ export function useWorkspace(): {
     [applyWorkspaceMutation]
   )
 
-  const createPlan = useCallback(
-    async (payload?: { name?: string; folderId?: string | null }) => {
-      await applyWorkspaceMutation(() => window.api.workspace.createPlan(payload))
-    },
-    [applyWorkspaceMutation]
-  )
-
-  const renamePlan = useCallback(
-    async (planId: string, name: string): Promise<string> => {
-      let nextPlanId = planId
-      await applyWorkspaceMutation(async () => {
-        const result = await window.api.workspace.renamePlan(planId, name)
-        nextPlanId = result.nextPlanId
-        return result.snapshot
-      })
-      return nextPlanId
-    },
-    [applyWorkspaceMutation]
-  )
-
-  const movePlan = useCallback(
-    async (planId: string, folderId?: string | null) => {
-      await applyWorkspaceMutation(() => window.api.workspace.movePlan(planId, folderId))
-    },
-    [applyWorkspaceMutation]
-  )
-
-  const deletePlan = useCallback(
-    async (planId: string) => {
-      await applyWorkspaceMutation(() => window.api.workspace.deletePlan(planId))
-    },
-    [applyWorkspaceMutation]
-  )
-
-  const getPlanHtml = useCallback(async (planId: string) => {
-    return window.api.workspace.getPlanHtml(planId)
-  }, [])
-
-  const setPlanHtml = useCallback(async (planId: string, html: string) => {
-    await window.api.workspace.setPlanHtml(planId, html)
-  }, [])
-
   const getBoardDocumentHtml = useCallback(async (boardId: string) => {
     return window.api.workspace.getBoardDocumentHtml(boardId)
   }, [])
@@ -236,12 +178,6 @@ export function useWorkspace(): {
     moveBoard,
     deleteBoard,
     setActiveBoard,
-    createPlan,
-    renamePlan,
-    movePlan,
-    deletePlan,
-    getPlanHtml,
-    setPlanHtml,
     getBoardDocumentHtml,
     setBoardDocumentHtml,
     setBoardActiveView

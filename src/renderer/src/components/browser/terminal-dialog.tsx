@@ -92,6 +92,10 @@ export function TerminalDialog({
         return
       }
       spawnedRef.current = true
+      // Run configured command on restart
+      if (cfg.command?.trim()) {
+        window.api.terminal.write(sid, cfg.command.trim() + '\n').catch(() => {})
+      }
       try {
         fitAddon?.fit()
         window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
@@ -218,6 +222,10 @@ export function TerminalDialog({
               return
             }
             spawnedRef.current = true
+            // Run configured command on startup
+            if (cfg.command?.trim()) {
+              window.api.terminal.write(sid, cfg.command.trim() + '\n').catch(() => {})
+            }
             try {
               fitAddon.fit()
               window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})

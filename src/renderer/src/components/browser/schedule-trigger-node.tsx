@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
 import { CalendarClock, Play, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useFlowDirection, getSourcePosition } from './flow-direction-context'
@@ -15,6 +15,7 @@ import {
 import { cn } from '@/lib/utils'
 import { resolveScheduleCron } from '@/lib/schedule-cron'
 import { NodeExecutionFooter } from './node-status-bar'
+import { HandleWithTooltip } from './handle-with-tooltip'
 
 export interface ScheduleTriggerConfig {
   prompt?: string
@@ -93,7 +94,8 @@ function ScheduleTriggerNodeInner({ id, data, selected }: NodeProps): React.Reac
           setOpen(true)
         }}
       >
-        <Handle
+        <HandleWithTooltip
+          label="Output"
           type="source"
           position={sourcePos}
           className="!h-3 !w-3 !border-2 !border-indigo-300 !bg-indigo-500"

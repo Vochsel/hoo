@@ -13,7 +13,7 @@ import ListItem from '@tiptap/extension-list-item'
 import History from '@tiptap/extension-history'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
-import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, ListChecks, Undo2, Redo2, Globe, Terminal, FileText, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
+import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, ListChecks, Undo2, Redo2, Globe, Terminal, FileText, ChevronDown, ChevronRight, AlertTriangle, Circle, Loader2, CheckCircle2 } from 'lucide-react'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import type { GraphNode } from '@/hooks/use-graph-nodes'
 
@@ -38,6 +38,109 @@ interface BoardData {
   onOpenTab: (tab: BrowserTab) => void
   onOpenTerminal: (nodeId: string) => void
 }
+
+// ─── Task Embed Node ────────────────────────────────────────────────────────
+
+type TaskStatus = 'todo' | 'in_progress' | 'done'
+
+const STATUS_LABELS: Record<TaskStatus, string> = {
+  todo: 'To do',
+  in_progress: 'In progress',
+  done: 'Done'
+}
+
+function TaskEmbedNodeView(props: NodeViewProps): React.ReactElement {
+  const attrs = props.node.attrs as {
+    taskName?: string
+    status?: TaskStatus
+    dueDate?: string
+  }
+
+  const status = (attrs.status as TaskStatus) ?? 'todo'
+
+  const StatusIcon = status === 'done' ? CheckCircle2 : status === 'in_progress' ? Loader2 : Circle
+  const statusColor = status === 'done' ? 'text-green-500' : status === 'in_progress' ? 'text-blue-500' : 'text-muted-foreground/50'
+
+  return (
+    <NodeViewWrapper as="div" className="board-doc-task-node" contentEditable={false}>
+      <button
+        type="button"
+        className="flex items-center justify-center"
+        onClick={() => {
+          const next: TaskStatus = status === 'done' ? 'todo' : 'done'
+          props.updateAttributes({ status: next })
+        }}
+      >
+        <StatusIcon className={`h-4 w-4 shrink-0 cursor-pointer ${statusColor}`} />
+      </button>
+      <input
+        className="board-doc-task-name"
+        value={attrs.taskName ?? ''}
+        onChange={(event) => props.updateAttributes({ taskName: event.target.value })}
+        placeholder="Untitled task"
+      />
+      <select
+        className="board-doc-task-status"
+        value={status}
+        onChange={(event) => props.updateAttributes({ status: event.target.value as TaskStatus })}
+      >
+        {Object.entries(STATUS_LABELS).map(([value, label]) => (
+          <option key={value} value={value}>{label}</option>
+        ))}
+      </select>
+      <input
+        className="board-doc-task-due"
+        type="date"
+        value={attrs.dueDate ?? ''}
+        onChange={(event) => props.updateAttributes({ dueDate: event.target.value })}
+      />
+    </NodeViewWrapper>
+  )
+}
+
+const TaskEmbedNode = Node.create({
+  name: 'taskEmbed',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: false,
+  addNodeView() {
+    return ReactNodeViewRenderer(TaskEmbedNodeView)
+  },
+  addAttributes() {
+    return {
+      taskName: { default: '' },
+      status: { default: 'todo' },
+      dueDate: { default: '' }
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'div[data-task-embed]',
+        getAttrs: (element) => {
+          const el = element as HTMLElement
+          return {
+            taskName: el.getAttribute('data-task-name') ?? '',
+            status: el.getAttribute('data-status') ?? 'todo',
+            dueDate: el.getAttribute('data-due-date') ?? ''
+          }
+        }
+      }
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes(HTMLAttributes, {
+        'data-task-embed': 'true',
+        'data-task-name': HTMLAttributes.taskName ?? '',
+        'data-status': HTMLAttributes.status ?? 'todo',
+        'data-due-date': HTMLAttributes.dueDate ?? ''
+      })
+    ]
+  }
+})
 
 // ─── Shared Embed Context Menu ──────────────────────────────────────────────
 
@@ -448,7 +551,7 @@ const BoardDataExtension = Extension.create({
 interface SlashItem {
   id: string
   label: string
-  kind: 'browser' | 'terminal' | 'output'
+  kind: 'browser' | 'terminal' | 'output' | 'task'
   tabId?: string
   nodeId?: string
 }
@@ -490,6 +593,7 @@ function createBoardSlashExtension(getData: () => BoardData): Extension {
                 nodeId: node.id
               })
             }
+            items.push({ id: 'task-new', label: 'Task', kind: 'task' })
             if (!normalized) return items.slice(0, 10)
             return items
               .filter((item) => item.label.toLowerCase().includes(normalized) || item.kind.includes(normalized))
@@ -525,6 +629,16 @@ function createBoardSlashExtension(getData: () => BoardData): Extension {
                 .insertContent({
                   type: 'outputEmbed',
                   attrs: { nodeId: item.nodeId }
+                })
+                .run()
+            } else if (item.kind === 'task') {
+              editor
+                .chain()
+                .focus()
+                .deleteRange(range)
+                .insertContent({
+                  type: 'taskEmbed',
+                  attrs: { taskName: '', status: 'todo', dueDate: '' }
                 })
                 .run()
             }
@@ -564,7 +678,7 @@ function createBoardSlashExtension(getData: () => BoardData): Extension {
                 const button = document.createElement('button')
                 button.type = 'button'
                 button.className = `board-doc-slash-item${index === selectedIndex ? ' active' : ''}`
-                const icon = item.kind === 'browser' ? '\u{1F310} ' : item.kind === 'output' ? '\u{1F4C4} ' : '\u{1F5A5} '
+                const icon = item.kind === 'task' ? '\u{2611}\u{FE0F} ' : item.kind === 'browser' ? '\u{1F310} ' : item.kind === 'output' ? '\u{1F4C4} ' : '\u{1F5A5} '
                 button.textContent = `${icon}${item.label}`
                 button.addEventListener('mousedown', (event) => {
                   event.preventDefault()
@@ -695,6 +809,7 @@ export function BoardDocumentView({
       BrowserEmbedNode,
       TerminalEmbedNode,
       OutputEmbedNode,
+      TaskEmbedNode,
       BoardDataExtension,
       slashExtension
     ],

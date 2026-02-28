@@ -1,8 +1,9 @@
 import { memo, useState, useRef, useEffect } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
 import { Timer, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { HandleWithTooltip } from './handle-with-tooltip'
 import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
 
 export interface DelayNodeData {
@@ -73,12 +74,14 @@ function DelayNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
         if (!editing) setEditing(true)
       }}
     >
-      <Handle
+      <HandleWithTooltip
+        label="Input"
         type="target"
         position={targetPos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
-      <Handle
+      <HandleWithTooltip
+        label="Output"
         type="source"
         position={sourcePos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"

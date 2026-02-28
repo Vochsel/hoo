@@ -11,7 +11,6 @@ const WORKSPACE_ROOT_SETTING_KEY = 'workspaceRootDir'
 const WORKSPACE_ACTIVE_BOARD_KEY = 'activeBoardId'
 const DEFAULT_WORKSPACE_DIRNAME = 'Hoo Workspace'
 const BOARD_FILE_SUFFIX = '.board.json'
-const PLAN_FILE_SUFFIX = '.plan'
 
 export interface WorkspaceFolderSnapshot {
   id: string
@@ -30,21 +29,11 @@ export interface WorkspaceBoardSnapshot {
   updatedAt: string
 }
 
-export interface WorkspacePlanSnapshot {
-  id: string
-  folderId: string | null
-  name: string
-  sortOrder: number
-  createdAt: string
-  updatedAt: string
-}
-
 export interface WorkspaceSnapshot {
   rootDir: string
   activeBoardId: string | null
   folders: WorkspaceFolderSnapshot[]
   boards: WorkspaceBoardSnapshot[]
-  plans: WorkspacePlanSnapshot[]
 }
 
 export type BoardViewMode = 'whiteboard' | 'tabs' | 'document'
@@ -126,33 +115,9 @@ function normalizeBoardId(boardId: string): string {
   return normalized
 }
 
-function normalizePlanId(planId: string): string {
-  const normalized = planId
-    .replace(/\\/g, '/')
-    .split('/')
-    .filter(Boolean)
-    .join('/')
-  if (
-    !normalized ||
-    normalized.startsWith('../') ||
-    normalized.includes('/../') ||
-    normalized === '..' ||
-    normalized.startsWith('/') ||
-    !normalized.endsWith(PLAN_FILE_SUFFIX)
-  ) {
-    throw new Error('Invalid plan id')
-  }
-  return normalized
-}
-
 function boardNameFromId(boardId: string): string {
   const filename = basename(boardId)
   return filename.slice(0, -BOARD_FILE_SUFFIX.length)
-}
-
-function planNameFromId(planId: string): string {
-  const filename = basename(planId)
-  return filename.slice(0, -PLAN_FILE_SUFFIX.length)
 }
 
 function defaultBoardDocument(): BoardDocument {
@@ -200,16 +165,6 @@ function toBoardPath(rootDir: string, boardId: string): string {
   return absolute
 }
 
-function toPlanPath(rootDir: string, planId: string): string {
-  const normalized = normalizePlanId(planId)
-  const resolvedRoot = resolve(rootDir)
-  const absolute = resolve(rootDir, ...normalized.split('/'))
-  if (!(absolute === resolvedRoot || absolute.startsWith(`${resolvedRoot}${sep}`))) {
-    throw new Error('Plan path escapes workspace root')
-  }
-  return absolute
-}
-
 async function fileExists(path: string): Promise<boolean> {
   try {
     await fs.access(path)
@@ -242,13 +197,6 @@ async function listBoardFilesInDirectory(directory: string): Promise<string[]> {
     .map((entry) => join(directory, entry.name))
 }
 
-async function listPlanFilesInDirectory(directory: string): Promise<string[]> {
-  const entries = await fs.readdir(directory, { withFileTypes: true })
-  return entries
-    .filter((entry) => entry.isFile() && entry.name.endsWith(PLAN_FILE_SUFFIX))
-    .map((entry) => join(directory, entry.name))
-}
-
 async function listWorkspaceBoardFiles(rootDir: string): Promise<string[]> {
   const boardFiles: string[] = []
   boardFiles.push(...(await listBoardFilesInDirectory(rootDir)))
@@ -263,22 +211,6 @@ async function listWorkspaceBoardFiles(rootDir: string): Promise<string[]> {
 
   boardFiles.sort((a, b) => a.localeCompare(b))
   return boardFiles
-}
-
-async function listWorkspacePlanFiles(rootDir: string): Promise<string[]> {
-  const planFiles: string[] = []
-  planFiles.push(...(await listPlanFilesInDirectory(rootDir)))
-
-  const entries = await fs.readdir(rootDir, { withFileTypes: true })
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue
-    if (entry.name.startsWith('.')) continue
-    const folderPath = join(rootDir, entry.name)
-    planFiles.push(...(await listPlanFilesInDirectory(folderPath)))
-  }
-
-  planFiles.sort((a, b) => a.localeCompare(b))
-  return planFiles
 }
 
 function tableExists(sqlite: Database.Database, tableName: string): boolean {
@@ -573,7 +505,6 @@ export async function deleteFolderInWorkspace(folderId: string): Promise<void> {
   const normalizedFolderId = normalizeFolderId(folderId)
   const folderPath = join(rootDir, normalizedFolderId)
   const boardFiles = await listBoardFilesInDirectory(folderPath)
-  const planFiles = await listPlanFilesInDirectory(folderPath)
 
   const activeId = getWorkspaceActiveBoardId()
   for (const boardPath of boardFiles) {
@@ -587,12 +518,6 @@ export async function deleteFolderInWorkspace(folderId: string): Promise<void> {
         setWorkspaceActiveBoardId(toBoardId(rootDir, targetPath))
       }
     }
-  }
-
-  for (const planPath of planFiles) {
-    const planName = basename(planPath, PLAN_FILE_SUFFIX)
-    const targetPath = await ensureUniquePath(rootDir, planName, PLAN_FILE_SUFFIX)
-    await fs.rename(planPath, targetPath)
   }
 
   await fs.rm(folderPath, { recursive: true, force: true })
@@ -653,84 +578,6 @@ export async function moveBoardInWorkspace(
   return nextBoardId
 }
 
-export async function createPlanInWorkspace(payload?: {
-  name?: string
-  folderId?: string | null
-}): Promise<string> {
-  const rootDir = await ensureWorkspaceRootExists()
-  const folderId = payload?.folderId?.trim() ? normalizeFolderId(payload.folderId) : null
-  const targetDir = folderId ? join(rootDir, folderId) : rootDir
-  await fs.mkdir(targetDir, { recursive: true })
-
-  const planBase = sanitizePathName(payload?.name, 'New Plan')
-  const planPath = await ensureUniquePath(targetDir, planBase, PLAN_FILE_SUFFIX)
-  const initialHtml = '<p></p>'
-  await fs.writeFile(planPath, initialHtml, 'utf8')
-  const planId = relative(rootDir, planPath).replace(/\\/g, '/')
-  return normalizePlanId(planId)
-}
-
-export async function renamePlanInWorkspace(planId: string, name: string): Promise<string> {
-  const rootDir = await ensureWorkspaceRootExists()
-  const normalizedPlanId = normalizePlanId(planId)
-  const sourcePath = toPlanPath(rootDir, normalizedPlanId)
-  const sourceDir = dirname(sourcePath)
-  const planBase = sanitizePathName(name, 'Untitled Plan')
-  const targetPath = await ensureUniquePath(sourceDir, planBase, PLAN_FILE_SUFFIX)
-  await fs.rename(sourcePath, targetPath)
-  const nextPlanId = relative(rootDir, targetPath).replace(/\\/g, '/')
-  return normalizePlanId(nextPlanId)
-}
-
-export async function movePlanInWorkspace(planId: string, folderId?: string | null): Promise<string> {
-  const rootDir = await ensureWorkspaceRootExists()
-  const normalizedPlanId = normalizePlanId(planId)
-  const sourcePath = toPlanPath(rootDir, normalizedPlanId)
-  const normalizedFolder = folderId?.trim() ? normalizeFolderId(folderId) : null
-  const targetDir = normalizedFolder ? join(rootDir, normalizedFolder) : rootDir
-  await fs.mkdir(targetDir, { recursive: true })
-
-  const sourceName = basename(sourcePath, PLAN_FILE_SUFFIX)
-  const targetPath = await ensureUniquePath(targetDir, sourceName, PLAN_FILE_SUFFIX)
-  await fs.rename(sourcePath, targetPath)
-  const nextPlanId = relative(rootDir, targetPath).replace(/\\/g, '/')
-  return normalizePlanId(nextPlanId)
-}
-
-export async function deletePlanInWorkspace(planId: string): Promise<void> {
-  const rootDir = await ensureWorkspaceRootExists()
-  const normalizedPlanId = normalizePlanId(planId)
-  const planPath = toPlanPath(rootDir, normalizedPlanId)
-  await fs.rm(planPath, { force: true })
-}
-
-export async function readPlanHtml(planId: string): Promise<string> {
-  const rootDir = await ensureWorkspaceRootExists()
-  const normalizedPlanId = normalizePlanId(planId)
-  const planPath = toPlanPath(rootDir, normalizedPlanId)
-  try {
-    return await fs.readFile(planPath, 'utf8')
-  } catch {
-    await fs.mkdir(dirname(planPath), { recursive: true })
-    await fs.writeFile(planPath, '<p></p>', 'utf8')
-    return '<p></p>'
-  }
-}
-
-export async function writePlanHtml(planId: string, html: string): Promise<void> {
-  const rootDir = await ensureWorkspaceRootExists()
-  const normalizedPlanId = normalizePlanId(planId)
-  const planPath = toPlanPath(rootDir, normalizedPlanId)
-  await fs.mkdir(dirname(planPath), { recursive: true })
-  await fs.writeFile(planPath, html, 'utf8')
-}
-
-export async function planExists(planId: string): Promise<boolean> {
-  const rootDir = await ensureWorkspaceRootExists()
-  const planPath = toPlanPath(rootDir, planId)
-  return fileExists(planPath)
-}
-
 export async function deleteBoardInWorkspace(boardId: string): Promise<void> {
   const rootDir = await ensureWorkspaceRootExists()
   const normalizedBoardId = normalizeBoardId(boardId)
@@ -779,24 +626,6 @@ export async function getWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
     })
   )
 
-  const planFiles = await listWorkspacePlanFiles(rootDir)
-  const plans: WorkspacePlanSnapshot[] = await Promise.all(
-    planFiles.map(async (planPath, index) => {
-      const stat = await fs.stat(planPath)
-      const planId = relative(rootDir, planPath).replace(/\\/g, '/')
-      const normalizedPlanId = normalizePlanId(planId)
-      const folderName = normalizedPlanId.includes('/') ? normalizedPlanId.split('/')[0] : null
-      return {
-        id: normalizedPlanId,
-        folderId: folderName,
-        name: planNameFromId(normalizedPlanId),
-        sortOrder: index,
-        createdAt: isoFromFsTime(stat.birthtimeMs),
-        updatedAt: isoFromFsTime(stat.mtimeMs)
-      }
-    })
-  )
-
   let activeBoardId = resolveBoardId()
   if (!activeBoardId || !boards.some((board) => board.id === activeBoardId)) {
     activeBoardId = boards[0]?.id ?? null
@@ -811,8 +640,7 @@ export async function getWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
     rootDir,
     activeBoardId,
     folders,
-    boards,
-    plans
+    boards
   }
 }
 

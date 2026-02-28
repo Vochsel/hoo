@@ -1,8 +1,9 @@
 import { memo } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
 import { Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { HandleWithTooltip } from './handle-with-tooltip'
 import { useFlowDirection, getSourcePosition } from './flow-direction-context'
 
 export interface TriggerNodeData {
@@ -43,7 +44,8 @@ function TriggerNodeInner({ id, data, selected }: NodeProps): React.ReactElement
         className="px-2.5 py-1.5"
       />
 
-      <Handle
+      <HandleWithTooltip
+        label="Output"
         type="source"
         position={sourcePos}
         className="!h-3 !w-3 !border-2 !border-primary !bg-primary-foreground"

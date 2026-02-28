@@ -1,7 +1,8 @@
 import { memo, useState, type ReactNode } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
 import { FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { HandleWithTooltip } from './handle-with-tooltip'
 import { useFlowDirection, getTargetPosition } from './flow-direction-context'
 import {
   Dialog,
@@ -439,7 +440,8 @@ function OutputNodeInner({ data, selected }: NodeProps): React.ReactElement {
           if (markdown) setOpen(true)
         }}
       >
-        <Handle
+        <HandleWithTooltip
+          label="Input"
           type="target"
           position={targetPos}
           className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"

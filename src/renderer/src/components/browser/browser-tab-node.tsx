@@ -1,5 +1,6 @@
 import { memo } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
+import { HandleWithTooltip } from './handle-with-tooltip'
 import { Globe, X, Radio, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BrowserTabMonitor } from '@/hooks/use-browser-tabs'
@@ -94,11 +95,11 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
                 {monitor.condition}
               </span>
               {/* Handle sits inside the row so it's vertically centered */}
-              <Handle
+              <HandleWithTooltip
+                label={monitor.condition}
                 type="source"
                 position={sourcePos}
                 id={`monitor-${monitor.id}`}
-                title={monitor.condition}
                 className={cn(
                   '!absolute !w-3 !h-3 !bg-amber-500 !border-2 !border-amber-300',
                   direction === 'vertical'
@@ -114,12 +115,14 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
       <NodeExecutionFooter status={runtimeStatus} isRunning={isRunning} runtimeOutput={runtimeOutput as string | undefined} className="px-2.5 py-1.5" />
 
       {/* Default handles */}
-      <Handle
+      <HandleWithTooltip
+        label="Input"
         type="target"
         position={targetPos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
-      <Handle
+      <HandleWithTooltip
+        label="Page content"
         type="source"
         position={sourcePos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
