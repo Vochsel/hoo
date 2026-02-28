@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from 'react'
 import { Globe, Terminal, Plus, X } from 'lucide-react'
 import { BrowserTabContent } from './browser-tab-content'
 import { TerminalContent } from './terminal-content'
@@ -10,16 +10,21 @@ type TabItem =
   | { kind: 'browser'; tab: BrowserTab }
   | { kind: 'terminal'; node: GraphNode }
 
+export interface BoardTabsViewHandle {
+  selectTab: (id: string) => void
+}
+
 interface BoardTabsViewProps {
   tabs: BrowserTab[]
   terminalNodes: GraphNode[]
   activeBoardId: string | null
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
-  onCreateTab: () => void
+  onCreateTab: () => Promise<BrowserTab | void>
   onDeleteTab: (id: string) => void
   onOpenTab: (tab: BrowserTab) => void
   onOpenTerminal: (nodeId: string) => void
   onUpdateNode: (id: string, data: Record<string, unknown>) => Promise<unknown>
+  workspaceRootDir?: string
 }
 
 function parseNodeConfig(rawConfig: string): Record<string, unknown> {
@@ -31,7 +36,7 @@ function parseNodeConfig(rawConfig: string): Record<string, unknown> {
   }
 }
 
-export function BoardTabsView({
+export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>(function BoardTabsView({
   tabs,
   terminalNodes,
   activeBoardId,
@@ -40,13 +45,18 @@ export function BoardTabsView({
   onDeleteTab,
   onOpenTab,
   onOpenTerminal,
-  onUpdateNode
-}: BoardTabsViewProps): React.ReactElement {
+  onUpdateNode,
+  workspaceRootDir
+}, ref): React.ReactElement {
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     if (tabs.length > 0) return tabs[0].id
     if (terminalNodes.length > 0) return terminalNodes[0].id
     return null
   })
+
+  useImperativeHandle(ref, () => ({
+    selectTab: (id: string) => setSelectedId(id)
+  }))
 
   const allItems: TabItem[] = [
     ...tabs.map((tab): TabItem => ({ kind: 'browser', tab })),
@@ -65,6 +75,22 @@ export function BoardTabsView({
       setSelectedId(first.kind === 'browser' ? first.tab.id : first.node.id)
     }
   }, [selectedId, selectedItem, allItems])
+
+  // Cmd+1-9 keyboard shortcuts to switch tabs
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent): void => {
+      if (!e.metaKey && !e.ctrlKey) return
+      const num = parseInt(e.key, 10)
+      if (num < 1 || num > 9 || isNaN(num)) return
+      const index = num - 1
+      if (index >= allItems.length) return
+      e.preventDefault()
+      const target = allItems[index]
+      setSelectedId(target.kind === 'browser' ? target.tab.id : target.node.id)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [allItems])
 
   const handleSelectTab = useCallback((id: string) => {
     setSelectedId(id)
@@ -94,7 +120,10 @@ export function BoardTabsView({
         <button
           type="button"
           className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
-          onClick={onCreateTab}
+          onClick={async () => {
+            const newTab = await onCreateTab()
+            if (newTab) setSelectedId(newTab.id)
+          }}
         >
           <Plus className="h-3.5 w-3.5" />
           New browser tab
@@ -156,7 +185,10 @@ export function BoardTabsView({
         <button
           type="button"
           className="flex items-center justify-center rounded-t-md px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
-          onClick={onCreateTab}
+          onClick={async () => {
+            const newTab = await onCreateTab()
+            if (newTab) setSelectedId(newTab.id)
+          }}
           title="New tab"
         >
           <Plus className="h-3.5 w-3.5" />
@@ -181,6 +213,7 @@ export function BoardTabsView({
             onUpdateConfig={(nextCfg) => {
               void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
             }}
+            workspaceRootDir={workspaceRootDir}
           />
         )}
         {!selectedItem && (
@@ -191,4 +224,4 @@ export function BoardTabsView({
       </div>
     </div>
   )
-}
+})

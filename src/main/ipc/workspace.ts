@@ -62,8 +62,9 @@ export function registerWorkspaceHandlers(): void {
   })
 
   ipcMain.handle('workspace:renameFolder', async (_event, folderId: string, name: string) => {
-    await renameFolderInWorkspace(folderId, name)
-    return getWorkspaceSnapshot()
+    const nextFolderName = await renameFolderInWorkspace(folderId, name)
+    const snapshot = await getWorkspaceSnapshot()
+    return { snapshot, nextFolderName }
   })
 
   ipcMain.handle('workspace:deleteFolder', async (_event, folderId: string) => {
@@ -78,8 +79,9 @@ export function registerWorkspaceHandlers(): void {
   })
 
   ipcMain.handle('workspace:renameBoard', async (_event, boardId: string, name: string) => {
-    await renameBoardInWorkspace(boardId, name)
-    return getWorkspaceSnapshot()
+    const nextBoardId = await renameBoardInWorkspace(boardId, name)
+    const snapshot = await getWorkspaceSnapshot()
+    return { snapshot, nextBoardId }
   })
 
   ipcMain.handle('workspace:moveBoard', async (_event, boardId: string, folderId?: string | null) => {
@@ -109,8 +111,9 @@ export function registerWorkspaceHandlers(): void {
   })
 
   ipcMain.handle('workspace:renamePlan', async (_event, planId: string, name: string) => {
-    await renamePlanInWorkspace(planId, name)
-    return getWorkspaceSnapshot()
+    const nextPlanId = await renamePlanInWorkspace(planId, name)
+    const snapshot = await getWorkspaceSnapshot()
+    return { snapshot, nextPlanId }
   })
 
   ipcMain.handle('workspace:movePlan', async (_event, planId: string, folderId?: string | null) => {

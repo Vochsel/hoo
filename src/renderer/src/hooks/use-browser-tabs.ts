@@ -24,6 +24,7 @@ export interface BrowserTab {
   favicon: string | null
   screenshot: string | null
   monitors: string | null
+  pinnedUrl: string | null
   flowX: number
   flowY: number
   createdAt: string

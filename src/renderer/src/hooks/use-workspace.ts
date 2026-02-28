@@ -41,15 +41,15 @@ export function useWorkspace(): {
   refresh: () => Promise<void>
   setRootDir: (rootDir: string) => Promise<void>
   createFolder: (name?: string) => Promise<void>
-  renameFolder: (folderId: string, name: string) => Promise<void>
+  renameFolder: (folderId: string, name: string) => Promise<string>
   deleteFolder: (folderId: string) => Promise<void>
   createBoard: (payload?: { name?: string; folderId?: string | null }) => Promise<void>
-  renameBoard: (boardId: string, name: string) => Promise<void>
+  renameBoard: (boardId: string, name: string) => Promise<string>
   moveBoard: (boardId: string, folderId?: string | null) => Promise<void>
   deleteBoard: (boardId: string) => Promise<void>
   setActiveBoard: (boardId: string) => Promise<void>
   createPlan: (payload?: { name?: string; folderId?: string | null }) => Promise<void>
-  renamePlan: (planId: string, name: string) => Promise<void>
+  renamePlan: (planId: string, name: string) => Promise<string>
   movePlan: (planId: string, folderId?: string | null) => Promise<void>
   deletePlan: (planId: string) => Promise<void>
   getPlanHtml: (planId: string) => Promise<string>
@@ -103,8 +103,14 @@ export function useWorkspace(): {
   )
 
   const renameFolder = useCallback(
-    async (folderId: string, name: string) => {
-      await applyWorkspaceMutation(() => window.api.workspace.renameFolder(folderId, name))
+    async (folderId: string, name: string): Promise<string> => {
+      let nextFolderName = folderId
+      await applyWorkspaceMutation(async () => {
+        const result = await window.api.workspace.renameFolder(folderId, name)
+        nextFolderName = result.nextFolderName
+        return result.snapshot
+      })
+      return nextFolderName
     },
     [applyWorkspaceMutation]
   )
@@ -124,8 +130,14 @@ export function useWorkspace(): {
   )
 
   const renameBoard = useCallback(
-    async (boardId: string, name: string) => {
-      await applyWorkspaceMutation(() => window.api.workspace.renameBoard(boardId, name))
+    async (boardId: string, name: string): Promise<string> => {
+      let nextBoardId = boardId
+      await applyWorkspaceMutation(async () => {
+        const result = await window.api.workspace.renameBoard(boardId, name)
+        nextBoardId = result.nextBoardId
+        return result.snapshot
+      })
+      return nextBoardId
     },
     [applyWorkspaceMutation]
   )
@@ -159,8 +171,14 @@ export function useWorkspace(): {
   )
 
   const renamePlan = useCallback(
-    async (planId: string, name: string) => {
-      await applyWorkspaceMutation(() => window.api.workspace.renamePlan(planId, name))
+    async (planId: string, name: string): Promise<string> => {
+      let nextPlanId = planId
+      await applyWorkspaceMutation(async () => {
+        const result = await window.api.workspace.renamePlan(planId, name)
+        nextPlanId = result.nextPlanId
+        return result.snapshot
+      })
+      return nextPlanId
     },
     [applyWorkspaceMutation]
   )

@@ -3,6 +3,7 @@ import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Timer, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
 
 export interface DelayNodeData {
   label: string
@@ -56,6 +57,10 @@ function DelayNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
     return rem > 0 ? `${mins}m ${rem}s` : `${mins}m`
   }
 
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
+  const targetPos = getTargetPosition(direction)
+
   return (
     <div
       className={cn(
@@ -70,12 +75,12 @@ function DelayNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
     >
       <Handle
         type="target"
-        position={Position.Left}
+        position={targetPos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
       <Handle
         type="source"
-        position={Position.Right}
+        position={sourcePos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
 

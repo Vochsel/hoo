@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { Extension, Node, mergeAttributes } from '@tiptap/core'
 import { EditorContent, useEditor, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from '@tiptap/react'
 import Suggestion from '@tiptap/suggestion'
@@ -11,7 +11,9 @@ import Heading from '@tiptap/extension-heading'
 import BulletList from '@tiptap/extension-bullet-list'
 import ListItem from '@tiptap/extension-list-item'
 import History from '@tiptap/extension-history'
-import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, Undo2, Redo2, Globe, Terminal, AlertTriangle } from 'lucide-react'
+import TaskList from '@tiptap/extension-task-list'
+import TaskItem from '@tiptap/extension-task-item'
+import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, ListChecks, Undo2, Redo2, Globe, Terminal, FileText, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import type { GraphNode } from '@/hooks/use-graph-nodes'
 
@@ -23,6 +25,7 @@ interface BoardDocumentViewProps {
   loading: boolean
   tabs: BrowserTab[]
   terminalNodes: GraphNode[]
+  outputNodes: GraphNode[]
   onChange: (html: string) => void
   onOpenTab: (tab: BrowserTab) => void
   onOpenTerminal: (nodeId: string) => void
@@ -31,8 +34,49 @@ interface BoardDocumentViewProps {
 interface BoardData {
   tabs: BrowserTab[]
   terminalNodes: GraphNode[]
+  outputNodes: GraphNode[]
   onOpenTab: (tab: BrowserTab) => void
   onOpenTerminal: (nodeId: string) => void
+}
+
+// ─── Shared Embed Context Menu ──────────────────────────────────────────────
+
+function EmbedContextMenu({
+  x,
+  y,
+  onDelete,
+  onClose
+}: {
+  x: number
+  y: number
+  onDelete: () => void
+  onClose: () => void
+}): React.ReactElement {
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = (e: MouseEvent): void => {
+      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [onClose])
+
+  return (
+    <div
+      ref={ref}
+      className="fixed z-50 min-w-[140px] rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+      style={{ left: x, top: y }}
+    >
+      <button
+        type="button"
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+        onClick={onDelete}
+      >
+        Remove embed
+      </button>
+    </div>
+  )
 }
 
 // ─── Browser Embed Node View ────────────────────────────────────────────────
@@ -41,42 +85,87 @@ function BrowserEmbedNodeView(props: NodeViewProps): React.ReactElement {
   const tabId = props.node.attrs.tabId as string
   const boardData = props.editor.storage.boardData as BoardData | undefined
   const tab = boardData?.tabs.find((t) => t.id === tabId)
+  const [expanded, setExpanded] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }, [])
+
+  const handleDelete = useCallback(() => {
+    setContextMenu(null)
+    props.deleteNode()
+  }, [props])
 
   if (!tab) {
     return (
       <NodeViewWrapper as="div" className="browser-embed-card not-found" contentEditable={false}>
-        <div className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3">
+        <div
+          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3"
+          onContextMenu={handleContextMenu}
+        >
           <AlertTriangle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
           <span className="text-xs text-muted-foreground">Browser tab not found</span>
         </div>
+        {contextMenu && (
+          <EmbedContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={handleDelete} onClose={() => setContextMenu(null)} />
+        )}
       </NodeViewWrapper>
     )
   }
 
   return (
     <NodeViewWrapper as="div" className="browser-embed-card" contentEditable={false}>
-      <button
-        type="button"
-        className="flex w-full items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:bg-accent/50"
-        onClick={() => boardData?.onOpenTab(tab)}
+      <div
+        className="rounded-lg border bg-card transition-colors hover:bg-accent/50"
+        onContextMenu={handleContextMenu}
       >
-        {tab.favicon ? (
-          <img src={tab.favicon} alt="" className="h-5 w-5 shrink-0 rounded-sm" />
-        ) : (
-          <Globe className="h-5 w-5 shrink-0 text-muted-foreground" />
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 px-4 py-3 text-left"
+          onClick={() => boardData?.onOpenTab(tab)}
+        >
+          {tab.screenshot ? (
+            <button
+              type="button"
+              className="shrink-0 text-muted-foreground/50 hover:text-foreground"
+              onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+            >
+              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+          ) : null}
+          {tab.favicon ? (
+            <img src={tab.favicon} alt="" className="h-5 w-5 shrink-0 rounded-sm" />
+          ) : (
+            <Globe className="h-5 w-5 shrink-0 text-muted-foreground" />
+          )}
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{tab.title || 'Untitled'}</p>
+            <p className="truncate text-xs text-muted-foreground">{tab.url || 'about:blank'}</p>
+          </div>
+          {tab.screenshot && !expanded && (
+            <img
+              src={tab.screenshot}
+              alt=""
+              className="h-10 w-16 shrink-0 rounded border object-cover object-top"
+            />
+          )}
+        </button>
+        {expanded && tab.screenshot && (
+          <div className="border-t px-4 py-3">
+            <img
+              src={tab.screenshot}
+              alt=""
+              className="w-full rounded border object-contain"
+            />
+          </div>
         )}
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{tab.title || 'Untitled'}</p>
-          <p className="truncate text-xs text-muted-foreground">{tab.url || 'about:blank'}</p>
-        </div>
-        {tab.screenshot && (
-          <img
-            src={tab.screenshot}
-            alt=""
-            className="h-10 w-16 shrink-0 rounded border object-cover object-top"
-          />
-        )}
-      </button>
+      </div>
+      {contextMenu && (
+        <EmbedContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={handleDelete} onClose={() => setContextMenu(null)} />
+      )}
     </NodeViewWrapper>
   )
 }
@@ -123,14 +212,32 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
   const nodeId = props.node.attrs.nodeId as string
   const boardData = props.editor.storage.boardData as BoardData | undefined
   const node = boardData?.terminalNodes.find((n) => n.id === nodeId)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }, [])
+
+  const handleDelete = useCallback(() => {
+    setContextMenu(null)
+    props.deleteNode()
+  }, [props])
 
   if (!node) {
     return (
       <NodeViewWrapper as="div" className="terminal-embed-card not-found" contentEditable={false}>
-        <div className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3">
+        <div
+          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3"
+          onContextMenu={handleContextMenu}
+        >
           <AlertTriangle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
           <span className="text-xs text-muted-foreground">Terminal not found</span>
         </div>
+        {contextMenu && (
+          <EmbedContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={handleDelete} onClose={() => setContextMenu(null)} />
+        )}
       </NodeViewWrapper>
     )
   }
@@ -142,19 +249,27 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
 
   return (
     <NodeViewWrapper as="div" className="terminal-embed-card" contentEditable={false}>
-      <button
-        type="button"
-        className="flex w-full items-center gap-3 rounded-lg border bg-card px-4 py-3 text-left transition-colors hover:bg-accent/50"
-        onClick={() => boardData?.onOpenTerminal(node.id)}
+      <div
+        className="rounded-lg border bg-card transition-colors hover:bg-accent/50"
+        onContextMenu={handleContextMenu}
       >
-        <Terminal className="h-5 w-5 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{node.label || 'Terminal'}</p>
-          {config.command && (
-            <p className="truncate text-xs text-muted-foreground font-mono">$ {String(config.command)}</p>
-          )}
-        </div>
-      </button>
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 px-4 py-3 text-left"
+          onClick={() => boardData?.onOpenTerminal(node.id)}
+        >
+          <Terminal className="h-5 w-5 shrink-0 text-muted-foreground" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{node.label || 'Terminal'}</p>
+            {config.command && (
+              <p className="truncate text-xs text-muted-foreground font-mono">$ {String(config.command)}</p>
+            )}
+          </div>
+        </button>
+      </div>
+      {contextMenu && (
+        <EmbedContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={handleDelete} onClose={() => setContextMenu(null)} />
+      )}
     </NodeViewWrapper>
   )
 }
@@ -195,6 +310,124 @@ const TerminalEmbedNode = Node.create({
   }
 })
 
+// ─── Output Embed Node View ─────────────────────────────────────────────────
+
+function OutputEmbedNodeView(props: NodeViewProps): React.ReactElement {
+  const nodeId = props.node.attrs.nodeId as string
+  const boardData = props.editor.storage.boardData as BoardData | undefined
+  const node = boardData?.outputNodes.find((n) => n.id === nodeId)
+  const [expanded, setExpanded] = useState(false)
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setContextMenu({ x: e.clientX, y: e.clientY })
+  }, [])
+
+  const handleDelete = useCallback(() => {
+    setContextMenu(null)
+    props.deleteNode()
+  }, [props])
+
+  if (!node) {
+    return (
+      <NodeViewWrapper as="div" className="output-embed-card not-found" contentEditable={false}>
+        <div
+          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3"
+          onContextMenu={handleContextMenu}
+        >
+          <AlertTriangle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
+          <span className="text-xs text-muted-foreground">Output node not found</span>
+        </div>
+        {contextMenu && (
+          <EmbedContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={handleDelete} onClose={() => setContextMenu(null)} />
+        )}
+      </NodeViewWrapper>
+    )
+  }
+
+  let config: Record<string, unknown> = {}
+  try {
+    config = JSON.parse(node.config) as Record<string, unknown>
+  } catch {}
+  const markdown = typeof config.markdown === 'string' ? config.markdown : ''
+
+  return (
+    <NodeViewWrapper as="div" className="output-embed-card" contentEditable={false}>
+      <div
+        className="rounded-lg border bg-card transition-colors hover:bg-accent/50"
+        onContextMenu={handleContextMenu}
+      >
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 px-4 py-3 text-left"
+          onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+        >
+          {markdown ? (
+            <span className="shrink-0 text-muted-foreground/50">
+              {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </span>
+          ) : null}
+          <FileText className="h-5 w-5 shrink-0 text-emerald-500" />
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-sm font-medium">{node.label || 'Output'}</p>
+            {markdown && !expanded && (
+              <p className="truncate text-xs text-muted-foreground">{markdown.slice(0, 100)}</p>
+            )}
+          </div>
+        </button>
+        {expanded && markdown && (
+          <div className="border-t px-4 py-3">
+            <pre className="overflow-auto rounded bg-muted/70 p-2 text-[11px] leading-relaxed text-foreground whitespace-pre-wrap max-h-[400px]">
+              {markdown}
+            </pre>
+          </div>
+        )}
+      </div>
+      {contextMenu && (
+        <EmbedContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={handleDelete} onClose={() => setContextMenu(null)} />
+      )}
+    </NodeViewWrapper>
+  )
+}
+
+const OutputEmbedNode = Node.create({
+  name: 'outputEmbed',
+  group: 'block',
+  atom: true,
+  selectable: true,
+  draggable: true,
+  addNodeView() {
+    return ReactNodeViewRenderer(OutputEmbedNodeView)
+  },
+  addAttributes() {
+    return {
+      nodeId: { default: '' }
+    }
+  },
+  parseHTML() {
+    return [
+      {
+        tag: 'div[data-output-embed]',
+        getAttrs: (element) => {
+          const el = element as HTMLElement
+          return { nodeId: el.getAttribute('data-node-id') ?? '' }
+        }
+      }
+    ]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return [
+      'div',
+      mergeAttributes(HTMLAttributes, {
+        'data-output-embed': 'true',
+        'data-node-id': HTMLAttributes.nodeId ?? ''
+      })
+    ]
+  }
+})
+
 // ─── Board Data Extension (stores live data for NodeViews) ──────────────────
 
 const BoardDataExtension = Extension.create({
@@ -203,6 +436,7 @@ const BoardDataExtension = Extension.create({
     return {
       tabs: [] as BrowserTab[],
       terminalNodes: [] as GraphNode[],
+      outputNodes: [] as GraphNode[],
       onOpenTab: (() => {}) as (tab: BrowserTab) => void,
       onOpenTerminal: (() => {}) as (nodeId: string) => void
     }
@@ -214,7 +448,7 @@ const BoardDataExtension = Extension.create({
 interface SlashItem {
   id: string
   label: string
-  kind: 'browser' | 'terminal'
+  kind: 'browser' | 'terminal' | 'output'
   tabId?: string
   nodeId?: string
 }
@@ -248,6 +482,14 @@ function createBoardSlashExtension(getData: () => BoardData): Extension {
                 nodeId: node.id
               })
             }
+            for (const node of data.outputNodes) {
+              items.push({
+                id: `output-${node.id}`,
+                label: node.label || 'Output',
+                kind: 'output',
+                nodeId: node.id
+              })
+            }
             if (!normalized) return items.slice(0, 10)
             return items
               .filter((item) => item.label.toLowerCase().includes(normalized) || item.kind.includes(normalized))
@@ -272,6 +514,16 @@ function createBoardSlashExtension(getData: () => BoardData): Extension {
                 .deleteRange(range)
                 .insertContent({
                   type: 'terminalEmbed',
+                  attrs: { nodeId: item.nodeId }
+                })
+                .run()
+            } else if (item.kind === 'output' && item.nodeId) {
+              editor
+                .chain()
+                .focus()
+                .deleteRange(range)
+                .insertContent({
+                  type: 'outputEmbed',
                   attrs: { nodeId: item.nodeId }
                 })
                 .run()
@@ -312,7 +564,7 @@ function createBoardSlashExtension(getData: () => BoardData): Extension {
                 const button = document.createElement('button')
                 button.type = 'button'
                 button.className = `board-doc-slash-item${index === selectedIndex ? ' active' : ''}`
-                const icon = item.kind === 'browser' ? '\u{1F310} ' : '\u{1F5A5} '
+                const icon = item.kind === 'browser' ? '\u{1F310} ' : item.kind === 'output' ? '\u{1F4C4} ' : '\u{1F5A5} '
                 button.textContent = `${icon}${item.label}`
                 button.addEventListener('mousedown', (event) => {
                   event.preventDefault()
@@ -411,15 +663,16 @@ export function BoardDocumentView({
   loading,
   tabs,
   terminalNodes,
+  outputNodes,
   onChange,
   onOpenTab,
   onOpenTerminal
 }: BoardDocumentViewProps): React.ReactElement {
-  const boardDataRef = useRef<BoardData>({ tabs, terminalNodes, onOpenTab, onOpenTerminal })
+  const boardDataRef = useRef<BoardData>({ tabs, terminalNodes, outputNodes, onOpenTab, onOpenTerminal })
 
   useEffect(() => {
-    boardDataRef.current = { tabs, terminalNodes, onOpenTab, onOpenTerminal }
-  }, [tabs, terminalNodes, onOpenTab, onOpenTerminal])
+    boardDataRef.current = { tabs, terminalNodes, outputNodes, onOpenTab, onOpenTerminal }
+  }, [tabs, terminalNodes, outputNodes, onOpenTab, onOpenTerminal])
 
   const slashExtension = useMemo(
     () => createBoardSlashExtension(() => boardDataRef.current),
@@ -437,8 +690,11 @@ export function BoardDocumentView({
       BulletList,
       ListItem,
       History,
+      TaskList,
+      TaskItem.configure({ nested: true }),
       BrowserEmbedNode,
       TerminalEmbedNode,
+      OutputEmbedNode,
       BoardDataExtension,
       slashExtension
     ],
@@ -456,8 +712,8 @@ export function BoardDocumentView({
   // Keep boardData storage in sync
   useEffect(() => {
     if (!editor) return
-    editor.storage.boardData = { tabs, terminalNodes, onOpenTab, onOpenTerminal }
-  }, [editor, tabs, terminalNodes, onOpenTab, onOpenTerminal])
+    editor.storage.boardData = { tabs, terminalNodes, outputNodes, onOpenTab, onOpenTerminal }
+  }, [editor, tabs, terminalNodes, outputNodes, onOpenTab, onOpenTerminal])
 
   // Sync content when html prop changes externally
   useEffect(() => {
@@ -534,6 +790,13 @@ export function BoardDocumentView({
               >
                 <ListIcon className="h-3.5 w-3.5" />
               </ToolbarButton>
+              <ToolbarButton
+                title="Task List"
+                active={editor?.isActive('taskList')}
+                onClick={() => editor?.chain().focus().toggleTaskList().run()}
+              >
+                <ListChecks className="h-3.5 w-3.5" />
+              </ToolbarButton>
               <div className="mx-1 h-4 w-px bg-border" />
               <ToolbarButton title="Undo" onClick={() => editor?.chain().focus().undo().run()}>
                 <Undo2 className="h-3.5 w-3.5" />
@@ -543,7 +806,7 @@ export function BoardDocumentView({
               </ToolbarButton>
             </div>
             <p className="mt-1 text-[11px] text-muted-foreground">
-              Type <kbd className="rounded border px-1 py-0.5 text-[10px]">/</kbd> to embed a browser tab or terminal
+              Type <kbd className="rounded border px-1 py-0.5 text-[10px]">/</kbd> to embed a browser tab, terminal, or output
             </p>
           </div>
 

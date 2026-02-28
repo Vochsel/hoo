@@ -37,7 +37,7 @@ export function BrowserTabContent({
   useEffect(() => {
     const nextUrl = tab.url || 'about:blank'
     setCurrentUrl(nextUrl)
-  }, [tab.id, tab.url])
+  }, [tab.id])
 
   const publishLiveWebContents = useCallback((webContentsId?: number | null): void => {
     const tabId = tabIdRef.current
@@ -224,6 +224,19 @@ export function BrowserTabContent({
   const handleForward = useCallback(() => { webviewRef.current?.goForward() }, [])
   const handleReload = useCallback(() => { webviewRef.current?.reload() }, [])
 
+  const handleTogglePin = useCallback(() => {
+    const tabId = tabIdRef.current
+    if (!tabId) return
+    const current = tab.pinnedUrl
+    const nextPinned = current ? null : currentUrl
+    void persistTabUpdate({ pinnedUrl: nextPinned })
+  }, [currentUrl, tab.pinnedUrl, persistTabUpdate])
+
+  const handleGoHome = useCallback(() => {
+    if (!tab.pinnedUrl) return
+    handleNavigate(tab.pinnedUrl)
+  }, [tab.pinnedUrl, handleNavigate])
+
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <AddressBar
@@ -233,6 +246,9 @@ export function BrowserTabContent({
         onBack={handleBack}
         onForward={handleForward}
         onReload={handleReload}
+        pinnedUrl={tab.pinnedUrl}
+        onTogglePin={handleTogglePin}
+        onGoHome={handleGoHome}
       />
       <div className="flex-1 min-h-0 bg-white dark:bg-zinc-900">
         <webview

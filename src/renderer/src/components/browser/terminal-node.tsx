@@ -3,6 +3,7 @@ import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
 
 export interface TerminalNodeConfig {
   command?: string
@@ -14,6 +15,7 @@ export interface TerminalNodeConfig {
   lastExitCode?: number
   lastRunAt?: string
   lastScrollback?: string
+  useLatestUpstreamOnly?: boolean
 }
 
 export interface TerminalNodeData {
@@ -27,6 +29,9 @@ export interface TerminalNodeData {
 function TerminalNodeInner({ id: _id, data, selected }: NodeProps): React.ReactElement {
   const { label, config, isRunning, runtimeStatus } = data as unknown as TerminalNodeData
   const command = config?.command || ''
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
+  const targetPos = getTargetPosition(direction)
 
   return (
     <div
@@ -89,12 +94,12 @@ function TerminalNodeInner({ id: _id, data, selected }: NodeProps): React.ReactE
       {/* Handles */}
       <Handle
         type="target"
-        position={Position.Left}
+        position={targetPos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
       <Handle
         type="source"
-        position={Position.Right}
+        position={sourcePos}
         className="!w-3 !h-3 !bg-green-500 !border-2 !border-green-300"
       />
     </div>

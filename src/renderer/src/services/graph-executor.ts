@@ -180,7 +180,21 @@ export async function executeFromTrigger(
     if (!node) continue
 
     const incomingSources = incomingEdges.get(current.nodeId) ?? []
-    if (executeBrowserTab && node.type !== 'browserTab' && incomingSources.length > 0) {
+
+    // Terminal nodes with useLatestUpstreamOnly skip re-executing upstream browser tabs
+    let skipUpstreamExec = false
+    if (node.type === 'terminal') {
+      try {
+        const termCfg = JSON.parse((node.data as Record<string, unknown>).config as string || '{}') as Record<string, unknown>
+        if (termCfg.useLatestUpstreamOnly !== false) {
+          skipUpstreamExec = true
+        }
+      } catch {
+        skipUpstreamExec = true
+      }
+    }
+
+    if (executeBrowserTab && node.type !== 'browserTab' && !skipUpstreamExec && incomingSources.length > 0) {
       for (const srcId of incomingSources) {
         if (outputs.has(srcId) || srcId === current.nodeId) continue
         const srcNode = nodeById.get(srcId)

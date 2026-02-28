@@ -24,6 +24,7 @@ import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Spark
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BrowserTabNode, type BrowserTabNodeData } from '@/components/browser/browser-tab-node'
+import { FlowDirectionContext, type FlowDirection } from '@/components/browser/flow-direction-context'
 import { TriggerNode } from '@/components/browser/trigger-node'
 import { ScheduleTriggerNode, type ScheduleTriggerConfig } from '@/components/browser/schedule-trigger-node'
 import { FormTriggerNode, type FormTriggerConfig, type FormTriggerFieldConfig } from '@/components/browser/form-trigger-node'
@@ -351,8 +352,17 @@ function BrowserPageInner(): React.ReactElement {
   const [expandedMonitorId, setExpandedMonitorId] = useState<string | null>(null)
   const [runningTabs, setRunningTabs] = useState<Set<string>>(new Set())
   const [previewingTabs, setPreviewingTabs] = useState<Set<string>>(new Set())
-  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
-  const [collapsedBoards, setCollapsedBoards] = useState<Set<string>>(new Set())
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => {
+    const saved = getSetting('expandedFolders')
+    if (Array.isArray(saved)) return new Set(saved as string[])
+    return new Set<string>()
+  })
+  const expandedFoldersInitializedRef = useRef(Array.isArray(getSetting('expandedFolders')))
+  const [collapsedBoards, setCollapsedBoards] = useState<Set<string>>(() => {
+    const saved = getSetting('collapsedBoards')
+    if (Array.isArray(saved)) return new Set(saved as string[])
+    return new Set<string>()
+  })
   const [boardTabsMap, setBoardTabsMap] = useState<Map<string, BrowserTab[]>>(new Map())
   const [boardTerminalsMap, setBoardTerminalsMap] = useState<Map<string, GraphNode[]>>(new Map())
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
@@ -363,6 +373,8 @@ function BrowserPageInner(): React.ReactElement {
   const [editingPlanName, setEditingPlanName] = useState('')
   const [editingTerminalId, setEditingTerminalId] = useState<string | null>(null)
   const [editingTerminalName, setEditingTerminalName] = useState('')
+  const [createMenuOpen, setCreateMenuOpen] = useState(false)
+  const createMenuRef = useRef<HTMLDivElement | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(null)
   const [planHtml, setPlanHtmlState] = useState('<p></p>')
   const [planLoading, setPlanLoading] = useState(false)
@@ -383,15 +395,23 @@ function BrowserPageInner(): React.ReactElement {
   const scheduleRunningRef = useRef(false)
   const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
   const planSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingBoardRenameRef = useRef(false)
+  const pendingFolderRenameRef = useRef(false)
+  const boardTabsViewRef = useRef<import('@/components/browser/board-tabs-view').BoardTabsViewHandle | null>(null)
   const reactFlowInstance = useReactFlow()
   const flowInteractionMode: FlowInteractionMode =
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const isMapMode = flowInteractionMode === 'map'
+  const flowDirection: FlowDirection =
+    (getSetting('flowDirection') as string) === 'vertical' ? 'vertical' : 'horizontal'
 
   const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
+  const outputNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'output'), [gNodes])
 
   useEffect(() => {
     if (!workspace?.folders) return
+    if (expandedFoldersInitializedRef.current) return
+    expandedFoldersInitializedRef.current = true
     setExpandedFolders((prev) => {
       const next = new Set(prev)
       for (const folder of workspace.folders) {
@@ -402,6 +422,17 @@ function BrowserPageInner(): React.ReactElement {
       return next
     })
   }, [workspace?.folders])
+
+  useEffect(() => {
+    if (!createMenuOpen) return
+    const handleClickOutside = (e: MouseEvent): void => {
+      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
+        setCreateMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [createMenuOpen])
 
   const boardsByFolderId = useMemo(() => {
     const map = new Map<string, WorkspaceBoard[]>()
@@ -493,11 +524,13 @@ function BrowserPageInner(): React.ReactElement {
       } else {
         next.add(boardId)
       }
+      void setSetting('collapsedBoards', Array.from(next))
       return next
     })
-  }, [])
+  }, [setSetting])
 
   useEffect(() => {
+    if (pendingBoardRenameRef.current || pendingFolderRenameRef.current) return
     setRunningTabs(new Set())
     setPreviewingTabs(new Set())
     dialogWebviews.current.clear()
@@ -2084,6 +2117,46 @@ function BrowserPageInner(): React.ReactElement {
     [edges, setEdges, saveEdges]
   )
 
+  const connectingNodeRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
+
+  const handleConnectStart = useCallback(
+    (_event: MouseEvent | TouchEvent, params: { nodeId: string | null; handleId: string | null }) => {
+      if (params.nodeId) {
+        connectingNodeRef.current = { nodeId: params.nodeId, handleId: params.handleId }
+      }
+    },
+    []
+  )
+
+  const handleConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent) => {
+      const source = connectingNodeRef.current
+      connectingNodeRef.current = null
+      if (!source) return
+
+      const target = event instanceof MouseEvent ? event.target : (event as TouchEvent).touches?.[0]?.target
+      if (!(target instanceof HTMLElement)) return
+
+      // Walk up the DOM to find a ReactFlow node wrapper
+      const nodeEl = target.closest('.react-flow__node')
+      if (!nodeEl) return
+      const targetNodeId = nodeEl.getAttribute('data-id')
+      if (!targetNodeId || targetNodeId === source.nodeId) return
+
+      // Create a connection from source to the target node's default target handle
+      const connection: Connection = {
+        source: source.nodeId,
+        target: targetNodeId,
+        sourceHandle: source.handleId,
+        targetHandle: null
+      }
+      const newEdges = addEdge(connection, edges)
+      setEdges(newEdges)
+      saveEdges(newEdges)
+    },
+    [edges, setEdges, saveEdges]
+  )
+
   const handleEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
       onEdgesChange(changes)
@@ -2176,11 +2249,12 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleAddTab = useCallback(
     async (flowX?: number, flowY?: number) => {
-      if (!activeBoardId) return
-      await createTab({
-        flowX: flowX ?? 100 + Math.random() * 200,
-        flowY: flowY ?? 100 + Math.random() * 200
-      })
+      if (!activeBoardId) return undefined
+      // Center the node on the target position (node origin is top-left)
+      const cx = (flowX ?? 100 + Math.random() * 200) - 120
+      const cy = (flowY ?? 100 + Math.random() * 200) - 84
+      const tab = await createTab({ flowX: cx, flowY: cy })
+      return tab
     },
     [createTab, activeBoardId]
   )
@@ -2195,10 +2269,14 @@ function BrowserPageInner(): React.ReactElement {
       const tab = tabs.find((t) => t.id === tabId)
       if (!tab) return
       setPendingSidebarTabOpen(null)
-      setSelectedTab(tab)
-      setDialogOpen(true)
+      if (boardView === 'tabs') {
+        boardTabsViewRef.current?.selectTab(tabId)
+      } else {
+        setSelectedTab(tab)
+        setDialogOpen(true)
+      }
     },
-    [tabs, activeBoardId, setActiveBoard]
+    [tabs, activeBoardId, setActiveBoard, boardView]
   )
 
   const handleSidebarTerminalClick = useCallback(
@@ -2209,9 +2287,13 @@ function BrowserPageInner(): React.ReactElement {
         return
       }
       setPendingSidebarTerminalOpen(null)
-      setTerminalDialogNodeId(nodeId)
+      if (boardView === 'tabs') {
+        boardTabsViewRef.current?.selectTab(nodeId)
+      } else {
+        setTerminalDialogNodeId(nodeId)
+      }
     },
-    [activeBoardId, setActiveBoard]
+    [activeBoardId, setActiveBoard, boardView]
   )
 
   useEffect(() => {
@@ -2322,6 +2404,47 @@ function BrowserPageInner(): React.ReactElement {
       window.removeEventListener('keydown', onKeyDown)
     }
   }, [reactFlowInstance])
+
+  // Cmd+T / Ctrl+T → add new tab at cursor (or center of canvas)
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key.toLowerCase() !== 't') return
+      if (!(event.metaKey || event.ctrlKey)) return
+      if (event.repeat) return
+      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) return
+
+      event.preventDefault()
+
+      const flowRect = flowContainerRef.current?.getBoundingClientRect()
+      let clientPosition = lastMouseClientPositionRef.current
+
+      // If mouse isn't over the flow canvas, fall back to center
+      if (clientPosition && flowRect) {
+        const inside =
+          clientPosition.x >= flowRect.left &&
+          clientPosition.x <= flowRect.right &&
+          clientPosition.y >= flowRect.top &&
+          clientPosition.y <= flowRect.bottom
+        if (!inside) clientPosition = null
+      }
+
+      if (!clientPosition && flowRect) {
+        clientPosition = {
+          x: flowRect.left + flowRect.width / 2,
+          y: flowRect.top + flowRect.height / 2
+        }
+      }
+      if (!clientPosition) return
+
+      const flowPosition = reactFlowInstance.screenToFlowPosition(clientPosition)
+      void handleAddTab(flowPosition.x, flowPosition.y)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return (): void => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [reactFlowInstance, handleAddTab])
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent): void => {
@@ -2706,6 +2829,17 @@ function BrowserPageInner(): React.ReactElement {
 
   const isBrowserTabNode = contextMenu?.type === 'node' && !contextMenu.nodeId?.startsWith('gn-')
   const isGraphNode = contextMenu?.type === 'node' && contextMenu.nodeId?.startsWith('gn-')
+  const contextTerminalNode = isGraphNode && contextMenu?.nodeId
+    ? gNodes.find((n) => n.id === contextMenu.nodeId?.replace('gn-', '') && n.nodeType === 'terminal')
+    : null
+  const isTerminalNode = !!contextTerminalNode
+
+  const handleContextRestartTerminal = useCallback(() => {
+    if (!contextTerminalNode) return
+    const sessionId = `pty-${contextTerminalNode.id}`
+    window.api.terminal.kill(sessionId).catch(() => {})
+    setContextMenu(null)
+  }, [contextTerminalNode])
   const handleFlowContainerMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     lastMouseClientPositionRef.current = { x: event.clientX, y: event.clientY }
   }, [])
@@ -2721,9 +2855,10 @@ function BrowserPageInner(): React.ReactElement {
       } else {
         next.add(folderId)
       }
+      void setSetting('expandedFolders', Array.from(next))
       return next
     })
-  }, [])
+  }, [setSetting])
 
   const handleCreateFolder = useCallback(async () => {
     try {
@@ -2758,11 +2893,14 @@ function BrowserPageInner(): React.ReactElement {
     setEditingFolderName('')
     if (nextName.length === 0 || nextName === currentName) return
     try {
+      pendingFolderRenameRef.current = true
       await renameFolder(folderId, nextName)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`${FLOW_TAG} failed to rename folder id=${folderId}:`, error)
       window.alert(`Failed to rename folder: ${message}`)
+    } finally {
+      pendingFolderRenameRef.current = false
     }
   }, [editingFolderId, editingFolderName, workspace, renameFolder])
 
@@ -2814,11 +2952,14 @@ function BrowserPageInner(): React.ReactElement {
     setEditingBoardName('')
     if (nextName.length === 0 || nextName === currentName) return
     try {
+      pendingBoardRenameRef.current = true
       await renameBoard(boardId, nextName)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`${FLOW_TAG} failed to rename board id=${boardId}:`, error)
       window.alert(`Failed to rename board: ${message}`)
+    } finally {
+      pendingBoardRenameRef.current = false
     }
   }, [editingBoardId, editingBoardName, workspace, renameBoard])
 
@@ -2867,13 +3008,16 @@ function BrowserPageInner(): React.ReactElement {
     setEditingPlanName('')
     if (nextName.length === 0 || nextName === currentName) return
     try {
-      await renamePlan(planId, nextName)
+      const nextPlanId = await renamePlan(planId, nextName)
+      if (selectedPlanId === planId) {
+        setSelectedPlanId(nextPlanId)
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       console.error(`${FLOW_TAG} failed to rename plan id=${planId}:`, error)
       window.alert(`Failed to rename plan: ${message}`)
     }
-  }, [editingPlanId, editingPlanName, workspace, renamePlan])
+  }, [editingPlanId, editingPlanName, workspace, renamePlan, selectedPlanId])
 
   const handleDeletePlan = useCallback(
     async (planId: string, planName: string) => {
@@ -2906,33 +3050,43 @@ function BrowserPageInner(): React.ReactElement {
                 {workspace?.rootDir ?? 'Loading workspace...'}
               </p>
             </div>
-            <div className="flex gap-1.5">
+            <div className="relative" ref={createMenuRef}>
               <Button
                 size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => void handleCreateFolder()}
+                className="h-7 w-7 p-0"
+                onClick={() => setCreateMenuOpen((v) => !v)}
+                title="Create new item"
               >
-                <Folder className="h-3.5 w-3.5" />
-                Folder
+                <Plus className="h-3.5 w-3.5" />
               </Button>
-              <Button
-                size="sm"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => void handleCreateBoard(null)}
-              >
-                <Workflow className="h-3.5 w-3.5" />
-                Board
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1.5 text-xs"
-                onClick={() => void handleCreatePlan(null)}
-              >
-                <FileText className="h-3.5 w-3.5" />
-                Plan
-              </Button>
+              {createMenuOpen && (
+                <div className="absolute left-0 top-full z-50 mt-1 w-36 rounded-md border bg-popover p-1 shadow-md">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
+                    onClick={() => { setCreateMenuOpen(false); void handleCreateFolder() }}
+                  >
+                    <Folder className="h-3.5 w-3.5" />
+                    Folder
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
+                    onClick={() => { setCreateMenuOpen(false); void handleCreateBoard(null) }}
+                  >
+                    <Workflow className="h-3.5 w-3.5" />
+                    Board
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
+                    onClick={() => { setCreateMenuOpen(false); void handleCreatePlan(null) }}
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Plan
+                  </button>
+                </div>
+              )}
             </div>
           </div>
 
@@ -2944,7 +3098,7 @@ function BrowserPageInner(): React.ReactElement {
                 const expanded = expandedFolders.has(folder.id)
                 return (
                   <section key={folder.id} className="rounded-md border bg-background">
-                    <div className="flex items-center gap-1 px-2 py-1.5">
+                    <div className="group/folderItem flex items-center gap-1 px-2 py-1.5">
                       <button
                         type="button"
                         className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -3004,7 +3158,7 @@ function BrowserPageInner(): React.ReactElement {
                       </button>
                       <button
                         type="button"
-                        className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
                         onClick={() => void handleDeleteFolder(folder.id, folder.name)}
                         title="Delete folder"
                       >
@@ -3024,7 +3178,7 @@ function BrowserPageInner(): React.ReactElement {
                               <div
                                 key={board.id}
                                 className={[
-                                  'rounded-md border px-2 py-1.5',
+                                  'group/boardItem rounded-md border px-2 py-1.5',
                                   !selectedPlanId && board.id === activeBoardId
                                     ? 'border-primary/50 bg-primary/10'
                                     : 'border-transparent hover:bg-accent/50'
@@ -3080,7 +3234,7 @@ function BrowserPageInner(): React.ReactElement {
                                   )}
                                   <button
                                     type="button"
-                                    className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
                                     onClick={() => void handleDeleteBoard(board.id, board.name)}
                                     title="Delete board"
                                   >
@@ -3150,7 +3304,7 @@ function BrowserPageInner(): React.ReactElement {
                               <div
                                 key={plan.id}
                                 className={[
-                                  'rounded-md border px-2 py-1.5',
+                                  'group/planItem rounded-md border px-2 py-1.5',
                                   selectedPlanId === plan.id
                                     ? 'border-primary/50 bg-primary/10'
                                     : 'border-transparent hover:bg-accent/50'
@@ -3192,7 +3346,7 @@ function BrowserPageInner(): React.ReactElement {
                                   )}
                                   <button
                                     type="button"
-                                    className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/planItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
                                     onClick={() => void handleDeletePlan(plan.id, plan.name)}
                                     title="Delete plan"
                                   >
@@ -3243,7 +3397,7 @@ function BrowserPageInner(): React.ReactElement {
                         <div
                           key={board.id}
                           className={[
-                            'rounded-md border px-2 py-1.5',
+                            'group/boardItem rounded-md border px-2 py-1.5',
                             !selectedPlanId && board.id === activeBoardId
                               ? 'border-primary/50 bg-primary/10'
                               : 'border-transparent hover:bg-accent/50'
@@ -3299,7 +3453,7 @@ function BrowserPageInner(): React.ReactElement {
                             )}
                             <button
                               type="button"
-                              className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
                               onClick={() => void handleDeleteBoard(board.id, board.name)}
                               title="Delete board"
                             >
@@ -3369,7 +3523,7 @@ function BrowserPageInner(): React.ReactElement {
                         <div
                           key={plan.id}
                           className={[
-                            'rounded-md border px-2 py-1.5',
+                            'group/planItem rounded-md border px-2 py-1.5',
                             selectedPlanId === plan.id
                               ? 'border-primary/50 bg-primary/10'
                               : 'border-transparent hover:bg-accent/50'
@@ -3411,7 +3565,7 @@ function BrowserPageInner(): React.ReactElement {
                             )}
                             <button
                               type="button"
-                              className="rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                              className="rounded p-1 text-muted-foreground opacity-0 group-hover/planItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
                               onClick={() => void handleDeletePlan(plan.id, plan.name)}
                               title="Delete plan"
                             >
@@ -3432,10 +3586,6 @@ function BrowserPageInner(): React.ReactElement {
       <div className="flex min-h-0 flex-1 flex-col">
         {selectedPlan ? (
           <div className="min-h-0 flex-1 flex flex-col">
-            {/* Notion-style plan header */}
-            <div className="mx-auto w-full max-w-[720px] px-6 pt-8 pb-1">
-              <p className="text-3xl font-bold tracking-tight">{selectedPlan.name}</p>
-            </div>
             {planLoading ? (
               <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">Loading plan...</div>
             ) : (
@@ -3443,6 +3593,7 @@ function BrowserPageInner(): React.ReactElement {
                 <PlanEditor
                   value={planHtml}
                   templates={planTemplates}
+                  planName={selectedPlan.name}
                   onChange={handlePlanHtmlChange}
                   onCreateTemplate={handleCreatePlanTemplate}
                 />
@@ -3492,6 +3643,7 @@ function BrowserPageInner(): React.ReactElement {
             )}
           </div>
           {boardView === 'whiteboard' && (
+          <FlowDirectionContext.Provider value={flowDirection}>
           <div ref={flowContainerRef} className="flex-1" onMouseMove={handleFlowContainerMouseMove}>
             <ReactFlow
               nodes={nodes}
@@ -3501,6 +3653,8 @@ function BrowserPageInner(): React.ReactElement {
               onEdgesChange={handleEdgesChange}
               onConnect={handleConnect}
               onReconnect={handleReconnect}
+              onConnectStart={handleConnectStart}
+              onConnectEnd={handleConnectEnd}
               onNodeDoubleClick={handleNodeDoubleClick}
               onPaneContextMenu={handlePaneContextMenu}
               onNodeContextMenu={handleNodeContextMenu}
@@ -3521,26 +3675,39 @@ function BrowserPageInner(): React.ReactElement {
             >
               <Background />
               <Panel position="bottom-center">
-                <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border">
-                  {isMapMode
-                    ? 'Map mode: drag to pan and scroll to zoom'
-                    : 'Design mode: scroll to pan · drag-select supports partial overlap'}
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border">
+                    {isMapMode
+                      ? 'Map mode: drag to pan and scroll to zoom'
+                      : 'Design mode: scroll to pan · drag-select supports partial overlap'}
+                  </p>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border hover:text-foreground transition-colors"
+                    onClick={() => void setSetting('flowDirection', flowDirection === 'horizontal' ? 'vertical' : 'horizontal')}
+                    title={`Edge direction: ${flowDirection}`}
+                  >
+                    {flowDirection === 'horizontal' ? '→' : '↓'}
+                  </button>
+                </div>
               </Panel>
             </ReactFlow>
           </div>
+          </FlowDirectionContext.Provider>
           )}
           {boardView === 'tabs' && (
             <BoardTabsView
+              ref={boardTabsViewRef}
               tabs={tabs}
               terminalNodes={terminalNodes}
               activeBoardId={activeBoardId}
               onTabUpdate={updateTab}
-              onCreateTab={() => void handleAddTab()}
+              onCreateTab={() => handleAddTab()}
               onDeleteTab={(id) => void deleteTab(id)}
               onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
               onUpdateNode={updateNode}
+              workspaceRootDir={workspace?.rootDir}
             />
           )}
           {boardView === 'document' && (
@@ -3550,6 +3717,7 @@ function BrowserPageInner(): React.ReactElement {
               loading={boardDocLoading}
               tabs={tabs}
               terminalNodes={terminalNodes}
+              outputNodes={outputNodes}
               onChange={handleBoardDocHtmlChange}
               onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
@@ -3767,6 +3935,15 @@ function BrowserPageInner(): React.ReactElement {
                 <NotebookPen className="h-4 w-4" />
                 Rename node
               </button>
+              {isTerminalNode && (
+                <button
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                  onClick={handleContextRestartTerminal}
+                >
+                  <Terminal className="h-4 w-4" />
+                  Restart terminal
+                </button>
+              )}
               <div className="my-1 h-px bg-border" />
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
@@ -4010,6 +4187,7 @@ function BrowserPageInner(): React.ReactElement {
                 void updateNode(terminalDialogNodeId, { config: JSON.stringify(nextCfg) })
               }
             }}
+            workspaceRootDir={workspace?.rootDir}
           />
         )
       })()}

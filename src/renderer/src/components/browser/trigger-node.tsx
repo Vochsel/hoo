@@ -3,6 +3,7 @@ import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { useFlowDirection, getSourcePosition } from './flow-direction-context'
 
 export interface TriggerNodeData {
   label: string
@@ -14,6 +15,9 @@ export interface TriggerNodeData {
 
 function TriggerNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
   const { label, onTrigger, isRunning, runtimeStatus } = data as unknown as TriggerNodeData
+
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
 
   return (
     <div
@@ -41,7 +45,7 @@ function TriggerNodeInner({ id, data, selected }: NodeProps): React.ReactElement
 
       <Handle
         type="source"
-        position={Position.Right}
+        position={sourcePos}
         className="!h-3 !w-3 !border-2 !border-primary !bg-primary-foreground"
       />
     </div>

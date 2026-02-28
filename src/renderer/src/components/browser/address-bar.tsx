@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useImperativeHandle, forwardRef, type KeyboardEvent } from 'react'
-import { ArrowLeft, ArrowRight, RotateCw, Loader2, Lock, Search } from 'lucide-react'
+import { ArrowLeft, ArrowRight, RotateCw, Loader2, Lock, Search, Pin, Home } from 'lucide-react'
 
 interface AddressBarProps {
   url: string
@@ -8,6 +8,9 @@ interface AddressBarProps {
   onBack: () => void
   onForward: () => void
   onReload: () => void
+  pinnedUrl?: string | null
+  onTogglePin?: () => void
+  onGoHome?: () => void
 }
 
 function resolveInput(input: string): string {
@@ -43,7 +46,10 @@ export const AddressBar = forwardRef<AddressBarHandle, AddressBarProps>(function
   onNavigate,
   onBack,
   onForward,
-  onReload
+  onReload,
+  pinnedUrl,
+  onTogglePin,
+  onGoHome
 }, ref): React.ReactElement {
   const [inputValue, setInputValue] = useState(url)
   const [focused, setFocused] = useState(false)
@@ -127,6 +133,26 @@ export const AddressBar = forwardRef<AddressBarHandle, AddressBarProps>(function
           className="h-6 w-full rounded-md bg-muted/60 pl-7 pr-2.5 text-[11px] text-foreground placeholder:text-muted-foreground/50 focus:bg-background focus:outline-none focus:ring-1 focus:ring-ring/50 transition-all"
         />
       </div>
+      {onTogglePin && (
+        <button
+          className={`flex h-6 w-6 items-center justify-center rounded transition-colors ${
+            pinnedUrl ? 'text-primary' : 'text-muted-foreground/60 hover:bg-muted hover:text-foreground'
+          }`}
+          onClick={onTogglePin}
+          title={pinnedUrl ? 'Unpin URL' : 'Pin current URL'}
+        >
+          <Pin className="h-3 w-3" />
+        </button>
+      )}
+      {pinnedUrl && onGoHome && (
+        <button
+          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-muted hover:text-foreground"
+          onClick={onGoHome}
+          title={`Go to pinned URL: ${pinnedUrl}`}
+        >
+          <Home className="h-3 w-3" />
+        </button>
+      )}
     </div>
   )
 })

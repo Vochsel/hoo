@@ -3,6 +3,7 @@ import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { Bell, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { useFlowDirection, getTargetPosition } from './flow-direction-context'
 
 export interface NotificationNodeData {
   label: string
@@ -53,6 +54,9 @@ function NotificationNodeInner({ id, data, selected }: NodeProps): React.ReactEl
     }
   }
 
+  const direction = useFlowDirection()
+  const targetPos = getTargetPosition(direction)
+
   return (
     <div
       className={cn(
@@ -66,7 +70,7 @@ function NotificationNodeInner({ id, data, selected }: NodeProps): React.ReactEl
     >
       <Handle
         type="target"
-        position={Position.Left}
+        position={targetPos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
 

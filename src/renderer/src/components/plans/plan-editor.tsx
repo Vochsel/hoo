@@ -11,7 +11,9 @@ import Heading from '@tiptap/extension-heading'
 import BulletList from '@tiptap/extension-bullet-list'
 import ListItem from '@tiptap/extension-list-item'
 import History from '@tiptap/extension-history'
-import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, Undo2, Redo2, Circle, Loader2, CheckCircle2 } from 'lucide-react'
+import TaskList from '@tiptap/extension-task-list'
+import TaskItem from '@tiptap/extension-task-item'
+import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, ListChecks, Undo2, Redo2, Circle, Loader2, CheckCircle2 } from 'lucide-react'
 
 export type PlanTaskStatus = 'todo' | 'in_progress' | 'done'
 
@@ -25,6 +27,7 @@ export interface PlanTemplate {
 interface PlanEditorProps {
   value: string
   templates: PlanTemplate[]
+  planName?: string
   onChange: (html: string) => void
   onCreateTemplate?: (name: string) => void | Promise<void>
 }
@@ -282,8 +285,8 @@ function ToolbarButton({
       type="button"
       title={title}
       className={[
-        'inline-flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground',
-        active ? 'bg-accent text-foreground' : ''
+        'inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors hover:bg-accent hover:text-foreground',
+        active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground/70'
       ].join(' ')}
       onClick={onClick}
     >
@@ -295,6 +298,7 @@ function ToolbarButton({
 export function PlanEditor({
   value,
   templates,
+  planName,
   onChange
 }: PlanEditorProps): React.ReactElement {
   const templatesRef = useRef<PlanTemplate[]>(templates)
@@ -319,6 +323,8 @@ export function PlanEditor({
       BulletList,
       ListItem,
       History,
+      TaskList,
+      TaskItem.configure({ nested: true }),
       PlanTaskNode,
       slashExtension
     ],
@@ -344,6 +350,11 @@ export function PlanEditor({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-4 pb-16">
+        {planName && (
+          <div className="mx-auto w-full max-w-[720px] px-0 pt-4 pb-1">
+            <p className="text-3xl font-bold tracking-tight">{planName}</p>
+          </div>
+        )}
         {/* Toolbar – centered, minimal */}
         <div className="plan-toolbar">
           <div className="flex items-center gap-0.5">
@@ -362,7 +373,7 @@ export function PlanEditor({
               <ItalicIcon className="h-3.5 w-3.5" />
             </ToolbarButton>
             <select
-              className="h-8 rounded border bg-background px-2 text-xs text-foreground"
+              className="h-7 rounded-md border-0 bg-transparent px-2 text-xs text-muted-foreground/70 outline-none hover:text-foreground"
               title="Heading level"
               value={
                 editor?.isActive('heading', { level: 1 })
@@ -406,6 +417,13 @@ export function PlanEditor({
               onClick={() => editor?.chain().focus().toggleBulletList().run()}
             >
               <ListIcon className="h-3.5 w-3.5" />
+            </ToolbarButton>
+            <ToolbarButton
+              title="Task List"
+              active={editor?.isActive('taskList')}
+              onClick={() => editor?.chain().focus().toggleTaskList().run()}
+            >
+              <ListChecks className="h-3.5 w-3.5" />
             </ToolbarButton>
             <div className="mx-1 h-4 w-px bg-border" />
             <ToolbarButton title="Undo" onClick={() => editor?.chain().focus().undo().run()}>

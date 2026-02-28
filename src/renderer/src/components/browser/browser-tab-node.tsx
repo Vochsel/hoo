@@ -4,6 +4,7 @@ import { Globe, X, Radio, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BrowserTabMonitor } from '@/hooks/use-browser-tabs'
 import { NodeExecutionFooter } from './node-status-bar'
+import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
 
 export interface BrowserTabNodeData {
   title: string
@@ -21,6 +22,9 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
   const { title, favicon, screenshot, monitors, isRunning, runtimeStatus, runtimeOutput, onClose } = data as unknown as BrowserTabNodeData
   const enabledMonitors = monitors?.filter((m) => m.enabled) ?? []
   const hasMonitors = enabledMonitors.length > 0
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
+  const targetPos = getTargetPosition(direction)
 
   return (
     <div
@@ -92,10 +96,15 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
               {/* Handle sits inside the row so it's vertically centered */}
               <Handle
                 type="source"
-                position={Position.Right}
+                position={sourcePos}
                 id={`monitor-${monitor.id}`}
                 title={monitor.condition}
-                className="!absolute !right-[-18px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !bg-amber-500 !border-2 !border-amber-300"
+                className={cn(
+                  '!absolute !w-3 !h-3 !bg-amber-500 !border-2 !border-amber-300',
+                  direction === 'vertical'
+                    ? '!bottom-[-18px] !left-1/2 !-translate-x-1/2'
+                    : '!right-[-18px] !top-1/2 !-translate-y-1/2'
+                )}
               />
             </div>
           ))}
@@ -107,12 +116,12 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
       {/* Default handles */}
       <Handle
         type="target"
-        position={Position.Left}
+        position={targetPos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
       <Handle
         type="source"
-        position={Position.Right}
+        position={sourcePos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
     </div>

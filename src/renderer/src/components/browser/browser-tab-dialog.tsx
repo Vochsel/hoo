@@ -1,4 +1,4 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { AddressBar, type AddressBarHandle } from './address-bar'
 import { BrowserTabChat } from './browser-tab-chat'
@@ -33,9 +33,10 @@ export function BrowserTabDialog({
 }: BrowserTabDialogProps): React.ReactElement {
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
   const addressBarRef = useRef<AddressBarHandle>(null)
-  // Capture the URL at mount time so the webview src never changes reactively
-  // (Electron webview reloads on any src attribute change).
-  const initialUrlRef = useRef(tab?.url || 'about:blank')
+  const webviewSrc = useMemo(() => {
+    if (!open || !tab) return 'about:blank'
+    return tab.url || 'about:blank'
+  }, [open, tab?.id])
   const [currentUrl, setCurrentUrl] = useState(tab?.url ?? 'about:blank')
   const currentUrlRef = useRef(currentUrl)
   const [pageLoading, setPageLoading] = useState(false)
@@ -391,6 +392,19 @@ export function BrowserTabDialog({
   const handleReload = useCallback(() => {
     webviewRef.current?.reload()
   }, [])
+
+  const handleTogglePin = useCallback(() => {
+    const tabId = tabIdRef.current
+    if (!tabId) return
+    const current = tab?.pinnedUrl
+    const nextPinned = current ? null : currentUrl
+    void persistTabUpdate({ pinnedUrl: nextPinned })
+  }, [currentUrl, tab?.pinnedUrl, persistTabUpdate])
+
+  const handleGoHome = useCallback(() => {
+    if (!tab?.pinnedUrl) return
+    handleNavigate(tab.pinnedUrl)
+  }, [tab?.pinnedUrl, handleNavigate])
 
   // Fallback URL/title synchronization in case webview navigation events miss.
   useEffect(() => {
@@ -777,11 +791,14 @@ export function BrowserTabDialog({
               onBack={handleBack}
               onForward={handleForward}
               onReload={handleReload}
+              pinnedUrl={tab?.pinnedUrl}
+              onTogglePin={handleTogglePin}
+              onGoHome={handleGoHome}
             />
             <div className="flex-1 bg-white dark:bg-zinc-900">
               <webview
                 ref={setupWebview}
-                src={initialUrlRef.current}
+                src={webviewSrc}
                 partition="persist:browser-tabs"
                 useragent={WEBVIEW_USER_AGENT}
                 style={{ width: '100%', height: '100%' }}

@@ -92,7 +92,7 @@ html.platform-darwin .titlebar-nav-offset {
 /* Plan editor – Notion-style clean layout */
 
 .plan-toolbar {
-  @apply mx-auto flex w-full max-w-[720px] items-center justify-between gap-2 px-0 py-2;
+  @apply mx-auto flex w-full max-w-[720px] items-center justify-between gap-2 rounded-lg border bg-muted/30 px-2 py-1.5 mb-4;
 }
 
 .plan-editor-content {
@@ -203,8 +203,35 @@ html.platform-darwin .titlebar-nav-offset {
 }
 
 .browser-embed-card,
-.terminal-embed-card {
+.terminal-embed-card,
+.output-embed-card {
   @apply my-3;
+}
+
+/* Task list checkboxes */
+.board-doc-editor-content ul[data-type="taskList"],
+.plan-editor-content ul[data-type="taskList"] {
+  @apply list-none pl-0 space-y-1;
+}
+
+.board-doc-editor-content ul[data-type="taskList"] li,
+.plan-editor-content ul[data-type="taskList"] li {
+  @apply flex items-start gap-2;
+}
+
+.board-doc-editor-content ul[data-type="taskList"] li label,
+.plan-editor-content ul[data-type="taskList"] li label {
+  @apply flex items-center;
+}
+
+.board-doc-editor-content ul[data-type="taskList"] li label input[type="checkbox"],
+.plan-editor-content ul[data-type="taskList"] li label input[type="checkbox"] {
+  @apply h-4 w-4 rounded border-muted-foreground/40 accent-primary cursor-pointer;
+}
+
+.board-doc-editor-content ul[data-type="taskList"] li div,
+.plan-editor-content ul[data-type="taskList"] li div {
+  @apply flex-1;
 }
 
 .board-doc-toolbar {

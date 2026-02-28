@@ -1,7 +1,7 @@
 import { useRef, useCallback, useState, useEffect } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
-import { Settings, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Settings, ChevronLeft, ChevronRight, X, RotateCw } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
@@ -14,6 +14,7 @@ interface TerminalDialogProps {
   sessionId: string
   config: TerminalNodeConfig
   onUpdateConfig: (config: TerminalNodeConfig) => void
+  workspaceRootDir?: string
 }
 
 export function TerminalDialog({
@@ -21,7 +22,8 @@ export function TerminalDialog({
   onOpenChange,
   config,
   onUpdateConfig,
-  sessionId
+  sessionId,
+  workspaceRootDir
 }: TerminalDialogProps): React.ReactElement {
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -29,6 +31,7 @@ export function TerminalDialog({
   const observerRef = useRef<ResizeObserver | null>(null)
   const cleanupListenersRef = useRef<(() => void) | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [termContextMenu, setTermContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   // Local config editing state
   const [editCommand, setEditCommand] = useState(config.command || '')
@@ -64,6 +67,39 @@ export function TerminalDialog({
     })
     setSettingsOpen(false)
   }
+
+  const handleRestartTerminal = useCallback(async () => {
+    setTermContextMenu(null)
+    const sid = sessionIdRef.current
+    const cfg = configRef.current
+    const term = termRef.current
+    const fitAddon = fitRef.current
+    if (!term) return
+    try {
+      await window.api.terminal.kill(sid)
+    } catch {}
+    term.clear()
+    term.reset()
+    try {
+      const result = await window.api.terminal.spawn(sid, {
+        shell: cfg.shell || undefined,
+        cwd: cfg.cwd || workspaceRootDir || undefined,
+        cols: term.cols || 80,
+        rows: term.rows || 24
+      })
+      if (!result.success) {
+        term.writeln(`\r\nFailed to restart terminal: ${result.error ?? 'unknown error'}`)
+        return
+      }
+      spawnedRef.current = true
+      try {
+        fitAddon?.fit()
+        window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
+      } catch {}
+    } catch (err) {
+      term.writeln(`\r\nRestart error: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }, [workspaceRootDir])
 
   /** Serialize xterm buffer content to a string */
   const serializeBuffer = useCallback((): string => {
@@ -173,7 +209,7 @@ export function TerminalDialog({
             // Spawn fresh PTY
             const result = await window.api.terminal.spawn(sid, {
               shell: cfg.shell || undefined,
-              cwd: cfg.cwd || undefined,
+              cwd: cfg.cwd || workspaceRootDir || undefined,
               cols: term.cols || 80,
               rows: term.rows || 24
             })
@@ -238,43 +274,88 @@ export function TerminalDialog({
     [detachTerminal]
   )
 
+  // Dismiss context menu on click outside
+  useEffect(() => {
+    if (!termContextMenu) return
+    const handler = (): void => setTermContextMenu(null)
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [termContextMenu])
+
   // Detach UI when dialog closes (PTY stays alive)
   useEffect(() => {
     if (!open) {
       detachTerminal()
+      setTermContextMenu(null)
     }
   }, [open, detachTerminal])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="flex h-[80vh] max-w-[90vw] flex-row p-0 gap-0 overflow-hidden"
+        className="flex h-[80vh] max-w-[90vw] flex-row p-0 gap-0 overflow-hidden [&>button[class*='absolute']]:hidden"
         onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
       >
         {/* Terminal area */}
         <div className="flex flex-1 min-w-0 flex-col">
           <div className="flex items-center justify-between border-b px-4 py-2">
-            <span className="text-sm font-medium">Interactive Terminal</span>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 p-0"
-              onClick={() => setSettingsOpen(!settingsOpen)}
-              title="Terminal settings"
-            >
-              {settingsOpen ? (
-                <ChevronRight className="h-4 w-4" />
-              ) : (
-                <Settings className="h-4 w-4" />
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="text-sm font-medium shrink-0">Interactive Terminal</span>
+              {config.command && (
+                <span className="truncate text-xs text-muted-foreground font-mono">$ {config.command}</span>
               )}
-            </Button>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={() => setSettingsOpen(!settingsOpen)}
+                title="Terminal settings"
+              >
+                {settingsOpen ? (
+                  <ChevronRight className="h-4 w-4" />
+                ) : (
+                  <Settings className="h-4 w-4" />
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0"
+                onClick={() => onOpenChange(false)}
+                title="Close"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
           </div>
           <div
             ref={containerCallbackRef}
-            className="flex-1 min-h-0 p-1"
+            className="relative flex-1 min-h-0 p-1"
             style={{ background: '#1a1a2e' }}
+            onContextMenu={(e) => {
+              e.preventDefault()
+              setTermContextMenu({ x: e.clientX, y: e.clientY })
+            }}
           />
+          {termContextMenu && (
+            <div
+              className="fixed z-[100] rounded-md border bg-popover p-1 shadow-md"
+              style={{ left: termContextMenu.x, top: termContextMenu.y }}
+              onMouseDown={(e) => e.stopPropagation()}
+            >
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-sm px-3 py-1.5 text-xs hover:bg-accent"
+                onClick={() => void handleRestartTerminal()}
+              >
+                <RotateCw className="h-3.5 w-3.5" />
+                Restart Terminal
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Settings sidebar */}

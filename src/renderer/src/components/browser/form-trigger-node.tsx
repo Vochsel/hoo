@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useState } from 'react'
 import { type NodeProps, Handle, Position } from '@xyflow/react'
 import { FormInput, Plus, Settings2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useFlowDirection, getSourcePosition } from './flow-direction-context'
 import { Input } from '@/components/ui/input'
 import {
   Dialog,
@@ -170,6 +171,9 @@ function FormTriggerNodeInner({ id, data, selected }: NodeProps): React.ReactEle
     }
   }
 
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
+
   return (
     <>
       <div
@@ -185,7 +189,7 @@ function FormTriggerNodeInner({ id, data, selected }: NodeProps): React.ReactEle
       >
         <Handle
           type="source"
-          position={Position.Right}
+          position={sourcePos}
           className="!h-3 !w-3 !border-2 !border-emerald-300 !bg-emerald-500"
         />
 
