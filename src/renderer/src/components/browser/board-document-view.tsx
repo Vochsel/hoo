@@ -168,12 +168,12 @@ function EmbedContextMenu({
   return (
     <div
       ref={ref}
-      className="fixed z-50 min-w-[140px] rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+      className="fixed z-50 min-w-[140px] rounded-md border border-border/40 bg-popover p-1 shadow-sm animate-in fade-in-0 zoom-in-95"
       style={{ left: x, top: y }}
     >
       <button
         type="button"
-        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
         onClick={onDelete}
       >
         Remove embed
@@ -206,7 +206,7 @@ function BrowserEmbedNodeView(props: NodeViewProps): React.ReactElement {
     return (
       <NodeViewWrapper as="div" className="browser-embed-card not-found" contentEditable={false}>
         <div
-          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3"
+          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 px-4 py-3"
           onContextMenu={handleContextMenu}
         >
           <AlertTriangle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
@@ -222,7 +222,7 @@ function BrowserEmbedNodeView(props: NodeViewProps): React.ReactElement {
   return (
     <NodeViewWrapper as="div" className="browser-embed-card" contentEditable={false}>
       <div
-        className="rounded-lg border bg-card transition-colors hover:bg-accent/50"
+        className="rounded-lg border border-border/40 bg-card transition-colors hover:bg-accent/50"
         onContextMenu={handleContextMenu}
       >
         <button
@@ -252,16 +252,16 @@ function BrowserEmbedNodeView(props: NodeViewProps): React.ReactElement {
             <img
               src={tab.screenshot}
               alt=""
-              className="h-10 w-16 shrink-0 rounded border object-cover object-top"
+              className="h-10 w-16 shrink-0 rounded border border-border/40 object-cover object-top"
             />
           )}
         </button>
         {expanded && tab.screenshot && (
-          <div className="border-t px-4 py-3">
+          <div className="border-t border-border/40 px-4 py-3">
             <img
               src={tab.screenshot}
               alt=""
-              className="w-full rounded border object-contain"
+              className="w-full rounded border border-border/40 object-contain"
             />
           </div>
         )}
@@ -332,7 +332,7 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
     return (
       <NodeViewWrapper as="div" className="terminal-embed-card not-found" contentEditable={false}>
         <div
-          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3"
+          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 px-4 py-3"
           onContextMenu={handleContextMenu}
         >
           <AlertTriangle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
@@ -353,7 +353,7 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
   return (
     <NodeViewWrapper as="div" className="terminal-embed-card" contentEditable={false}>
       <div
-        className="rounded-lg border bg-card transition-colors hover:bg-accent/50"
+        className="rounded-lg border border-border/40 bg-card transition-colors hover:bg-accent/50"
         onContextMenu={handleContextMenu}
       >
         <button
@@ -437,7 +437,7 @@ function OutputEmbedNodeView(props: NodeViewProps): React.ReactElement {
     return (
       <NodeViewWrapper as="div" className="output-embed-card not-found" contentEditable={false}>
         <div
-          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/30 bg-muted/30 px-4 py-3"
+          className="flex items-center gap-2 rounded-lg border border-dashed border-muted-foreground/20 bg-muted/20 px-4 py-3"
           onContextMenu={handleContextMenu}
         >
           <AlertTriangle className="h-4 w-4 shrink-0 text-muted-foreground/50" />
@@ -459,7 +459,7 @@ function OutputEmbedNodeView(props: NodeViewProps): React.ReactElement {
   return (
     <NodeViewWrapper as="div" className="output-embed-card" contentEditable={false}>
       <div
-        className="rounded-lg border bg-card transition-colors hover:bg-accent/50"
+        className="rounded-lg border border-border/40 bg-card transition-colors hover:bg-accent/50"
         onContextMenu={handleContextMenu}
       >
         <button
@@ -481,7 +481,7 @@ function OutputEmbedNodeView(props: NodeViewProps): React.ReactElement {
           </div>
         </button>
         {expanded && markdown && (
-          <div className="border-t px-4 py-3">
+          <div className="border-t border-border/40 px-4 py-3">
             <pre className="overflow-auto rounded bg-muted/70 p-2 text-[11px] leading-relaxed text-foreground whitespace-pre-wrap max-h-[400px]">
               {markdown}
             </pre>

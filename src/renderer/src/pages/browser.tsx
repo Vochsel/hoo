@@ -20,7 +20,9 @@ import {
   type Connection
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop } from 'lucide-react'
+import { NavLink } from 'react-router-dom'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { useAppActions } from '@/App'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BrowserTabNode, type BrowserTabNodeData } from '@/components/browser/browser-tab-node'
@@ -286,6 +288,9 @@ function BrowserPageInner(): React.ReactElement {
   const [editingTerminalName, setEditingTerminalName] = useState('')
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const createMenuRef = useRef<HTMLDivElement | null>(null)
+  const [sidebarWidth, setSidebarWidth] = useState(288)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [boardView, setBoardView] = useState<'whiteboard' | 'tabs' | 'document'>('whiteboard')
   const [boardDocHtml, setBoardDocHtmlState] = useState('<p></p>')
   const [boardDocLoading, setBoardDocLoading] = useState(false)
@@ -2629,6 +2634,18 @@ function BrowserPageInner(): React.ReactElement {
     [tabs, updateTab]
   )
 
+  // Capture-phase Escape closes the monitor dialog reliably
+  useEffect(() => {
+    if (!monitorNodeId) return
+    const handleEscape = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setMonitorNodeId(null)
+      }
+    }
+    window.addEventListener('keydown', handleEscape, true)
+    return (): void => window.removeEventListener('keydown', handleEscape, true)
+  }, [monitorNodeId])
+
   const monitorTab = monitorNodeId ? tabs.find((t) => t.id === monitorNodeId) : null
   const monitorTabMonitors = monitorTab ? parseMonitors(monitorTab) : []
 
@@ -2650,6 +2667,25 @@ function BrowserPageInner(): React.ReactElement {
   }, [])
 
   const ungroupedBoards = workspace ? boardsByFolderId.get('__ungrouped__') ?? [] : []
+  const { openChangelog } = useAppActions()
+
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    resizeRef.current = { startX: e.clientX, startWidth: sidebarWidth }
+    const onMouseMove = (ev: MouseEvent): void => {
+      if (!resizeRef.current) return
+      const delta = ev.clientX - resizeRef.current.startX
+      const newWidth = Math.max(200, Math.min(480, resizeRef.current.startWidth + delta))
+      setSidebarWidth(newWidth)
+    }
+    const onMouseUp = (): void => {
+      resizeRef.current = null
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [sidebarWidth])
 
   const toggleFolderExpanded = useCallback((folderId: string) => {
     setExpandedFolders((prev) => {
@@ -2780,26 +2816,42 @@ function BrowserPageInner(): React.ReactElement {
 
   return (
     <div className="flex h-full min-h-0" onClick={closeContextMenu}>
-      <aside className="w-80 shrink-0 border-r bg-muted/20">
-        <div className="flex h-full min-h-0 flex-col">
-          <div className="space-y-3 border-b px-3 py-3">
-            <div>
-              <h2 className="text-sm font-semibold">Workspace</h2>
-              <p className="text-[11px] text-muted-foreground truncate" title={workspace?.rootDir}>
-                {workspace?.rootDir ?? 'Loading workspace...'}
-              </p>
-            </div>
+      {sidebarCollapsed && (
+        <div className="flex shrink-0 flex-col items-center border-r border-border/40 bg-muted/30 py-2 px-1">
+          <button
+            type="button"
+            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            onClick={() => setSidebarCollapsed(false)}
+            title="Expand sidebar"
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </button>
+        </div>
+      )}
+      {!sidebarCollapsed && (
+        <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border/40 bg-muted/30 flex flex-col min-h-0">
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace</h2>
+            <div className="flex items-center gap-0.5">
+              <button
+                type="button"
+                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                onClick={() => setSidebarCollapsed(true)}
+                title="Collapse sidebar"
+              >
+                <PanelLeftClose className="h-3.5 w-3.5" />
+              </button>
             <div className="relative" ref={createMenuRef}>
-              <Button
-                size="sm"
-                className="h-7 w-7 p-0"
+              <button
+                type="button"
+                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                 onClick={() => setCreateMenuOpen((v) => !v)}
                 title="Create new item"
               >
-                <Plus className="h-3.5 w-3.5" />
-              </Button>
+                <Plus className="h-4 w-4" />
+              </button>
               {createMenuOpen && (
-                <div className="absolute left-0 top-full z-50 mt-1 w-36 rounded-md border bg-popover p-1 shadow-md">
+                <div className="absolute left-0 top-full z-50 mt-1 w-36 rounded-md border border-border/40 bg-popover p-1 shadow-sm">
                   <button
                     type="button"
                     className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
@@ -2819,19 +2871,20 @@ function BrowserPageInner(): React.ReactElement {
                 </div>
               )}
             </div>
+            </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto p-2">
-            <div className="space-y-2">
+          <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1">
+            <div className="space-y-0.5">
               {workspace?.folders.map((folder) => {
                 const folderBoards = boardsByFolderId.get(folder.id) ?? []
                 const expanded = expandedFolders.has(folder.id)
                 return (
-                  <section key={folder.id} className="rounded-md border bg-background">
-                    <div className="group/folderItem flex items-center gap-1 px-2 py-1.5">
+                  <section key={folder.id}>
+                    <div className="group/folderItem flex items-center gap-1 rounded-sm px-2 py-1 hover:bg-accent/60 transition-colors">
                       <button
                         type="button"
-                        className="rounded p-0.5 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        className="rounded-sm p-0.5 text-muted-foreground/60 hover:text-muted-foreground"
                         onClick={() => toggleFolderExpanded(folder.id)}
                       >
                         {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
@@ -2866,13 +2919,13 @@ function BrowserPageInner(): React.ReactElement {
                           }}
                         >
                           <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
-                          <span className="truncate text-xs font-medium">{folder.name}</span>
+                          <span className="truncate text-[13px] font-medium">{folder.name}</span>
                           <span className="text-[10px] text-muted-foreground">{folderBoards.length}</span>
                         </button>
                       )}
                       <button
                         type="button"
-                        className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:text-foreground"
                         onClick={() => void handleCreateBoard(folder.id)}
                         title="New board in folder"
                       >
@@ -2880,7 +2933,7 @@ function BrowserPageInner(): React.ReactElement {
                       </button>
                       <button
                         type="button"
-                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:text-destructive"
                         onClick={() => void handleDeleteFolder(folder.id, folder.name)}
                         title="Delete folder"
                       >
@@ -2888,7 +2941,7 @@ function BrowserPageInner(): React.ReactElement {
                       </button>
                     </div>
                     {expanded && (
-                      <div className="space-y-1 border-t p-1.5">
+                      <div className="space-y-0.5 pl-4 py-0.5">
                         {folderBoards.length === 0 ? (
                           <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
                         ) : (
@@ -2900,10 +2953,10 @@ function BrowserPageInner(): React.ReactElement {
                               <div
                                 key={board.id}
                                 className={[
-                                  'group/boardItem rounded-md border px-2 py-1.5',
+                                  'group/boardItem rounded-sm px-2 py-1 transition-colors',
                                   board.id === activeBoardId
-                                    ? 'border-primary/50 bg-primary/10'
-                                    : 'border-transparent hover:bg-accent/50'
+                                    ? 'bg-accent'
+                                    : 'hover:bg-accent/50'
                                 ].join(' ')}
                               >
                                 <div className="flex items-center gap-1">
@@ -2956,7 +3009,7 @@ function BrowserPageInner(): React.ReactElement {
                                   )}
                                   <button
                                     type="button"
-                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
+                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-destructive"
                                     onClick={() => void handleDeleteBoard(board.id, board.name)}
                                     title="Delete board"
                                   >
@@ -2964,13 +3017,13 @@ function BrowserPageInner(): React.ReactElement {
                                   </button>
                                 </div>
                                 {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
-                                  <div className="ml-5 mt-1 space-y-0.5">
+                                  <div className="ml-5 mt-0.5 space-y-px">
                                     {bTabs.map((tab) => (
                                       <button
                                         key={tab.id}
                                         type="button"
                                         onClick={() => handleSidebarTabClick(tab.id, board.id)}
-                                        className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+                                        className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
                                       >
                                         {tab.favicon ? (
                                           <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
@@ -2981,7 +3034,7 @@ function BrowserPageInner(): React.ReactElement {
                                       </button>
                                     ))}
                                     {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
-                                      <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground">
+                                      <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors">
                                         <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
                                         {editingTerminalId === tn.id ? (
                                           <Input
@@ -3030,44 +3083,101 @@ function BrowserPageInner(): React.ReactElement {
                 )
               })}
 
-              <section className="rounded-md border bg-background">
-                <div className="flex items-center gap-1 px-2 py-1.5">
-                  <Folder className="h-3.5 w-3.5 text-muted-foreground" />
-                  <span className="flex-1 text-xs font-medium">Ungrouped</span>
-                  <span className="text-[10px] text-muted-foreground">{ungroupedBoards.length}</span>
-                  <button
-                    type="button"
-                    className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
-                    onClick={() => void handleCreateBoard(null)}
-                    title="New ungrouped board"
+              {ungroupedBoards.map((board) => {
+                const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
+                const collapsed = collapsedBoards.has(board.id)
+                return (
+                  <div
+                    key={board.id}
+                    className={[
+                      'group/boardItem rounded-sm px-2 py-1 transition-colors',
+                      board.id === activeBoardId
+                        ? 'bg-accent'
+                        : 'hover:bg-accent/50'
+                    ].join(' ')}
                   >
-                    <Workflow className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-                <div className="space-y-1 border-t p-1.5">
-                  {ungroupedBoards.length === 0 ? (
-                    <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
-                  ) : (
-                    <>
-                      {ungroupedBoards.map((board) => {
-                        const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
-                        const collapsed = collapsedBoards.has(board.id)
-                        return (
-                        <div
-                          key={board.id}
-                          className={[
-                            'group/boardItem rounded-md border px-2 py-1.5',
-                            board.id === activeBoardId
-                              ? 'border-primary/50 bg-primary/10'
-                              : 'border-transparent hover:bg-accent/50'
-                          ].join(' ')}
+                    <div className="flex items-center gap-1">
+                      {editingBoardId === board.id ? (
+                        <Input
+                          value={editingBoardName}
+                          onChange={(event) => setEditingBoardName(event.target.value)}
+                          onBlur={() => void saveInlineBoardEdit()}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.currentTarget.blur()
+                              return
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              cancelInlineBoardEdit()
+                            }
+                          }}
+                          className="h-7 flex-1 text-xs"
+                          autoFocus
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="group/board flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
+                          onClick={() => void handleSelectBoard(board.id)}
+                          onDoubleClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            startInlineBoardEdit(board.id, board.name)
+                          }}
                         >
-                          <div className="flex items-center gap-1">
-                            {editingBoardId === board.id ? (
+                          <span
+                            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                            onClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              toggleBoardCollapsed(board.id)
+                            }}
+                          >
+                            <Workflow className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" />
+                            {collapsed ? (
+                              <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                            ) : (
+                              <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                            )}
+                          </span>
+                          <span className="truncate">{board.name}</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-destructive"
+                        onClick={() => void handleDeleteBoard(board.id, board.name)}
+                        title="Delete board"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
+                      <div className="ml-5 mt-0.5 space-y-px">
+                        {bTabs.map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => handleSidebarTabClick(tab.id, board.id)}
+                            className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                          >
+                            {tab.favicon ? (
+                              <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
+                            ) : (
+                              <Globe className="h-3.5 w-3.5" />
+                            )}
+                            <span className="truncate">{tab.title || tab.url || 'New Tab'}</span>
+                          </button>
+                        ))}
+                        {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
+                          <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors">
+                            <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                            {editingTerminalId === tn.id ? (
                               <Input
-                                value={editingBoardName}
-                                onChange={(event) => setEditingBoardName(event.target.value)}
-                                onBlur={() => void saveInlineBoardEdit()}
+                                value={editingTerminalName}
+                                onChange={(event) => setEditingTerminalName(event.target.value)}
+                                onBlur={() => void saveInlineTerminalEdit()}
                                 onKeyDown={(event) => {
                                   if (event.key === 'Enter') {
                                     event.currentTarget.blur()
@@ -3075,158 +3185,110 @@ function BrowserPageInner(): React.ReactElement {
                                   }
                                   if (event.key === 'Escape') {
                                     event.preventDefault()
-                                    cancelInlineBoardEdit()
+                                    cancelInlineTerminalEdit()
                                   }
                                 }}
-                                className="h-7 flex-1 text-xs"
+                                className="h-5 flex-1 text-xs px-1 py-0"
                                 autoFocus
                               />
                             ) : (
                               <button
                                 type="button"
-                                className="group/board flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
-                                onClick={() => void handleSelectBoard(board.id)}
+                                className="min-w-0 flex-1 truncate text-left"
+                                onClick={() => handleSidebarTerminalClick(tn.id, board.id)}
                                 onDoubleClick={(event) => {
                                   event.preventDefault()
                                   event.stopPropagation()
-                                  startInlineBoardEdit(board.id, board.name)
+                                  startInlineTerminalEdit(tn.id, tn.label || 'Terminal')
                                 }}
                               >
-                                <span
-                                  className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
-                                  onClick={(event) => {
-                                    event.preventDefault()
-                                    event.stopPropagation()
-                                    toggleBoardCollapsed(board.id)
-                                  }}
-                                >
-                                  <Workflow className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" />
-                                  {collapsed ? (
-                                    <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
-                                  ) : (
-                                    <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
-                                  )}
-                                </span>
-                                <span className="truncate">{board.name}</span>
+                                {tn.label || 'Terminal'}
                               </button>
                             )}
-                            <button
-                              type="button"
-                              className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:bg-destructive/10 hover:text-destructive"
-                              onClick={() => void handleDeleteBoard(board.id, board.name)}
-                              title="Delete board"
-                            >
-                              <Trash2 className="h-3 w-3" />
-                            </button>
                           </div>
-                          {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
-                            <div className="ml-5 mt-1 space-y-0.5">
-                              {bTabs.map((tab) => (
-                                <button
-                                  key={tab.id}
-                                  type="button"
-                                  onClick={() => handleSidebarTabClick(tab.id, board.id)}
-                                  className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground"
-                                >
-                                  {tab.favicon ? (
-                                    <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
-                                  ) : (
-                                    <Globe className="h-3.5 w-3.5" />
-                                  )}
-                                  <span className="truncate">{tab.title || tab.url || 'New Tab'}</span>
-                                </button>
-                              ))}
-                              {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
-                                <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-md px-2 py-1 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground">
-                                  <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
-                                  {editingTerminalId === tn.id ? (
-                                    <Input
-                                      value={editingTerminalName}
-                                      onChange={(event) => setEditingTerminalName(event.target.value)}
-                                      onBlur={() => void saveInlineTerminalEdit()}
-                                      onKeyDown={(event) => {
-                                        if (event.key === 'Enter') {
-                                          event.currentTarget.blur()
-                                          return
-                                        }
-                                        if (event.key === 'Escape') {
-                                          event.preventDefault()
-                                          cancelInlineTerminalEdit()
-                                        }
-                                      }}
-                                      className="h-5 flex-1 text-xs px-1 py-0"
-                                      autoFocus
-                                    />
-                                  ) : (
-                                    <button
-                                      type="button"
-                                      className="min-w-0 flex-1 truncate text-left"
-                                      onClick={() => handleSidebarTerminalClick(tn.id, board.id)}
-                                      onDoubleClick={(event) => {
-                                        event.preventDefault()
-                                        event.stopPropagation()
-                                        startInlineTerminalEdit(tn.id, tn.label || 'Terminal')
-                                      }}
-                                    >
-                                      {tn.label || 'Terminal'}
-                                    </button>
-                                  )}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                        )
-                      })}
-                    </>
-                  )}
-                </div>
-              </section>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </div>
-        </div>
-      </aside>
+
+          <div className="border-t border-border/40 px-3 py-2 space-y-0.5">
+            <NavLink
+              to="/settings"
+              className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Settings
+            </NavLink>
+            <button
+              type="button"
+              onClick={openChangelog}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            >
+              <ScrollText className="h-3.5 w-3.5" />
+              Changelog
+            </button>
+          </div>
+        </aside>
+      )}
+      {!sidebarCollapsed && (
+        <div
+          className="w-1 shrink-0 cursor-col-resize hover:bg-border/60 active:bg-border transition-colors"
+          onMouseDown={startResize}
+        />
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col">
-          <div className="flex items-center justify-between gap-2 border-b px-3 py-1.5">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-medium">{activeBoard?.name ?? 'No item selected'}</p>
-              <p className="text-[11px] text-muted-foreground">
-                {workspaceLoading
-                  ? 'Loading workspace...'
-                  : activeBoardId
-                    ? 'Active board'
-                    : 'Create a board to begin'}
-              </p>
+          <div className="flex items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
+            <p className="min-w-0 truncate text-sm font-semibold">
+              {workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
+            </p>
+            <div className="flex items-center gap-2">
+              {activeBoardId && (
+                <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
+                  <button
+                    type="button"
+                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'whiteboard' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => handleBoardViewChange('whiteboard')}
+                    title="Whiteboard"
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                    Board
+                  </button>
+                  <button
+                    type="button"
+                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'tabs' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => handleBoardViewChange('tabs')}
+                    title="Tabs"
+                  >
+                    <PanelTop className="h-3.5 w-3.5" />
+                    Tabs
+                  </button>
+                  <button
+                    type="button"
+                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'document' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => handleBoardViewChange('document')}
+                    title="Document"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Document
+                  </button>
+                </div>
+              )}
+              {activeBoardId && (
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  onClick={() => window.dispatchEvent(new CustomEvent('hoo:browser-add-tab'))}
+                  title="Add tab"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              )}
             </div>
-            {activeBoardId && (
-              <div className="flex items-center rounded-md border bg-muted/50 p-0.5">
-                <button
-                  type="button"
-                  className={`rounded px-2 py-1 text-xs transition-colors ${boardView === 'whiteboard' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => handleBoardViewChange('whiteboard')}
-                  title="Whiteboard"
-                >
-                  <LayoutGrid className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className={`rounded px-2 py-1 text-xs transition-colors ${boardView === 'tabs' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => handleBoardViewChange('tabs')}
-                  title="Tabs"
-                >
-                  <PanelTop className="h-3.5 w-3.5" />
-                </button>
-                <button
-                  type="button"
-                  className={`rounded px-2 py-1 text-xs transition-colors ${boardView === 'document' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
-                  onClick={() => handleBoardViewChange('document')}
-                  title="Document"
-                >
-                  <FileText className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            )}
           </div>
           {boardView === 'whiteboard' && (
           <FlowDirectionContext.Provider value={flowDirection}>
@@ -3262,14 +3324,14 @@ function BrowserPageInner(): React.ReactElement {
               <Background />
               <Panel position="bottom-center">
                 <div className="flex items-center gap-2">
-                  <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border">
+                  <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border border-border/40">
                     {isMapMode
                       ? 'Map mode: drag to pan and scroll to zoom'
                       : 'Design mode: scroll to pan · drag-select supports partial overlap'}
                   </p>
                   <button
                     type="button"
-                    className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border hover:text-foreground transition-colors"
+                    className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border border-border/40 hover:text-foreground transition-colors"
                     onClick={() => void setSetting('flowDirection', flowDirection === 'horizontal' ? 'vertical' : 'horizontal')}
                     title={`Edge direction: ${flowDirection}`}
                   >
@@ -3315,7 +3377,7 @@ function BrowserPageInner(): React.ReactElement {
       {contextMenu && boardView === 'whiteboard' && (
         <div
           ref={contextMenuRef}
-          className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[180px] overflow-y-auto rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+          className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[180px] overflow-y-auto rounded-md border border-border/40 bg-popover p-1 shadow-sm animate-in fade-in-0 zoom-in-95"
           style={{
             left: contextMenuPosition?.x ?? contextMenu.x,
             top: contextMenuPosition?.y ?? contextMenu.y
@@ -3495,7 +3557,7 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <div className="my-1 h-px bg-border" />
               <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
                 onClick={handleContextDeleteNode}
               >
                 <Trash2 className="h-4 w-4" />
@@ -3530,7 +3592,7 @@ function BrowserPageInner(): React.ReactElement {
               )}
               <div className="my-1 h-px bg-border" />
               <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
                 onClick={handleContextDeleteNode}
               >
                 <Trash2 className="h-4 w-4" />
@@ -3545,7 +3607,7 @@ function BrowserPageInner(): React.ReactElement {
       {monitorNodeId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setMonitorNodeId(null)}>
           <div
-            className="w-[400px] rounded-lg border bg-card p-4 shadow-lg space-y-3"
+            className="w-[400px] rounded-lg border border-border/40 bg-card p-4 shadow-sm space-y-3"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-sm font-semibold">Add Monitor / Watch</h3>
@@ -3561,7 +3623,7 @@ function BrowserPageInner(): React.ReactElement {
                   const isExpanded = expandedMonitorId === m.id
                   const hasRule = !!m.rule
                   return (
-                    <div key={m.id} className="rounded-md border overflow-hidden">
+                    <div key={m.id} className="rounded-md border border-border/40 overflow-hidden">
                       <div className="flex items-center gap-2 px-2 py-1.5 text-xs">
                         <button
                           className="text-muted-foreground hover:text-foreground shrink-0"
@@ -3589,14 +3651,14 @@ function BrowserPageInner(): React.ReactElement {
                         </button>
                       </div>
                       {isExpanded && (
-                        <div className="border-t bg-muted/30 px-2.5 py-2 space-y-1.5">
+                        <div className="border-t border-border/40 bg-muted/20 px-2.5 py-2 space-y-1.5">
                           {hasRule ? (
                             <>
                               <div className="flex items-start gap-1.5">
                                 <Search className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
                                 <div className="min-w-0 flex-1">
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">CSS Selector</p>
-                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border">
+                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border border-border/40">
                                     {m.rule!.cssSelector}
                                   </code>
                                 </div>
@@ -3607,7 +3669,7 @@ function BrowserPageInner(): React.ReactElement {
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">
                                     Regex <span className="normal-case">(group {m.rule!.regexGroup})</span>
                                   </p>
-                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border">
+                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border border-border/40">
                                     /{m.rule!.regex}/
                                   </code>
                                 </div>
@@ -3617,9 +3679,9 @@ function BrowserPageInner(): React.ReactElement {
                                 <div className="min-w-0 flex-1">
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Check</p>
                                   <p className="text-[11px] text-foreground/80 mt-0.5">
-                                    <span className="font-mono bg-background rounded px-1 py-0.5 border">{m.rule!.check}</span>
+                                    <span className="font-mono bg-background rounded px-1 py-0.5 border border-border/40">{m.rule!.check}</span>
                                     {m.rule!.value !== undefined && (
-                                      <span className="ml-1.5 font-mono bg-background rounded px-1 py-0.5 border">{m.rule!.value}</span>
+                                      <span className="ml-1.5 font-mono bg-background rounded px-1 py-0.5 border border-border/40">{m.rule!.value}</span>
                                     )}
                                   </p>
                                 </div>
@@ -3627,7 +3689,7 @@ function BrowserPageInner(): React.ReactElement {
                               {m.lastExtracted !== undefined && (
                                 <div className="mt-1 pt-1.5 border-t">
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Last extracted value</p>
-                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border max-h-[60px] overflow-auto">
+                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border border-border/40 max-h-[60px] overflow-auto">
                                     {m.lastExtracted || <span className="text-muted-foreground/50 italic">(empty)</span>}
                                   </code>
                                 </div>

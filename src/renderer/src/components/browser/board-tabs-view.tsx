@@ -135,7 +135,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
   return (
     <div className="flex flex-1 flex-col min-h-0">
       {/* Tab bar */}
-      <div className="flex items-end gap-0 border-b bg-muted/30 px-1 pt-1 overflow-x-auto">
+      <div className="flex items-end gap-0 border-b border-border/40 bg-muted/20 px-1 pt-1 overflow-x-auto">
         {allItems.map((item) => {
           const id = item.kind === 'browser' ? item.tab.id : item.node.id
           const isSelected = id === selectedId
@@ -150,7 +150,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
               type="button"
               className={`group relative flex max-w-[200px] items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs transition-colors ${
                 isSelected
-                  ? 'bg-background border border-b-background -mb-px z-10 font-medium'
+                  ? 'bg-background border border-border/60 border-b-background -mb-px z-10 font-medium'
                   : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
               }`}
               onClick={() => handleSelectTab(id)}
@@ -173,7 +173,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
               {item.kind === 'browser' && (
                 <span
                   role="button"
-                  className="ml-1 shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/10 hover:text-destructive transition-opacity"
+                  className="ml-1 shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
                   onClick={(e) => handleCloseTab(e, id, item.kind)}
                 >
                   <X className="h-3 w-3" />

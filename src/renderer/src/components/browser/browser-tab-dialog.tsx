@@ -335,8 +335,8 @@ export function BrowserTabDialog({
         void handleDialogOpenChange(false)
       }
     }
-    window.addEventListener('keydown', handleEscape)
-    return (): void => window.removeEventListener('keydown', handleEscape)
+    window.addEventListener('keydown', handleEscape, true)
+    return (): void => window.removeEventListener('keydown', handleEscape, true)
   }, [open, handleDialogOpenChange])
 
   // Wait for any in-progress page loads to finish (with timeout)

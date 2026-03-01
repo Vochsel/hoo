@@ -30,7 +30,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
   return (
     <div
       className={cn(
-        'group w-[240px] rounded-lg border bg-card shadow-sm transition-all hover:shadow-md',
+        'group w-[240px] rounded-lg border border-border/60 bg-card shadow-sm transition-all hover:shadow',
         selected && 'ring-2 ring-primary'
       )}
     >
@@ -46,7 +46,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
 
         {/* Close button */}
         <button
-          className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover:opacity-100"
+          className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-white opacity-0 transition-opacity hover:bg-black/60 group-hover:opacity-100"
           onClick={(e) => {
             e.stopPropagation()
             onClose(id)
@@ -84,7 +84,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
 
       {/* Per-monitor rows with inline handles */}
       {hasMonitors && (
-        <div className="border-t px-2.5 py-1.5 space-y-0.5">
+        <div className="border-t border-border/40 px-2.5 py-1.5 space-y-0.5">
           {enabledMonitors.map((monitor) => (
             <div key={monitor.id} className="relative flex items-center gap-1.5 h-5">
               <Radio className="h-2.5 w-2.5 text-amber-500 shrink-0" />

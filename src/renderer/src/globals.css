@@ -81,13 +81,6 @@
   -webkit-app-region: no-drag;
 }
 
-.titlebar-nav-offset {
-  padding-left: 0;
-}
-
-html.platform-darwin .titlebar-nav-offset {
-  padding-left: 4.25rem;
-}
 
 /* ─── Board Document Editor ──────────────────────────────────── */
 

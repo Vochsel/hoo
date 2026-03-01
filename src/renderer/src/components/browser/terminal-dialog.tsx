@@ -290,6 +290,18 @@ export function TerminalDialog({
     return () => document.removeEventListener('mousedown', handler)
   }, [termContextMenu])
 
+  // Capture-phase Escape so it fires before stopPropagation or xterm can swallow it
+  useEffect(() => {
+    if (!open) return
+    const handleEscape = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        onOpenChange(false)
+      }
+    }
+    window.addEventListener('keydown', handleEscape, true)
+    return (): void => window.removeEventListener('keydown', handleEscape, true)
+  }, [open, onOpenChange])
+
   // Detach UI when dialog closes (PTY stays alive)
   useEffect(() => {
     if (!open) {
