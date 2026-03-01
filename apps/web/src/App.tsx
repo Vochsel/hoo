@@ -84,7 +84,7 @@ export default function App() {
         </nav>
 
         {/* Hero */}
-        <section className="flex flex-col items-center text-center px-6 pt-24 pb-32 max-w-3xl mx-auto">
+        <section className="flex flex-col items-center text-center px-6 pt-24 pb-32 max-w-3xl mx-auto overflow-visible">
           <h1
             className="text-5xl sm:text-6xl font-bold tracking-tight leading-[1.1]"
             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
@@ -115,10 +115,20 @@ export default function App() {
               <ArrowRight className="w-4 h-4" />
             </a>
           </div>
+
+          {/* Hero Image */}
+          <div className="mt-16 w-[200%] max-w-none">
+            <img
+              src="/hero.png"
+              alt="Hoo — Spatial Tabs"
+              className="w-full"
+            />
+          </div>
         </section>
 
         {/* Features */}
         <section className="max-w-5xl mx-auto px-6 pb-32">
+          <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-center mb-12">Features</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
             {features.map((f) => (
               <div
@@ -130,6 +140,31 @@ export default function App() {
                 <p className="text-sm text-neutral-500 leading-relaxed">{f.description}</p>
               </div>
             ))}
+          </div>
+        </section>
+
+        {/* Mission */}
+        <section className="max-w-3xl mx-auto px-6 pb-32">
+          <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-center mb-12">Why a Browser?</h2>
+          <div className="space-y-6 text-base sm:text-lg leading-relaxed text-neutral-600 dark:text-neutral-400">
+            <p>
+              APIs seem great on paper. But after two years of wrangling OAuth logins and
+              integrations, the reality is clear: there are too many gaps in API coverage, too many
+              tools with no programmatic access at all. Browser-use is the real path to automating
+              knowledge work.
+            </p>
+            <p>
+              Hoo starts from a simple idea &mdash; <em>tabs as nodes</em>. Inspired by the power of
+              node graphs in tools like Houdini, where complexity is tamed through visual,
+              hierarchical abstraction. Every tab becomes a step. Every connection becomes a workflow.
+              Every workflow becomes repeatable and introspectable.
+            </p>
+            <p>
+              This isn't just a browser with AI bolted on. It's a spatial interface where humans and
+              agents collaborate in the same canvas, on the same tasks, using the same web everyone
+              already knows.
+            </p>
+            <p className="text-neutral-900 dark:text-white font-medium">&mdash; Ben</p>
           </div>
         </section>
 
