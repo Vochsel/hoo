@@ -4,7 +4,7 @@
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
+    --background: 220 20% 97%;
     --foreground: 222.2 84% 4.9%;
     --card: 0 0% 100%;
     --card-foreground: 222.2 84% 4.9%;
@@ -14,14 +14,14 @@
     --primary-foreground: 210 40% 98%;
     --secondary: 210 40% 96.1%;
     --secondary-foreground: 222.2 47.4% 11.2%;
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 216 20% 93%;
+    --muted-foreground: 215.4 16.3% 42%;
     --accent: 210 40% 96.1%;
     --accent-foreground: 222.2 47.4% 11.2%;
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 210 40% 98%;
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
+    --border: 216 20% 82%;
+    --input: 216 20% 82%;
     --ring: 222.2 84% 4.9%;
     --radius: 0.5rem;
   }
@@ -81,10 +81,99 @@
   -webkit-app-region: no-drag;
 }
 
-.titlebar-nav-offset {
-  padding-left: 0;
+
+/* ─── Board Document Editor ──────────────────────────────────── */
+
+.board-doc-editor-content {
+  @apply mx-auto w-full text-base leading-relaxed outline-none;
+  min-height: 60vh;
 }
 
-html.platform-darwin .titlebar-nav-offset {
-  padding-left: 4.25rem;
+.board-doc-editor-content p {
+  @apply mb-1;
+}
+
+.board-doc-editor-content p.is-editor-empty:first-child::before {
+  @apply pointer-events-none float-left h-0 text-muted-foreground/50;
+  content: 'Start writing, or type / to embed a browser tab or terminal...';
+}
+
+.board-doc-editor-content h1 {
+  @apply mt-10 mb-3 text-3xl font-bold;
+}
+
+.board-doc-editor-content h2 {
+  @apply mt-8 mb-2 text-2xl font-bold;
+}
+
+.board-doc-editor-content h3 {
+  @apply mt-6 mb-1 text-xl font-semibold;
+}
+
+.board-doc-editor-content ul {
+  @apply mb-2 list-disc pl-5;
+}
+
+.browser-embed-card,
+.terminal-embed-card,
+.output-embed-card {
+  @apply my-3;
+}
+
+/* Task list checkboxes */
+.board-doc-editor-content ul[data-type="taskList"] {
+  @apply list-none pl-0 space-y-1;
+}
+
+.board-doc-editor-content ul[data-type="taskList"] li {
+  @apply flex items-start gap-2;
+}
+
+.board-doc-editor-content ul[data-type="taskList"] li label {
+  @apply flex items-center;
+}
+
+.board-doc-editor-content ul[data-type="taskList"] li label input[type="checkbox"] {
+  @apply h-4 w-4 rounded border-muted-foreground/40 accent-primary cursor-pointer;
+}
+
+.board-doc-editor-content ul[data-type="taskList"] li div {
+  @apply flex-1;
+}
+
+.board-doc-toolbar {
+  @apply sticky top-0 z-10 rounded-lg border bg-background/95 px-3 py-2 backdrop-blur;
+}
+
+.board-doc-slash-popup {
+  @apply z-[9999] min-w-[220px] max-w-[340px] rounded-lg border bg-popover p-1 shadow-lg;
+  position: fixed;
+}
+
+.board-doc-slash-item {
+  @apply block w-full truncate rounded-md px-3 py-1.5 text-left text-sm text-foreground/90 hover:bg-accent;
+}
+
+.board-doc-slash-item.active {
+  @apply bg-accent text-accent-foreground;
+}
+
+.board-doc-slash-empty {
+  @apply px-3 py-1.5 text-sm text-muted-foreground;
+}
+
+.board-doc-task-node {
+  @apply my-3 grid grid-cols-[20px_minmax(0,1fr)_120px_140px] items-center gap-2 rounded-lg bg-muted/40 px-3 py-2 transition-colors hover:bg-muted/60;
+}
+
+.board-doc-task-name {
+  @apply h-8 rounded-md bg-transparent px-2 text-sm outline-none placeholder:text-muted-foreground/50 focus:bg-background focus:ring-1 focus:ring-ring;
+}
+
+.board-doc-task-status {
+  @apply h-8 cursor-pointer rounded-md bg-transparent px-2 text-xs text-muted-foreground outline-none focus:bg-background focus:ring-1 focus:ring-ring;
+}
+
+.board-doc-task-due {
+  @apply h-8 rounded-md bg-transparent px-2 text-xs text-muted-foreground outline-none focus:bg-background focus:ring-1 focus:ring-ring;
 }

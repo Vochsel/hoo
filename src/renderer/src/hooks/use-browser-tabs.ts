@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 export interface MonitorRule {
   cssSelector: string
@@ -24,6 +24,7 @@ export interface BrowserTab {
   favicon: string | null
   screenshot: string | null
   monitors: string | null
+  pinnedUrl: string | null
   flowX: number
   flowY: number
   createdAt: string
@@ -39,7 +40,7 @@ export interface BrowserTabMessage {
 }
 
 export interface BrowserAction {
-  type: 'click' | 'fill' | 'navigate' | 'scroll' | 'getText' | 'getElements'
+  type: 'click' | 'doubleClick' | 'fill' | 'navigate' | 'scroll' | 'getText' | 'getElements'
   index?: number
   value?: string
   url?: string
@@ -59,9 +60,15 @@ export interface PageContext {
   text: string
   elements: string
   screenshot?: string
+  webContentsId?: number
+  includeScreenshot?: boolean
 }
 
-export function useBrowserTabs(): {
+function sortTabsByCreatedAt(tabs: BrowserTab[]): BrowserTab[] {
+  return [...tabs].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+}
+
+export function useBrowserTabs(boardId: string | null): {
   tabs: BrowserTab[]
   loading: boolean
   refresh: () => Promise<void>
@@ -72,13 +79,37 @@ export function useBrowserTabs(): {
 } {
   const [tabs, setTabs] = useState<BrowserTab[]>([])
   const [loading, setLoading] = useState(true)
+  const boardIdRef = useRef<string | null>(boardId)
+  const refreshVersionRef = useRef(0)
+
+  useEffect(() => {
+    boardIdRef.current = boardId
+  }, [boardId])
 
   const refresh = useCallback(async () => {
+    const targetBoardId = boardId
+    const refreshVersion = refreshVersionRef.current + 1
+    refreshVersionRef.current = refreshVersion
+    if (!targetBoardId) {
+      if (refreshVersion === refreshVersionRef.current) {
+        setTabs([])
+        setLoading(false)
+      }
+      return
+    }
+
     setLoading(true)
-    const result = await window.api.browserTabs.list()
-    setTabs(result)
-    setLoading(false)
-  }, [])
+    try {
+      const result = await window.api.browserTabs.list(targetBoardId)
+      if (refreshVersion !== refreshVersionRef.current) return
+      if (boardIdRef.current !== targetBoardId) return
+      setTabs(sortTabsByCreatedAt(result))
+    } finally {
+      if (refreshVersion === refreshVersionRef.current && boardIdRef.current === targetBoardId) {
+        setLoading(false)
+      }
+    }
+  }, [boardId])
 
   useEffect(() => {
     refresh()
@@ -86,41 +117,85 @@ export function useBrowserTabs(): {
 
   const createTab = useCallback(
     async (data?: { title?: string; url?: string; flowX?: number; flowY?: number }) => {
-      const tab = await window.api.browserTabs.create(data ?? {})
-      await refresh()
+      const targetBoardId = boardId
+      if (!targetBoardId) {
+        throw new Error('No board selected')
+      }
+      const tab = await window.api.browserTabs.create(data ?? {}, targetBoardId)
+      if (boardIdRef.current === targetBoardId) {
+        setTabs((prev) => sortTabsByCreatedAt([...prev, tab]))
+      }
       return tab
     },
-    [refresh]
+    [boardId]
   )
 
   const updateTab = useCallback(
     async (id: string, data: Record<string, unknown>) => {
-      const tab = await window.api.browserTabs.update(id, data)
-      await refresh()
+      const targetBoardId = boardId
+      if (!targetBoardId) {
+        throw new Error('No board selected')
+      }
+      const tab = await window.api.browserTabs.update(id, data, targetBoardId)
+      if (!tab) {
+        const latest = await window.api.browserTabs.list(targetBoardId)
+        if (boardIdRef.current === targetBoardId) {
+          setTabs(sortTabsByCreatedAt(latest))
+        }
+        const fallback = latest.find((entry) => entry.id === id)
+        if (!fallback) {
+          throw new Error(`Tab not found: ${id}`)
+        }
+        return fallback
+      }
+      if (boardIdRef.current === targetBoardId) {
+        setTabs((prev) => sortTabsByCreatedAt(prev.map((entry) => (entry.id === id ? tab : entry))))
+      }
       return tab
     },
-    [refresh]
+    [boardId]
   )
 
   const deleteTab = useCallback(
     async (id: string) => {
-      await window.api.browserTabs.delete(id)
-      await refresh()
+      const targetBoardId = boardId
+      if (!targetBoardId) return
+      await window.api.browserTabs.delete(id, targetBoardId)
+      if (boardIdRef.current === targetBoardId) {
+        setTabs((prev) => prev.filter((tab) => tab.id !== id))
+      }
     },
-    [refresh]
+    [boardId]
   )
 
   const savePositions = useCallback(
     async (positions: Array<{ id: string; x: number; y: number }>) => {
-      await window.api.browserTabs.savePositions(positions)
+      const targetBoardId = boardId
+      if (!targetBoardId) return
+      await window.api.browserTabs.savePositions(positions, targetBoardId)
+      if (boardIdRef.current !== targetBoardId || positions.length === 0) return
+      const positionsById = new Map(positions.map((entry) => [entry.id, entry]))
+      const updatedAt = new Date().toISOString()
+      setTabs((prev) =>
+        prev.map((tab) => {
+          const nextPosition = positionsById.get(tab.id)
+          if (!nextPosition) return tab
+          return {
+            ...tab,
+            flowX: nextPosition.x,
+            flowY: nextPosition.y,
+            updatedAt
+          }
+        })
+      )
     },
-    []
+    [boardId]
   )
 
   return { tabs, loading, refresh, createTab, updateTab, deleteTab, savePositions }
 }
 
-export function useBrowserTabChat(tabId: string | null): {
+export function useBrowserTabChat(tabId: string | null, boardId: string | null): {
   messages: BrowserTabMessage[]
   loading: boolean
   sending: boolean
@@ -138,10 +213,10 @@ export function useBrowserTabChat(tabId: string | null): {
       return
     }
     setLoading(true)
-    const result = await window.api.browserTabs.listMessages(tabId)
+    const result = await window.api.browserTabs.listMessages(tabId, boardId ?? undefined)
     setMessages(result)
     setLoading(false)
-  }, [tabId])
+  }, [tabId, boardId])
 
   useEffect(() => {
     refresh()
@@ -149,23 +224,23 @@ export function useBrowserTabChat(tabId: string | null): {
 
   const clearMessages = useCallback(async () => {
     if (!tabId) return
-    await window.api.browserTabs.clearMessages(tabId)
+    await window.api.browserTabs.clearMessages(tabId, boardId ?? undefined)
     setMessages([])
-  }, [tabId])
+  }, [tabId, boardId])
 
   const sendMessage = useCallback(
     async (message: string, pageContext: PageContext): Promise<BrowserAction[]> => {
       if (!tabId) return []
       setSending(true)
       try {
-        const result = await window.api.browserTabs.chat(tabId, message, pageContext)
+        const result = await window.api.browserTabs.chat(tabId, message, pageContext, boardId ?? undefined)
         setMessages(result.messages)
         return result.actions ?? []
       } finally {
         setSending(false)
       }
     },
-    [tabId]
+    [tabId, boardId]
   )
 
   return { messages, loading, sending, refresh, clearMessages, sendMessage }

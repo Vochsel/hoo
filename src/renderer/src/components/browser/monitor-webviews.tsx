@@ -478,6 +478,8 @@ export function MonitorWebviews({
   const setWebviewRef = useCallback((tabId: string, el: Electron.WebviewTag | null) => {
     if (el) {
       webviewRefs.current.set(tabId, el)
+      // Prevent hidden monitor webviews from stealing focus
+      el.addEventListener('focus', () => el.blur())
       console.log(
         `${TAG} attached hidden webview for tab=${tabId}${WEBVIEW_USER_AGENT ? ' userAgent=custom' : ''}`
       )
@@ -505,6 +507,7 @@ export function MonitorWebviews({
           src="about:blank"
           partition="persist:browser-tabs"
           useragent={WEBVIEW_USER_AGENT}
+          tabIndex={-1}
           style={{ width: '1px', height: '1px' }}
         />
       ))}

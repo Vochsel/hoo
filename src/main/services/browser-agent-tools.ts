@@ -4,7 +4,7 @@ import { z } from 'zod'
 const TAG = '[browser-tools]'
 
 export interface BrowserAction {
-  type: 'click' | 'fill' | 'navigate' | 'scroll' | 'getText' | 'getElements'
+  type: 'click' | 'doubleClick' | 'fill' | 'navigate' | 'scroll' | 'getText' | 'getElements'
   index?: number
   value?: string
   url?: string
@@ -29,6 +29,19 @@ export function createBrowserTools(): {
         console.log(`${TAG} clickElement(index=${index})`)
         actions.push({ type: 'click', index })
         return `Will click element at index ${index}. The click will be executed after this response.`
+      }
+    }),
+
+    doubleClickElement: tool({
+      description:
+        'Double-click on an element by its index. Use this to enter edit mode on text elements, open items, or trigger double-click interactions.',
+      inputSchema: z.object({
+        index: z.number().describe('The index of the element to double-click from the elements list')
+      }),
+      execute: async ({ index }) => {
+        console.log(`${TAG} doubleClickElement(index=${index})`)
+        actions.push({ type: 'doubleClick', index })
+        return `Will double-click element at index ${index}. The double-click will be executed after this response.`
       }
     }),
 

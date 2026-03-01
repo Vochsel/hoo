@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
 import { FormInput, Plus, Settings2, Trash2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useFlowDirection, getSourcePosition } from './flow-direction-context'
 import { Input } from '@/components/ui/input'
 import {
   Dialog,
@@ -13,6 +14,7 @@ import {
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { HandleWithTooltip } from './handle-with-tooltip'
 
 export interface FormTriggerFieldConfig {
   id: string
@@ -170,6 +172,9 @@ function FormTriggerNodeInner({ id, data, selected }: NodeProps): React.ReactEle
     }
   }
 
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
+
   return (
     <>
       <div
@@ -183,12 +188,6 @@ function FormTriggerNodeInner({ id, data, selected }: NodeProps): React.ReactEle
           setOpen(true)
         }}
       >
-        <Handle
-          type="source"
-          position={Position.Right}
-          className="!h-3 !w-3 !border-2 !border-emerald-300 !bg-emerald-500"
-        />
-
         <div className="mb-2 flex items-start gap-2">
           <FormInput className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600" />
           <div className="min-w-0 flex-1">
@@ -216,7 +215,7 @@ function FormTriggerNodeInner({ id, data, selected }: NodeProps): React.ReactEle
         {fields.length > 0 ? (
           <div className="space-y-1.5">
             {fields.map((field) => (
-              <div key={field.id} className="space-y-1">
+              <div key={field.id} className="relative space-y-1">
                 <label className="block text-[10px] font-medium text-foreground/85">
                   {field.label}
                   {field.required ? <span className="ml-1 text-destructive">*</span> : null}
@@ -251,6 +250,19 @@ function FormTriggerNodeInner({ id, data, selected }: NodeProps): React.ReactEle
                     className="h-7 text-[11px]"
                   />
                 )}
+                {/* Per-field output handle */}
+                <HandleWithTooltip
+                  label={field.label}
+                  type="source"
+                  position={sourcePos}
+                  id={`field-${field.key}`}
+                  className={cn(
+                    '!absolute !w-2.5 !h-2.5 !border-2 !border-emerald-300 !bg-emerald-500',
+                    direction === 'vertical'
+                      ? '!bottom-[-14px] !left-1/2 !-translate-x-1/2'
+                      : '!right-[-18px] !top-1/2 !-translate-y-1/2'
+                  )}
+                />
               </div>
             ))}
             <Button
@@ -280,6 +292,14 @@ function FormTriggerNodeInner({ id, data, selected }: NodeProps): React.ReactEle
             Configure form fields
           </button>
         )}
+
+        <HandleWithTooltip
+          label="All fields"
+          type="source"
+          position={sourcePos}
+          className="!h-3 !w-3 !border-2 !border-emerald-300 !bg-emerald-500"
+          style={{ top: 'auto', bottom: 8 }}
+        />
 
         <NodeExecutionFooter
           status={runtimeStatus}

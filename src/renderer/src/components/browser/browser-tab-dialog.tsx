@@ -1,6 +1,5 @@
-import { useRef, useState, useCallback, useEffect } from 'react'
+import { useRef, useState, useCallback, useEffect, useMemo } from 'react'
 import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { AddressBar, type AddressBarHandle } from './address-bar'
 import { BrowserTabChat } from './browser-tab-chat'
 import type { BrowserTab, BrowserAction, ActionResult, PageContext } from '@/hooks/use-browser-tabs'
@@ -8,10 +7,12 @@ import { getWebviewUserAgent } from '@/lib/webview-user-agent'
 
 interface BrowserTabDialogProps {
   tab: BrowserTab | null
+  boardId?: string | null
   open: boolean
   onOpenChange: (open: boolean) => void
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
   onRecaptureScreenshot?: () => void
+  onWebviewStateChange?: (tabId: string, webview: Electron.WebviewTag | null) => void
 }
 
 const TAG = '[browser-dialog]'
@@ -23,17 +24,28 @@ const INTERACTIVE_SELECTOR =
 
 export function BrowserTabDialog({
   tab,
+  boardId,
   open,
   onOpenChange,
   onTabUpdate,
-  onRecaptureScreenshot
+  onRecaptureScreenshot,
+  onWebviewStateChange
 }: BrowserTabDialogProps): React.ReactElement {
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
   const addressBarRef = useRef<AddressBarHandle>(null)
+  const webviewSrc = useMemo(() => {
+    if (!open || !tab) return 'about:blank'
+    return tab.url || 'about:blank'
+  }, [open, tab?.id])
   const [currentUrl, setCurrentUrl] = useState(tab?.url ?? 'about:blank')
+  const currentUrlRef = useRef(currentUrl)
   const [pageLoading, setPageLoading] = useState(false)
   const [chatCollapsed, setChatCollapsed] = useState(false)
   const pageLoadingRef = useRef(false)
+  const tabIdRef = useRef<string | null>(tab?.id ?? null)
+  const webContentsIdRef = useRef<number | null>(null)
+  const onTabUpdateRef = useRef(onTabUpdate)
+  const webviewCleanupRef = useRef<(() => void) | null>(null)
 
   // Cmd+L / Ctrl+L focuses the address bar
   useEffect(() => {
@@ -48,75 +60,61 @@ export function BrowserTabDialog({
     return (): void => window.removeEventListener('keydown', handleKeyDown)
   }, [open])
 
-  // Sync when tab changes
   useEffect(() => {
-    if (tab) {
-      setCurrentUrl(tab.url)
-    }
+    tabIdRef.current = tab?.id ?? null
   }, [tab?.id])
 
-  // Wire up webview events once mounted
-  const setupWebview = useCallback(
-    (el: Electron.WebviewTag | null) => {
-      if (!el || webviewRef.current === el) return
-      webviewRef.current = el
-      if (WEBVIEW_USER_AGENT) {
-        console.log(`${TAG} using webview userAgent attribute`)
-      }
+  useEffect(() => {
+    onTabUpdateRef.current = onTabUpdate
+  }, [onTabUpdate])
 
-      el.addEventListener('did-navigate', (e) => {
-        console.log(`${TAG} did-navigate: ${e.url}`)
-        setCurrentUrl(e.url)
-        if (tab) onTabUpdate(tab.id, { url: e.url })
-      })
+  // Sync address bar display when tab URL changes externally.
+  // Do NOT update initialUrlRef — changing the webview src attribute
+  // triggers Electron to reload, creating an infinite navigation loop.
+  useEffect(() => {
+    const nextUrl = tab?.url || 'about:blank'
+    setCurrentUrl(nextUrl)
+  }, [tab?.id, tab?.url])
 
-      el.addEventListener('did-navigate-in-page', (e) => {
-        if (e.isMainFrame) {
-          console.log(`${TAG} did-navigate-in-page: ${e.url}`)
-          setCurrentUrl(e.url)
-          if (tab) onTabUpdate(tab.id, { url: e.url })
-        }
-      })
+  useEffect(() => {
+    currentUrlRef.current = currentUrl
+  }, [currentUrl])
 
-      el.addEventListener('page-title-updated', (e) => {
-        if (tab) onTabUpdate(tab.id, { title: e.title })
+  const publishLiveWebContents = useCallback((webContentsId?: number | null): void => {
+    const tabId = tabIdRef.current
+    if (!tabId) return
+    void window.api.browserTabs
+      .setLiveWebContents(tabId, webContentsId ?? null)
+      .catch((error) => {
+        console.warn(`${TAG} failed to publish live webContents mapping tab=${tabId}:`, error)
       })
+  }, [])
 
-      el.addEventListener('page-favicon-updated', (e) => {
-        if (tab && e.favicons.length > 0) {
-          onTabUpdate(tab.id, { favicon: e.favicons[0] })
-        }
-      })
+  // Unmount cleanup is handled by setupWebview(null) — React calls
+  // the ref callback with null when the component unmounts, which
+  // already clears events, IPC state, and webviewRef.
 
-      el.addEventListener('did-start-loading', () => {
-        setPageLoading(true)
-        pageLoadingRef.current = true
-      })
-
-      el.addEventListener('did-stop-loading', () => {
-        setPageLoading(false)
-        pageLoadingRef.current = false
-        captureScreenshot()
-      })
-
-      el.addEventListener('did-fail-load', (e) => {
-        if (e.errorCode === -3) return
-        console.warn(`${TAG} did-fail-load: ${e.errorDescription} (${e.errorCode}) url=${e.validatedURL}`)
-      })
-    },
-    [tab?.id]
-  )
+  const persistTabUpdate = useCallback(async (data: Record<string, unknown>): Promise<void> => {
+    const tabId = tabIdRef.current
+    if (!tabId) return
+    try {
+      await onTabUpdateRef.current(tabId, data)
+    } catch (error) {
+      console.warn(`${TAG} failed to persist tab update id=${tabId}:`, error)
+    }
+  }, [])
 
   const captureScreenshot = useCallback(async (): Promise<string | null> => {
     const wv = webviewRef.current
-    if (!wv || !tab) return null
+    const tabId = tabIdRef.current
+    if (!wv || !tabId) return null
     try {
       const wcId = wv.getWebContentsId()
       console.log(`${TAG} Capturing screenshot (webContentsId=${wcId})...`)
       const dataUrl = await window.api.browserTabs.captureScreenshot(wcId)
       if (dataUrl) {
         console.log(`${TAG} Screenshot captured: ${Math.round(dataUrl.length / 1024)}KB`)
-        await onTabUpdate(tab.id, { screenshot: dataUrl })
+        await persistTabUpdate({ screenshot: dataUrl })
       } else {
         console.warn(`${TAG} Screenshot returned null`)
       }
@@ -125,7 +123,197 @@ export function BrowserTabDialog({
       console.warn(`${TAG} Screenshot failed:`, err)
       return null
     }
-  }, [tab?.id, onTabUpdate])
+  }, [persistTabUpdate])
+
+  // Wire up webview events once mounted
+  const setupWebview = useCallback(
+    (el: Electron.WebviewTag | null) => {
+      if (!el) {
+        const tabId = tabIdRef.current
+        if (tabId) {
+          onWebviewStateChange?.(tabId, null)
+        }
+        publishLiveWebContents(null)
+        webContentsIdRef.current = null
+        webviewCleanupRef.current?.()
+        webviewCleanupRef.current = null
+        webviewRef.current = null
+        return
+      }
+      if (webviewRef.current === el) return
+      try {
+        const nextId = el.getWebContentsId()
+        if (Number.isFinite(nextId)) {
+          webContentsIdRef.current = nextId
+          publishLiveWebContents(nextId)
+        }
+      } catch {
+        // guest may not be ready yet; we'll retry on dom-ready/context gather
+      }
+      webviewCleanupRef.current?.()
+      webviewRef.current = el
+      const tabId = tabIdRef.current
+      if (tabId) {
+        onWebviewStateChange?.(tabId, el)
+      }
+      if (WEBVIEW_USER_AGENT) {
+        console.log(`${TAG} using webview userAgent attribute`)
+      }
+
+      const handleDidNavigate = (e: Electron.DidNavigateEvent): void => {
+        console.log(`${TAG} did-navigate: ${e.url}`)
+        setCurrentUrl(e.url)
+        void persistTabUpdate({ url: e.url })
+      }
+
+      const handleDidNavigateInPage = (e: Electron.DidNavigateInPageEvent): void => {
+        if (e.isMainFrame) {
+          console.log(`${TAG} did-navigate-in-page: ${e.url}`)
+          setCurrentUrl(e.url)
+          void persistTabUpdate({ url: e.url })
+        }
+      }
+
+      const handleTitleUpdated = (e: Electron.PageTitleUpdatedEvent): void => {
+        void persistTabUpdate({ title: e.title })
+      }
+
+      const handleFaviconUpdated = (e: Electron.PageFaviconUpdatedEvent): void => {
+        const nextFavicon = e.favicons.length > 0 ? e.favicons[0] : null
+        void persistTabUpdate({ favicon: nextFavicon })
+      }
+
+      const handleDidStartLoading = (): void => {
+        setPageLoading(true)
+        pageLoadingRef.current = true
+      }
+
+      const handleDidStopLoading = (): void => {
+        setPageLoading(false)
+        pageLoadingRef.current = false
+        void (async () => {
+          try {
+            const [liveUrl, liveTitle] = await Promise.all([
+              el.executeJavaScript(`window.location.href || ''`) as Promise<string>,
+              el.executeJavaScript(`document.title || ''`) as Promise<string>
+            ])
+            const normalizedUrl = typeof liveUrl === 'string' ? liveUrl.trim() : ''
+            const normalizedTitle = typeof liveTitle === 'string' ? liveTitle.trim() : ''
+            if (normalizedUrl) {
+              setCurrentUrl(normalizedUrl)
+              const updatePayload: Record<string, unknown> = { url: normalizedUrl }
+              if (normalizedTitle) updatePayload.title = normalizedTitle
+              await persistTabUpdate(updatePayload)
+            }
+          } catch {
+            // ignore URL/title sync errors and keep screenshot flow
+          }
+          await captureScreenshot()
+        })()
+      }
+
+      const handleDidFailLoad = (e: Electron.DidFailLoadEvent): void => {
+        if (e.errorCode === -3) return
+        console.warn(`${TAG} did-fail-load: ${e.errorDescription} (${e.errorCode}) url=${e.validatedURL}`)
+      }
+
+      const handleNewWindow = (event: Event): void => {
+        const popupEvent = event as Event & { url?: string; preventDefault?: () => void }
+        popupEvent.preventDefault?.()
+        const popupUrl = typeof popupEvent.url === 'string' ? popupEvent.url : ''
+        if (!popupUrl) return
+        console.log(`${TAG} redirecting popup to current tab: ${popupUrl}`)
+        setCurrentUrl(popupUrl)
+        void persistTabUpdate({ url: popupUrl })
+        el.loadURL(popupUrl).catch((error: Error) => {
+          if (error.message?.includes('ERR_ABORTED')) return
+          console.warn(`${TAG} popup redirect loadURL error:`, error)
+        })
+      }
+
+      const handleDomReady = (): void => {
+        try {
+          const wcId = el.getWebContentsId()
+          if (Number.isFinite(wcId)) {
+            webContentsIdRef.current = wcId
+            publishLiveWebContents(wcId)
+          }
+        } catch {
+          // ignore
+        }
+        void el.executeJavaScript(`
+          (() => {
+            try {
+              const rewriteAnchorTarget = (root) => {
+                const links = root.querySelectorAll ? root.querySelectorAll('a[target="_blank"]') : [];
+                for (const link of links) {
+                  link.setAttribute('target', '_self');
+                  const rel = (link.getAttribute('rel') || '').split(/\\s+/).filter(Boolean);
+                  const filtered = rel.filter((value) => value !== 'noopener' && value !== 'noreferrer');
+                  if (filtered.length > 0) {
+                    link.setAttribute('rel', filtered.join(' '));
+                  } else {
+                    link.removeAttribute('rel');
+                  }
+                }
+              };
+
+              rewriteAnchorTarget(document);
+              const observer = new MutationObserver((mutations) => {
+                for (const mutation of mutations) {
+                  for (const node of mutation.addedNodes) {
+                    if (node && node.nodeType === Node.ELEMENT_NODE) {
+                      rewriteAnchorTarget(node);
+                    }
+                  }
+                }
+              });
+              observer.observe(document.documentElement || document.body, {
+                childList: true,
+                subtree: true
+              });
+
+              const originalOpen = window.open;
+              window.open = function (url, target, features) {
+                if (typeof url === 'string' && url.length > 0) {
+                  location.href = url;
+                }
+                return null;
+              };
+              Object.defineProperty(window, '__hooOriginalWindowOpen', {
+                value: originalOpen,
+                configurable: true,
+                writable: true
+              });
+            } catch {}
+          })();
+        `).catch(() => {})
+      }
+
+      el.addEventListener('did-navigate', handleDidNavigate)
+      el.addEventListener('did-navigate-in-page', handleDidNavigateInPage)
+      el.addEventListener('page-title-updated', handleTitleUpdated)
+      el.addEventListener('page-favicon-updated', handleFaviconUpdated)
+      el.addEventListener('did-start-loading', handleDidStartLoading)
+      el.addEventListener('did-stop-loading', handleDidStopLoading)
+      el.addEventListener('did-fail-load', handleDidFailLoad)
+      el.addEventListener('new-window', handleNewWindow)
+      el.addEventListener('dom-ready', handleDomReady)
+
+      webviewCleanupRef.current = (): void => {
+        el.removeEventListener('did-navigate', handleDidNavigate)
+        el.removeEventListener('did-navigate-in-page', handleDidNavigateInPage)
+        el.removeEventListener('page-title-updated', handleTitleUpdated)
+        el.removeEventListener('page-favicon-updated', handleFaviconUpdated)
+        el.removeEventListener('did-start-loading', handleDidStartLoading)
+        el.removeEventListener('did-stop-loading', handleDidStopLoading)
+        el.removeEventListener('did-fail-load', handleDidFailLoad)
+        el.removeEventListener('new-window', handleNewWindow)
+        el.removeEventListener('dom-ready', handleDomReady)
+      }
+    },
+    [captureScreenshot, persistTabUpdate, onWebviewStateChange, publishLiveWebContents]
+  )
 
   const handleDialogOpenChange = useCallback(
     async (isOpen: boolean): Promise<void> => {
@@ -147,32 +335,51 @@ export function BrowserTabDialog({
         void handleDialogOpenChange(false)
       }
     }
-    window.addEventListener('keydown', handleEscape)
-    return (): void => window.removeEventListener('keydown', handleEscape)
+    window.addEventListener('keydown', handleEscape, true)
+    return (): void => window.removeEventListener('keydown', handleEscape, true)
   }, [open, handleDialogOpenChange])
 
   // Wait for any in-progress page loads to finish (with timeout)
   const waitForPageSettle = useCallback(async (): Promise<void> => {
-    // Give a brief moment for any navigation to start
-    await new Promise((r) => setTimeout(r, 500))
-    // Then poll until loading finishes or timeout
-    const deadline = Date.now() + 5000
-    while (pageLoadingRef.current && Date.now() < deadline) {
-      await new Promise((r) => setTimeout(r, 200))
+    await new Promise((r) => setTimeout(r, 350))
+    const deadline = Date.now() + 9000
+    while (Date.now() < deadline) {
+      const wv = webviewRef.current
+      if (!wv) break
+
+      let stillLoading = pageLoadingRef.current
+      try {
+        stillLoading = stillLoading || wv.isLoading()
+      } catch {
+        // ignore and rely on event state
+      }
+
+      if (!stillLoading) {
+        try {
+          const readyState = await wv.executeJavaScript('document.readyState')
+          if (readyState === 'complete' || readyState === 'interactive') {
+            break
+          }
+        } catch {
+          // ignore and keep polling
+        }
+      }
+      await new Promise((r) => setTimeout(r, 250))
     }
-    // Extra settling time for JS frameworks to render
-    await new Promise((r) => setTimeout(r, 500))
+    await new Promise((r) => setTimeout(r, 350))
   }, [])
 
   // ─── Navigation ─────────────────────────────────────────────────────────────
 
   const handleNavigate = useCallback((url: string) => {
     console.log(`${TAG} Navigate to: ${url}`)
+    setCurrentUrl(url)
+    void persistTabUpdate({ url })
     webviewRef.current?.loadURL(url).catch((err: Error) => {
       if (err.message?.includes('ERR_ABORTED')) return
       console.warn(`${TAG} loadURL error:`, err.message)
     })
-  }, [])
+  }, [persistTabUpdate])
 
   const handleBack = useCallback(() => {
     webviewRef.current?.goBack()
@@ -186,132 +393,310 @@ export function BrowserTabDialog({
     webviewRef.current?.reload()
   }, [])
 
+  const handleTogglePin = useCallback(() => {
+    const tabId = tabIdRef.current
+    if (!tabId) return
+    const current = tab?.pinnedUrl
+    const nextPinned = current ? null : currentUrl
+    void persistTabUpdate({ pinnedUrl: nextPinned })
+  }, [currentUrl, tab?.pinnedUrl, persistTabUpdate])
+
+  const handleGoHome = useCallback(() => {
+    if (!tab?.pinnedUrl) return
+    handleNavigate(tab.pinnedUrl)
+  }, [tab?.pinnedUrl, handleNavigate])
+
+  // Fallback URL/title synchronization in case webview navigation events miss.
+  useEffect(() => {
+    if (!open) return
+    let cancelled = false
+    const poll = async (): Promise<void> => {
+      if (cancelled) return
+      const wv = webviewRef.current
+      if (!wv) return
+
+      let liveUrl = ''
+      let liveTitle = ''
+      try {
+        liveUrl = (wv.getURL() || '').trim()
+      } catch {
+        liveUrl = ''
+      }
+
+      if (!liveUrl || liveUrl === 'about:blank') {
+        try {
+          const viaJs = await wv.executeJavaScript(`window.location.href || ''`)
+          liveUrl = typeof viaJs === 'string' ? viaJs.trim() : ''
+        } catch {
+          liveUrl = ''
+        }
+      }
+
+      try {
+        liveTitle = (wv.getTitle() || '').trim()
+      } catch {
+        liveTitle = ''
+      }
+      if (!liveTitle) {
+        try {
+          const viaJsTitle = await wv.executeJavaScript(`document.title || ''`)
+          liveTitle = typeof viaJsTitle === 'string' ? viaJsTitle.trim() : ''
+        } catch {
+          liveTitle = ''
+        }
+      }
+
+      if (!liveUrl) return
+      if (liveUrl !== currentUrlRef.current) {
+        setCurrentUrl(liveUrl)
+        const payload: Record<string, unknown> = { url: liveUrl }
+        if (liveTitle) payload.title = liveTitle
+        void persistTabUpdate(payload)
+      }
+    }
+
+    const timer = window.setInterval(() => {
+      void poll()
+    }, 700)
+    void poll()
+
+    return (): void => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [open, persistTabUpdate])
+
   // ─── AI Page Context ────────────────────────────────────────────────────────
 
   const gatherPageContext = useCallback(
     async (includeScreenshot: boolean): Promise<PageContext> => {
       const wv = webviewRef.current
+      const resolveWebContentsId = (): number | undefined => {
+        try {
+          const id = wv?.getWebContentsId()
+          if (typeof id === 'number' && Number.isFinite(id)) {
+            webContentsIdRef.current = id
+            return id
+          }
+        } catch {
+          // ignore
+        }
+        const cached = webContentsIdRef.current
+        return typeof cached === 'number' && Number.isFinite(cached) ? cached : undefined
+      }
+      const safeUrl = (): string => {
+        try {
+          const url = wv?.getURL()
+          if (typeof url === 'string' && url.length > 0) return url
+        } catch {
+          // ignore
+        }
+        return currentUrl
+      }
+      const safeTitle = (): string => {
+        try {
+          const title = wv?.getTitle()
+          return typeof title === 'string' ? title : ''
+        } catch {
+          return ''
+        }
+      }
       if (!wv) {
         console.warn(`${TAG} gatherPageContext: no webview ref`)
-        return { url: currentUrl, title: '', text: '', elements: '' }
+        return {
+          url: currentUrl,
+          title: '',
+          text: '',
+          elements: '',
+          webContentsId: resolveWebContentsId(),
+          includeScreenshot,
+          screenshot: includeScreenshot ? tab?.screenshot ?? undefined : undefined
+        }
       }
 
       console.log(`${TAG} Gathering page context (screenshot=${includeScreenshot})...`)
 
       try {
-        const promises: [Promise<string>, Promise<string>, Promise<string | null>] = [
-          wv.executeJavaScript(`document.body.innerText.slice(0, 8000)`),
-          wv.executeJavaScript(`
-            (() => {
-              const sel = '${INTERACTIVE_SELECTOR}';
-              const isVisible = (el) => {
-                const r = el.getBoundingClientRect();
-                if (r.width <= 0 || r.height <= 0) return false;
-                const style = window.getComputedStyle(el);
-                if (style.display === 'none' || style.visibility === 'hidden') return false;
-                return true;
-              };
-              const isEditable = (el) => {
-                const tag = el.tagName.toLowerCase();
-                const role = el.getAttribute('role') || '';
-                return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
-              };
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          if (attempt > 1) {
+            await waitForPageSettle()
+          }
 
-              const ranked = Array.from(document.querySelectorAll(sel))
-                .filter(isVisible)
-                .map((el, domIndex) => {
-                  const tag = el.tagName.toLowerCase();
-                  const type = el.getAttribute('type') || '';
-                  const role = el.getAttribute('role') || '';
-                  const name = el.getAttribute('name') || '';
-                  const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 100);
-                  const placeholder = el.getAttribute('placeholder') || '';
-                  const ariaLabel = el.getAttribute('aria-label') || '';
-                  const title = el.getAttribute('title') || '';
-                  const dataTooltip = el.getAttribute('data-tooltip') || '';
-                  const href = el.getAttribute('href') || '';
-                  const editable = isEditable(el);
-                  const value = tag === 'input' || tag === 'textarea' || tag === 'select'
-                    ? String(el.value || '').slice(0, 60)
-                    : '';
+          const promises: [Promise<string>, Promise<string>, Promise<string | null>] = [
+            wv.executeJavaScript(`document.body?.innerText?.slice(0, 8000) || ''`) as Promise<string>,
+            (wv.executeJavaScript(`
+              (() => {
+                const sel = '${INTERACTIVE_SELECTOR}';
+                const isVisible = (el) => {
                   const r = el.getBoundingClientRect();
-                  let score = 0;
-                  if (editable) score += 60;
-                  if (tag === 'button' || role === 'button') score += 40;
-                  if (tag === 'a' || role === 'link') score += 35;
-                  if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
-                  if (role === 'row') score += 20;
-                  if (text) score += 8;
-                  if (ariaLabel || placeholder || title || dataTooltip || name) score += 10;
-                  if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
-                  return {
-                    domIndex,
-                    top: r.top,
-                    left: r.left,
-                    score,
-                    tag,
-                    type,
-                    role,
-                    name,
-                    text,
-                    placeholder,
-                    ariaLabel,
-                    title,
-                    dataTooltip,
-                    href,
-                    editable,
-                    value
-                  };
-                })
-                .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
-                .slice(0, 120);
+                  if (r.width <= 0 || r.height <= 0) return false;
+                  const style = window.getComputedStyle(el);
+                  if (style.display === 'none' || style.visibility === 'hidden') return false;
+                  return true;
+                };
+                const isEditable = (el) => {
+                  const tag = el.tagName.toLowerCase();
+                  const role = el.getAttribute('role') || '';
+                  return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
+                };
 
-              return ranked.map((el, i) => {
-                const tag = el.tag;
-                let desc = '[' + i + '] <' + tag + '>';
-                if (el.type) desc += ' type=' + el.type;
-                if (el.role) desc += ' role=' + el.role;
-                if (el.name) desc += ' name=' + el.name;
-                if (el.text) desc += ' text="' + el.text + '"';
-                if (el.placeholder) desc += ' placeholder="' + el.placeholder + '"';
-                if (el.ariaLabel) desc += ' aria-label="' + el.ariaLabel + '"';
-                if (el.title) desc += ' title="' + el.title + '"';
-                if (el.dataTooltip) desc += ' tooltip="' + el.dataTooltip + '"';
-                if (el.href) desc += ' href="' + el.href + '"';
-                if (el.editable) desc += ' editable=true';
-                if (el.value) desc += ' value="' + el.value + '"';
-                return desc;
-              }).join('\\n');
-            })()
-          `),
-          includeScreenshot ? captureScreenshot() : Promise.resolve(null)
-        ]
+                const ranked = Array.from(document.querySelectorAll(sel))
+                  .filter(isVisible)
+                  .map((el, domIndex) => {
+                    const tag = el.tagName.toLowerCase();
+                    const type = el.getAttribute('type') || '';
+                    const role = el.getAttribute('role') || '';
+                    const name = el.getAttribute('name') || '';
+                    const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 100);
+                    const placeholder = el.getAttribute('placeholder') || '';
+                    const ariaLabel = el.getAttribute('aria-label') || '';
+                    const title = el.getAttribute('title') || '';
+                    const dataTooltip = el.getAttribute('data-tooltip') || '';
+                    const href = el.getAttribute('href') || '';
+                    const editable = isEditable(el);
+                    const value = tag === 'input' || tag === 'textarea' || tag === 'select'
+                      ? String(el.value || '').slice(0, 60)
+                      : '';
+                    const r = el.getBoundingClientRect();
+                    let score = 0;
+                    if (editable) score += 60;
+                    if (tag === 'button' || role === 'button') score += 40;
+                    if (tag === 'a' || role === 'link') score += 35;
+                    if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
+                    if (role === 'row') score += 20;
+                    if (text) score += 8;
+                    if (ariaLabel || placeholder || title || dataTooltip || name) score += 10;
+                    if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
+                    return {
+                      domIndex,
+                      top: r.top,
+                      left: r.left,
+                      score,
+                      tag,
+                      type,
+                      role,
+                      name,
+                      text,
+                      placeholder,
+                      ariaLabel,
+                      title,
+                      dataTooltip,
+                      href,
+                      editable,
+                      value
+                    };
+                  })
+                  .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
+                  .slice(0, 120);
 
-        const [text, elements, screenshot] = await Promise.all(promises)
+                return ranked.map((el, i) => {
+                  const tag = el.tag;
+                  let desc = '[' + i + '] <' + tag + '>';
+                  if (el.type) desc += ' type=' + el.type;
+                  if (el.role) desc += ' role=' + el.role;
+                  if (el.name) desc += ' name=' + el.name;
+                  if (el.text) desc += ' text="' + el.text + '"';
+                  if (el.placeholder) desc += ' placeholder="' + el.placeholder + '"';
+                  if (el.ariaLabel) desc += ' aria-label="' + el.ariaLabel + '"';
+                  if (el.title) desc += ' title="' + el.title + '"';
+                  if (el.dataTooltip) desc += ' tooltip="' + el.dataTooltip + '"';
+                  if (el.href) desc += ' href="' + el.href + '"';
+                  if (el.editable) desc += ' editable=true';
+                  if (el.value) desc += ' value="' + el.value + '"';
+                  return desc;
+                }).join('\\n');
+              })()
+            `) as Promise<string>),
+            includeScreenshot ? captureScreenshot() : Promise.resolve(null)
+          ]
 
-        const elementCount = elements ? elements.split('\n').length : 0
-        console.log(`${TAG} Context gathered — url=${wv.getURL()} elements=${elementCount} text=${text?.length ?? 0} chars screenshot=${screenshot ? 'yes' : 'no'}`)
+          const settled = await Promise.allSettled(promises)
+          const text = settled[0].status === 'fulfilled' ? (settled[0].value || '') : ''
+          const elements = settled[1].status === 'fulfilled' ? (settled[1].value || '') : ''
+          const screenshot = settled[2].status === 'fulfilled' ? settled[2].value : null
+          if (settled[0].status === 'rejected') {
+            console.warn(`${TAG} gatherPageContext text extract failed attempt=${attempt}:`, settled[0].reason)
+          }
+          if (settled[1].status === 'rejected') {
+            console.warn(`${TAG} gatherPageContext element extract failed attempt=${attempt}:`, settled[1].reason)
+          }
+          if (settled[2].status === 'rejected') {
+            console.warn(`${TAG} gatherPageContext screenshot extract failed attempt=${attempt}:`, settled[2].reason)
+          }
+          const normalizedText = (text || '').trim()
+          const normalizedElements = (elements || '').trim()
+          const elementCount = normalizedElements.length > 0 ? normalizedElements.split('\n').filter(Boolean).length : 0
+          const title = safeTitle()
+          const url = safeUrl()
+          const webContentsId = resolveWebContentsId()
+          if (typeof webContentsId === 'number' && Number.isFinite(webContentsId)) {
+            publishLiveWebContents(webContentsId)
+          }
+          const fallbackScreenshot = includeScreenshot ? tab?.screenshot ?? null : null
+          const effectiveScreenshot = screenshot || fallbackScreenshot
+          const sparseContext = normalizedText.length < 40 && elementCount <= 1 && !title && !effectiveScreenshot
 
-        const ctx: PageContext = {
-          url: wv.getURL(),
-          title: wv.getTitle(),
-          text: text || '',
-          elements: elements || ''
+          console.log(
+            `${TAG} Context gathered — url=${url} elements=${elementCount} text=${normalizedText.length} chars screenshot=${effectiveScreenshot ? 'yes' : 'no'} attempt=${attempt}`
+          )
+
+          if (sparseContext && attempt < 3) {
+            console.warn(`${TAG} Sparse page context (attempt ${attempt}/3), retrying...`)
+            continue
+          }
+
+          const ctx: PageContext = {
+            url,
+            title,
+            text: text || '',
+            elements: elements || '',
+            webContentsId,
+            includeScreenshot
+          }
+          if (effectiveScreenshot) {
+            ctx.screenshot = effectiveScreenshot
+          }
+          return ctx
         }
-        if (screenshot) {
-          ctx.screenshot = screenshot
+
+        const fallbackScreenshot = includeScreenshot ? tab?.screenshot ?? undefined : undefined
+        const fallbackWebContentsId = resolveWebContentsId()
+        if (typeof fallbackWebContentsId === 'number' && Number.isFinite(fallbackWebContentsId)) {
+          publishLiveWebContents(fallbackWebContentsId)
         }
-        return ctx
+        return {
+          url: safeUrl(),
+          title: safeTitle(),
+          text: '',
+          elements: '',
+          webContentsId: fallbackWebContentsId,
+          includeScreenshot,
+          screenshot: fallbackScreenshot
+        }
       } catch (err) {
         console.error(`${TAG} gatherPageContext error:`, err)
-        return { url: currentUrl, title: '', text: '', elements: '' }
+        const fallbackScreenshot = includeScreenshot ? tab?.screenshot ?? undefined : undefined
+        const fallbackWebContentsId = resolveWebContentsId()
+        if (typeof fallbackWebContentsId === 'number' && Number.isFinite(fallbackWebContentsId)) {
+          publishLiveWebContents(fallbackWebContentsId)
+        }
+        return {
+          url: safeUrl(),
+          title: safeTitle(),
+          text: '',
+          elements: '',
+          screenshot: fallbackScreenshot,
+          webContentsId: fallbackWebContentsId,
+          includeScreenshot
+        }
       }
     },
-    [currentUrl, captureScreenshot]
+    [currentUrl, captureScreenshot, waitForPageSettle, tab?.screenshot, publishLiveWebContents]
   )
 
   // ─── AI Action Execution ────────────────────────────────────────────────────
 
+  // Execute browser actions via main process native input events (sendInputEvent/insertText)
   const executeBrowserActions = useCallback(
     async (actions: BrowserAction[]): Promise<ActionResult[]> => {
       const wv = webviewRef.current
@@ -320,336 +705,80 @@ export function BrowserTabDialog({
         return []
       }
 
-      console.log(`${TAG} Executing ${actions.length} browser action(s)...`)
-      const results: ActionResult[] = []
-
-      for (let i = 0; i < actions.length; i++) {
-        const action = actions[i]
-        console.log(`${TAG}   [${i}/${actions.length}] ${action.type}${action.index !== undefined ? ` index=${action.index}` : ''}${action.value ? ` value="${action.value.slice(0, 50)}"` : ''}${action.url ? ` url=${action.url}` : ''}`)
-
-        try {
-          switch (action.type) {
-            case 'click':
-              if (action.index !== undefined) {
-                const result = await wv.executeJavaScript(`
-                  (() => {
-                    const sel = '${INTERACTIVE_SELECTOR}';
-                    const isVisible = (el) => {
-                      const r = el.getBoundingClientRect();
-                      if (r.width <= 0 || r.height <= 0) return false;
-                      const style = window.getComputedStyle(el);
-                      if (style.display === 'none' || style.visibility === 'hidden') return false;
-                      return true;
-                    };
-                    const isEditable = (el) => {
-                      const tag = el.tagName.toLowerCase();
-                      const role = el.getAttribute('role') || '';
-                      return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
-                    };
-                    const els = Array.from(document.querySelectorAll(sel))
-                      .filter(isVisible)
-                      .map((el, domIndex) => {
-                        const tag = el.tagName.toLowerCase();
-                        const role = el.getAttribute('role') || '';
-                        const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
-                        const ariaLabel = el.getAttribute('aria-label') || '';
-                        const title = el.getAttribute('title') || '';
-                        const placeholder = el.getAttribute('placeholder') || '';
-                        const r = el.getBoundingClientRect();
-                        let score = 0;
-                        if (isEditable(el)) score += 60;
-                        if (tag === 'button' || role === 'button') score += 40;
-                        if (tag === 'a' || role === 'link') score += 35;
-                        if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
-                        if (role === 'row') score += 20;
-                        if (text) score += 8;
-                        if (ariaLabel || placeholder || title) score += 10;
-                        if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
-                        return { el, domIndex, score, top: r.top, left: r.left, tag, role, text, ariaLabel, title, placeholder };
-                      })
-                      .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
-                      .slice(0, 120);
-
-                    const target = els[${action.index}];
-                    const el = target?.el;
-                    if (el) {
-                      const tag = target.tag;
-                      el.scrollIntoView({ block: 'center', behavior: 'instant' });
-                      if (isEditable(el)) el.focus();
-
-                      const rect = el.getBoundingClientRect();
-                      const x = rect.left + rect.width / 2;
-                      const y = rect.top + rect.height / 2;
-                      const eo = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window };
-                      el.dispatchEvent(new PointerEvent('pointerdown', { ...eo, pointerId: 1 }));
-                      el.dispatchEvent(new MouseEvent('mousedown', eo));
-                      el.dispatchEvent(new PointerEvent('pointerup', { ...eo, pointerId: 1 }));
-                      el.dispatchEvent(new MouseEvent('mouseup', eo));
-                      el.dispatchEvent(new MouseEvent('click', eo));
-                      if (el.type === 'submit' || tag === 'button') {
-                        const form = el.closest('form');
-                        if (form) form.requestSubmit ? form.requestSubmit() : form.submit();
-                      }
-
-                      let desc = '<' + target.tag + '>';
-                      if (target.role) desc += ' role=' + target.role;
-                      if (target.ariaLabel) desc += ' aria-label="' + target.ariaLabel + '"';
-                      if (target.placeholder) desc += ' placeholder="' + target.placeholder + '"';
-                      if (target.title) desc += ' title="' + target.title + '"';
-                      if (target.text) desc += ' text="' + target.text + '"';
-                      return JSON.stringify({ ok: true, desc });
-                    }
-                    return JSON.stringify({ ok: false, desc: 'element not found (index ${action.index}, total=' + els.length + ')' });
-                  })()
-                `)
-                const parsed = JSON.parse(result)
-                console.log(`${TAG}     → click: ${parsed.desc}`)
-                results.push({ type: 'click', description: parsed.desc, success: parsed.ok })
-              }
-              break
-
-            case 'fill':
-              if (action.index !== undefined && action.value !== undefined) {
-                const escapedValue = action.value.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n')
-                const result = await wv.executeJavaScript(`
-                  (() => {
-                    const sel = '${INTERACTIVE_SELECTOR}';
-                    const isVisible = (el) => {
-                      const r = el.getBoundingClientRect();
-                      if (r.width <= 0 || r.height <= 0) return false;
-                      const style = window.getComputedStyle(el);
-                      if (style.display === 'none' || style.visibility === 'hidden') return false;
-                      return true;
-                    };
-                    const isEditable = (el) => {
-                      const tag = el.tagName.toLowerCase();
-                      const role = el.getAttribute('role') || '';
-                      return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
-                    };
-                    const els = Array.from(document.querySelectorAll(sel))
-                      .filter(isVisible)
-                      .map((el, domIndex) => {
-                        const tag = el.tagName.toLowerCase();
-                        const role = el.getAttribute('role') || '';
-                        const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
-                        const ariaLabel = el.getAttribute('aria-label') || '';
-                        const title = el.getAttribute('title') || '';
-                        const placeholder = el.getAttribute('placeholder') || '';
-                        const name = el.getAttribute('name') || '';
-                        const r = el.getBoundingClientRect();
-                        let score = 0;
-                        if (isEditable(el)) score += 60;
-                        if (tag === 'button' || role === 'button') score += 40;
-                        if (tag === 'a' || role === 'link') score += 35;
-                        if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
-                        if (role === 'row') score += 20;
-                        if (text) score += 8;
-                        if (ariaLabel || placeholder || title || name) score += 10;
-                        if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
-                        return { el, domIndex, score, top: r.top, left: r.left, tag, role, text, ariaLabel, title, placeholder, name };
-                      })
-                      .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
-                      .slice(0, 120);
-
-                    const target = els[${action.index}];
-                    const el = target?.el;
-                    if (el) {
-                      const tag = target.tag;
-                      const role = target.role;
-                      const rawValue = '${escapedValue}';
-                      const fieldName = target.ariaLabel || target.placeholder || target.name || target.title || target.text || tag;
-                      el.focus();
-
-                      if (tag === 'input' || tag === 'textarea') {
-                        const proto = tag === 'textarea'
-                          ? window.HTMLTextAreaElement.prototype
-                          : window.HTMLInputElement.prototype;
-                        const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                        if (nativeSetter) {
-                          nativeSetter.call(el, rawValue);
-                        } else {
-                          el.value = rawValue;
-                        }
-                      } else if (tag === 'select') {
-                        const options = Array.from(el.options || []);
-                        const needle = rawValue.toLowerCase();
-                        const match = options.find((o) => (o.value || '').toLowerCase() === needle)
-                          || options.find((o) => (o.textContent || '').trim().toLowerCase() === needle)
-                          || options.find((o) => (o.textContent || '').toLowerCase().includes(needle));
-                        el.value = match ? match.value : rawValue;
-                      } else if (el.isContentEditable || role === 'textbox') {
-                        const escapeHtml = (value) =>
-                          value
-                            .replace(/&/g, '&amp;')
-                            .replace(/</g, '&lt;')
-                            .replace(/>/g, '&gt;')
-                            .replace(/"/g, '&quot;')
-                            .replace(/'/g, '&#39;');
-                        const renderInlineMarkdown = (value) => {
-                          let out = escapeHtml(value);
-                          out = out.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, '<a href="$2">$1</a>');
-                          out = out.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-                          out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-                          out = out.replace(/\\*([^*\\n]+)\\*/g, '<em>$1</em>');
-                          out = out.replace(/_([^_\\n]+)_/g, '<em>$1</em>');
-                          out = out.replace(/~~([^~]+)~~/g, '<s>$1</s>');
-                          return out;
-                        };
-                        const markdownToHtml = (value) => {
-                          const lines = value.replace(/\\r\\n/g, '\\n').split('\\n');
-                          const htmlParts = [];
-                          let listType = null;
-                          const closeList = () => {
-                            if (listType) {
-                              htmlParts.push('</' + listType + '>');
-                              listType = null;
-                            }
-                          };
-                          for (const raw of lines) {
-                            const line = raw.trimEnd();
-                            if (!line.trim()) {
-                              closeList();
-                              continue;
-                            }
-                            const heading = line.match(/^(#{1,6})\\s+(.*)$/);
-                            if (heading) {
-                              closeList();
-                              const level = heading[1].length;
-                              htmlParts.push('<h' + level + '>' + renderInlineMarkdown(heading[2].trim()) + '</h' + level + '>');
-                              continue;
-                            }
-                            const ul = line.match(/^\\s*[-*]\\s+(.*)$/);
-                            if (ul) {
-                              if (listType !== 'ul') {
-                                closeList();
-                                htmlParts.push('<ul>');
-                                listType = 'ul';
-                              }
-                              htmlParts.push('<li>' + renderInlineMarkdown(ul[1].trim()) + '</li>');
-                              continue;
-                            }
-                            const ol = line.match(/^\\s*\\d+\\.\\s+(.*)$/);
-                            if (ol) {
-                              if (listType !== 'ol') {
-                                closeList();
-                                htmlParts.push('<ol>');
-                                listType = 'ol';
-                              }
-                              htmlParts.push('<li>' + renderInlineMarkdown(ol[1].trim()) + '</li>');
-                              continue;
-                            }
-                            const quote = line.match(/^\\s*>\\s?(.*)$/);
-                            if (quote) {
-                              closeList();
-                              htmlParts.push('<blockquote>' + renderInlineMarkdown(quote[1].trim()) + '</blockquote>');
-                              continue;
-                            }
-                            closeList();
-                            htmlParts.push('<p>' + renderInlineMarkdown(line.trim()) + '</p>');
-                          }
-                          closeList();
-                          return htmlParts.join('');
-                        };
-                        const looksLikeMarkdown =
-                          /(^|\\n)\\s{0,3}(#{1,6}\\s|[-*]\\s|\\d+\\.\\s|>\\s)|\\*\\*|__|~~|\\[[^\\]]+\\]\\([^)]+\\)/m.test(rawValue);
-                        const htmlValue = looksLikeMarkdown
-                          ? markdownToHtml(rawValue)
-                          : escapeHtml(rawValue).replace(/\\n/g, '<br>');
-                        const selection = window.getSelection();
-                        if (selection) {
-                          const range = document.createRange();
-                          range.selectNodeContents(el);
-                          selection.removeAllRanges();
-                          selection.addRange(range);
-                        }
-                        try { document.execCommand('insertHTML', false, htmlValue); } catch {}
-                        if ((el.innerHTML || '').trim() !== htmlValue.trim()) {
-                          el.innerHTML = htmlValue;
-                        }
-                      } else {
-                        el.value = rawValue;
-                      }
-
-                      try {
-                        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: rawValue, inputType: 'insertText' }));
-                      } catch {}
-                      el.dispatchEvent(new Event('input', { bubbles: true }));
-                      el.dispatchEvent(new Event('change', { bubbles: true }));
-                      try {
-                        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: rawValue, inputType: 'insertText' }));
-                      } catch {}
-
-                      return JSON.stringify({
-                        ok: true,
-                        desc: fieldName + ' = "' + rawValue + '"' + ((el.isContentEditable || role === 'textbox') ? ' (rich)' : '')
-                      });
-                    }
-                    return JSON.stringify({ ok: false, desc: 'element not found (index ${action.index}, total=' + els.length + ')' });
-                  })()
-                `)
-                const parsed = JSON.parse(result)
-                console.log(`${TAG}     → fill: ${parsed.desc}`)
-                results.push({ type: 'fill', description: parsed.desc, success: parsed.ok })
-              }
-              break
-
-            case 'navigate':
-              if (action.url) {
-                console.log(`${TAG}     → navigating to ${action.url}`)
-                wv.loadURL(action.url).catch((err: Error) => {
-                  if (err.message?.includes('ERR_ABORTED')) return
-                  console.warn(`${TAG}     → navigate error: ${err.message}`)
-                })
-                results.push({ type: 'navigate', description: action.url, success: true })
-              }
-              break
-
-            case 'scroll': {
-              const amt = action.amount ?? 500
-              const dir = action.direction === 'up' ? -amt : amt
-              await wv.executeJavaScript(`window.scrollBy(0, ${dir})`)
-              console.log(`${TAG}     → scrolled ${action.direction} by ${Math.abs(dir)}px`)
-              results.push({ type: 'scroll', description: `${action.direction} ${Math.abs(dir)}px`, success: true })
-              break
-            }
-
-            default:
-              console.log(`${TAG}     → skipped (no-op for type "${action.type}")`)
-          }
-        } catch (err) {
-          console.warn(`${TAG}     → FAILED: ${action.type}`, err)
-          results.push({ type: action.type, description: `Error: ${err}`, success: false })
-        }
-
-        // 300ms delay between actions
-        await new Promise((r) => setTimeout(r, 300))
+      // Resolve the webContentsId so the main process can operate on the right webContents
+      let wcId: number | undefined
+      try {
+        wcId = wv.getWebContentsId()
+      } catch {
+        wcId = webContentsIdRef.current ?? undefined
+      }
+      if (typeof wcId !== 'number' || !Number.isFinite(wcId)) {
+        console.warn(`${TAG} executeBrowserActions: no webContentsId available`)
+        return []
       }
 
-      // After all actions, sync the current URL and title back to the tab
-      console.log(`${TAG} All actions executed, syncing URL + recapturing screenshot in 500ms...`)
-      setTimeout(async () => {
-        const wvAfter = webviewRef.current
-        if (wvAfter && tab) {
-          const newUrl = wvAfter.getURL()
-          const newTitle = wvAfter.getTitle()
-          if (newUrl && newUrl !== 'about:blank') {
-            setCurrentUrl(newUrl)
-            await onTabUpdate(tab.id, { url: newUrl, title: newTitle || tab.title })
+      console.log(`${TAG} Executing ${actions.length} action(s) via main process (wc=${wcId})...`)
+
+      try {
+        const response = await window.api.browserTabs.executeActions(wcId, actions)
+        const results: ActionResult[] = (response.results ?? []).map(
+          (r: { type: string; description: string; success: boolean }) => ({
+            type: r.type,
+            description: r.description,
+            success: r.success
+          })
+        )
+
+        // After actions, sync the URL from the webview back to the renderer
+        setTimeout(async () => {
+          const wvAfter = webviewRef.current
+          if (wvAfter) {
+            try {
+              const newUrl = wvAfter.getURL()
+              const newTitle = wvAfter.getTitle()
+              if (newUrl && newUrl !== 'about:blank') {
+                setCurrentUrl(newUrl)
+                const updatePayload: Record<string, unknown> = { url: newUrl }
+                if (newTitle) updatePayload.title = newTitle
+                await persistTabUpdate(updatePayload)
+              }
+            } catch {
+              // ignore URL sync errors
+            }
           }
-        }
-        captureScreenshot()
-      }, 500)
-      return results
+          void captureScreenshot()
+        }, 500)
+
+        return results
+      } catch (err) {
+        console.error(`${TAG} executeBrowserActions IPC failed:`, err)
+        return []
+      }
     },
-    [captureScreenshot, tab?.id, onTabUpdate]
+    [captureScreenshot, persistTabUpdate]
   )
 
-  if (!tab) return <></>
+  if (!tab || !open) return <></>
 
   return (
-    <Dialog open={open} onOpenChange={(isOpen) => void handleDialogOpenChange(isOpen)}>
-      <DialogContent
-        className="flex h-[90vh] max-h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-0 overflow-hidden rounded-xl p-0 !left-[2.5vw] !top-[5vh] !translate-x-0 !translate-y-0 !transform-none data-[state=open]:animate-none data-[state=closed]:animate-none [&>button:last-child]:hidden"
+    <div
+      className="fixed inset-0 z-50"
+    >
+      <div
+        aria-hidden
+        onMouseDown={(event) => {
+          event.preventDefault()
+          void handleDialogOpenChange(false)
+        }}
+        className="absolute inset-0 bg-black/80"
+      />
+
+      <div
+        role="dialog"
+        aria-modal="true"
+        className="no-drag absolute left-[2.5vw] top-[5vh] flex h-[90vh] max-h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-0 overflow-hidden rounded-xl border bg-background p-0 shadow-lg"
+        onMouseDown={(event) => event.stopPropagation()}
+        onKeyDown={(event) => event.stopPropagation()}
       >
         <div className="no-drag flex flex-1 overflow-hidden">
           {/* Left: Browser */}
@@ -662,15 +791,16 @@ export function BrowserTabDialog({
               onBack={handleBack}
               onForward={handleForward}
               onReload={handleReload}
+              pinnedUrl={tab?.pinnedUrl}
+              onTogglePin={handleTogglePin}
+              onGoHome={handleGoHome}
             />
             <div className="flex-1 bg-white dark:bg-zinc-900">
-                <webview
-                  ref={setupWebview}
-                  src={tab.url || 'about:blank'}
-                  partition="persist:browser-tabs"
-                  useragent={WEBVIEW_USER_AGENT}
-                // @ts-expect-error webview attributes aren't fully typed in React
-                allowpopups="true"
+              <webview
+                ref={setupWebview}
+                src={webviewSrc}
+                partition="persist:browser-tabs"
+                useragent={WEBVIEW_USER_AGENT}
                 style={{ width: '100%', height: '100%' }}
               />
             </div>
@@ -697,13 +827,16 @@ export function BrowserTabDialog({
           >
             <BrowserTabChat
               tabId={tab.id}
+              boardId={boardId ?? null}
               gatherPageContext={gatherPageContext}
               executeBrowserActions={executeBrowserActions}
               waitForPageSettle={waitForPageSettle}
+              onClose={() => void handleDialogOpenChange(false)}
             />
           </div>
         </div>
-      </DialogContent>
-    </Dialog>
+      </div>
+    </div>
   )
 }
+

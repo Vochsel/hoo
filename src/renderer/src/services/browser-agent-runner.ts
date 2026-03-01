@@ -15,9 +15,19 @@ function preview(value: string | undefined, max = 80): string {
 
 // ─── Page context gathering ─────────────────────────────────────────────────
 
-async function gatherPageContext(webview: Electron.WebviewTag): Promise<PageContext> {
+async function gatherPageContext(
+  webview: Electron.WebviewTag,
+  options?: { includeScreenshot?: boolean }
+): Promise<PageContext> {
+  const includeScreenshot = options?.includeScreenshot !== false
+  let webContentsId: number | undefined
   try {
-    const [text, elements] = await Promise.all([
+    webContentsId = webview.getWebContentsId()
+  } catch {
+    webContentsId = undefined
+  }
+  try {
+    const [text, elements, screenshot] = await Promise.all([
       webview.executeJavaScript('document.body.innerText.slice(0, 8000)'),
       webview.executeJavaScript(`
         (() => {
@@ -101,29 +111,51 @@ async function gatherPageContext(webview: Electron.WebviewTag): Promise<PageCont
             return desc;
           }).join('\\n');
         })()
-      `)
+      `),
+      includeScreenshot && typeof webContentsId === 'number'
+        ? window.api.browserTabs.captureScreenshot(webContentsId).catch(() => null)
+        : Promise.resolve(null)
     ])
 
     return {
       url: webview.getURL(),
       title: webview.getTitle(),
       text: text || '',
-      elements: elements || ''
+      elements: elements || '',
+      screenshot: screenshot || undefined,
+      webContentsId,
+      includeScreenshot
     }
   } catch (err) {
     console.error(`${TAG} gatherPageContext error:`, err)
-    return { url: webview.getURL(), title: '', text: '', elements: '' }
+    return {
+      url: webview.getURL(),
+      title: '',
+      text: '',
+      elements: '',
+      webContentsId,
+      includeScreenshot
+    }
   }
 }
 
-// ─── Action execution ───────────────────────────────────────────────────────
+// ─── Action execution (via main process native input) ────────────────────────
 
 async function executeBrowserActions(
   webview: Electron.WebviewTag,
   actions: BrowserAction[],
   onStatus?: (status: string) => void
 ): Promise<ActionResult[]> {
-  const results: ActionResult[] = []
+  let wcId: number | undefined
+  try {
+    wcId = webview.getWebContentsId()
+  } catch {
+    wcId = undefined
+  }
+  if (typeof wcId !== 'number' || !Number.isFinite(wcId)) {
+    console.warn(`${TAG} executeBrowserActions: no webContentsId`)
+    return []
+  }
 
   for (let i = 0; i < actions.length; i++) {
     const action = actions[i]
@@ -138,309 +170,21 @@ async function executeBrowserActions(
         `${action.value ? ` value="${action.value.slice(0, 50)}"` : ''}` +
         `${action.url ? ` url=${action.url}` : ''}`
     )
-
-    try {
-      switch (action.type) {
-        case 'click':
-          if (action.index !== undefined) {
-            const result = await webview.executeJavaScript(`
-              (() => {
-                const sel = '${INTERACTIVE_SELECTOR}';
-                const isVisible = (el) => {
-                  const r = el.getBoundingClientRect();
-                  if (r.width <= 0 || r.height <= 0) return false;
-                  const style = window.getComputedStyle(el);
-                  if (style.display === 'none' || style.visibility === 'hidden') return false;
-                  return true;
-                };
-                const isEditable = (el) => {
-                  const tag = el.tagName.toLowerCase();
-                  const role = el.getAttribute('role') || '';
-                  return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
-                };
-                const els = Array.from(document.querySelectorAll(sel))
-                  .filter(isVisible)
-                  .map((el, domIndex) => {
-                    const tag = el.tagName.toLowerCase();
-                    const role = el.getAttribute('role') || '';
-                    const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
-                    const ariaLabel = el.getAttribute('aria-label') || '';
-                    const title = el.getAttribute('title') || '';
-                    const placeholder = el.getAttribute('placeholder') || '';
-                    const r = el.getBoundingClientRect();
-                    let score = 0;
-                    if (isEditable(el)) score += 60;
-                    if (tag === 'button' || role === 'button') score += 40;
-                    if (tag === 'a' || role === 'link') score += 35;
-                    if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
-                    if (role === 'row') score += 20;
-                    if (text) score += 8;
-                    if (ariaLabel || placeholder || title) score += 10;
-                    if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
-                    return { el, domIndex, score, top: r.top, left: r.left, tag, role, text, ariaLabel, title, placeholder };
-                  })
-                  .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
-                  .slice(0, 120);
-
-                const target = els[${action.index}];
-                const el = target?.el;
-                if (el) {
-                  const tag = target.tag;
-                  el.scrollIntoView({ block: 'center', behavior: 'instant' });
-                  if (isEditable(el)) el.focus();
-
-                  const rect = el.getBoundingClientRect();
-                  const x = rect.left + rect.width / 2;
-                  const y = rect.top + rect.height / 2;
-                  const eo = { bubbles: true, cancelable: true, clientX: x, clientY: y, view: window };
-                  el.dispatchEvent(new PointerEvent('pointerdown', { ...eo, pointerId: 1 }));
-                  el.dispatchEvent(new MouseEvent('mousedown', eo));
-                  el.dispatchEvent(new PointerEvent('pointerup', { ...eo, pointerId: 1 }));
-                  el.dispatchEvent(new MouseEvent('mouseup', eo));
-                  el.dispatchEvent(new MouseEvent('click', eo));
-                  if (el.type === 'submit' || tag === 'button') {
-                    const form = el.closest('form');
-                    if (form) form.requestSubmit ? form.requestSubmit() : form.submit();
-                  }
-
-                  let desc = '<' + target.tag + '>';
-                  if (target.role) desc += ' role=' + target.role;
-                  if (target.ariaLabel) desc += ' aria-label="' + target.ariaLabel + '"';
-                  if (target.placeholder) desc += ' placeholder="' + target.placeholder + '"';
-                  if (target.title) desc += ' title="' + target.title + '"';
-                  if (target.text) desc += ' text="' + target.text + '"';
-                  return JSON.stringify({ ok: true, desc });
-                }
-                return JSON.stringify({ ok: false, desc: 'element not found (index ${action.index}, total=' + els.length + ')' });
-              })()
-            `)
-            const parsed = JSON.parse(result)
-            results.push({ type: 'click', description: parsed.desc, success: parsed.ok })
-          }
-          break
-
-        case 'fill':
-          if (action.index !== undefined && action.value !== undefined) {
-            const escapedValue = action.value
-              .replace(/\\/g, '\\\\')
-              .replace(/'/g, "\\'")
-              .replace(/\n/g, '\\n')
-            const result = await webview.executeJavaScript(`
-              (() => {
-                const sel = '${INTERACTIVE_SELECTOR}';
-                const isVisible = (el) => {
-                  const r = el.getBoundingClientRect();
-                  if (r.width <= 0 || r.height <= 0) return false;
-                  const style = window.getComputedStyle(el);
-                  if (style.display === 'none' || style.visibility === 'hidden') return false;
-                  return true;
-                };
-                const isEditable = (el) => {
-                  const tag = el.tagName.toLowerCase();
-                  const role = el.getAttribute('role') || '';
-                  return tag === 'input' || tag === 'textarea' || tag === 'select' || role === 'textbox' || el.isContentEditable;
-                };
-                const els = Array.from(document.querySelectorAll(sel))
-                  .filter(isVisible)
-                  .map((el, domIndex) => {
-                    const tag = el.tagName.toLowerCase();
-                    const role = el.getAttribute('role') || '';
-                    const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
-                    const ariaLabel = el.getAttribute('aria-label') || '';
-                    const title = el.getAttribute('title') || '';
-                    const placeholder = el.getAttribute('placeholder') || '';
-                    const name = el.getAttribute('name') || '';
-                    const r = el.getBoundingClientRect();
-                    let score = 0;
-                    if (isEditable(el)) score += 60;
-                    if (tag === 'button' || role === 'button') score += 40;
-                    if (tag === 'a' || role === 'link') score += 35;
-                    if (role === 'menuitem' || role === 'option' || role === 'tab') score += 25;
-                    if (role === 'row') score += 20;
-                    if (text) score += 8;
-                    if (ariaLabel || placeholder || title || name) score += 10;
-                    if (el.closest('[role="dialog"], [aria-modal="true"]')) score += 15;
-                    return { el, domIndex, score, top: r.top, left: r.left, tag, role, text, ariaLabel, title, placeholder, name };
-                  })
-                  .sort((a, b) => b.score - a.score || a.top - b.top || a.left - b.left || a.domIndex - b.domIndex)
-                  .slice(0, 120);
-
-                const target = els[${action.index}];
-                const el = target?.el;
-                if (el) {
-                  const tag = target.tag;
-                  const role = target.role;
-                  const rawValue = '${escapedValue}';
-                  const fieldName = target.ariaLabel || target.placeholder || target.name || target.title || target.text || tag;
-                  el.focus();
-
-                  if (tag === 'input' || tag === 'textarea') {
-                    const proto = tag === 'textarea'
-                      ? window.HTMLTextAreaElement.prototype
-                      : window.HTMLInputElement.prototype;
-                    const nativeSetter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
-                    if (nativeSetter) {
-                      nativeSetter.call(el, rawValue);
-                    } else {
-                      el.value = rawValue;
-                    }
-                  } else if (tag === 'select') {
-                    const options = Array.from(el.options || []);
-                    const needle = rawValue.toLowerCase();
-                    const match = options.find((o) => (o.value || '').toLowerCase() === needle)
-                      || options.find((o) => (o.textContent || '').trim().toLowerCase() === needle)
-                      || options.find((o) => (o.textContent || '').toLowerCase().includes(needle));
-                    el.value = match ? match.value : rawValue;
-                  } else if (el.isContentEditable || role === 'textbox') {
-                    const escapeHtml = (value) =>
-                      value
-                        .replace(/&/g, '&amp;')
-                        .replace(/</g, '&lt;')
-                        .replace(/>/g, '&gt;')
-                        .replace(/"/g, '&quot;')
-                        .replace(/'/g, '&#39;');
-                    const renderInlineMarkdown = (value) => {
-                      let out = escapeHtml(value);
-                      out = out.replace(/\\[([^\\]]+)\\]\\((https?:\\/\\/[^\\s)]+)\\)/g, '<a href="$2">$1</a>');
-                      out = out.replace(/\\*\\*([^*]+)\\*\\*/g, '<strong>$1</strong>');
-                      out = out.replace(/__([^_]+)__/g, '<strong>$1</strong>');
-                      out = out.replace(/\\*([^*\\n]+)\\*/g, '<em>$1</em>');
-                      out = out.replace(/_([^_\\n]+)_/g, '<em>$1</em>');
-                      out = out.replace(/~~([^~]+)~~/g, '<s>$1</s>');
-                      return out;
-                    };
-                    const markdownToHtml = (value) => {
-                      const lines = value.replace(/\\r\\n/g, '\\n').split('\\n');
-                      const htmlParts = [];
-                      let listType = null;
-                      const closeList = () => {
-                        if (listType) {
-                          htmlParts.push('</' + listType + '>');
-                          listType = null;
-                        }
-                      };
-                      for (const raw of lines) {
-                        const line = raw.trimEnd();
-                        if (!line.trim()) {
-                          closeList();
-                          continue;
-                        }
-                        const heading = line.match(/^(#{1,6})\\s+(.*)$/);
-                        if (heading) {
-                          closeList();
-                          const level = heading[1].length;
-                          htmlParts.push('<h' + level + '>' + renderInlineMarkdown(heading[2].trim()) + '</h' + level + '>');
-                          continue;
-                        }
-                        const ul = line.match(/^\\s*[-*]\\s+(.*)$/);
-                        if (ul) {
-                          if (listType !== 'ul') {
-                            closeList();
-                            htmlParts.push('<ul>');
-                            listType = 'ul';
-                          }
-                          htmlParts.push('<li>' + renderInlineMarkdown(ul[1].trim()) + '</li>');
-                          continue;
-                        }
-                        const ol = line.match(/^\\s*\\d+\\.\\s+(.*)$/);
-                        if (ol) {
-                          if (listType !== 'ol') {
-                            closeList();
-                            htmlParts.push('<ol>');
-                            listType = 'ol';
-                          }
-                          htmlParts.push('<li>' + renderInlineMarkdown(ol[1].trim()) + '</li>');
-                          continue;
-                        }
-                        const quote = line.match(/^\\s*>\\s?(.*)$/);
-                        if (quote) {
-                          closeList();
-                          htmlParts.push('<blockquote>' + renderInlineMarkdown(quote[1].trim()) + '</blockquote>');
-                          continue;
-                        }
-                        closeList();
-                        htmlParts.push('<p>' + renderInlineMarkdown(line.trim()) + '</p>');
-                      }
-                      closeList();
-                      return htmlParts.join('');
-                    };
-                    const looksLikeMarkdown =
-                      /(^|\\n)\\s{0,3}(#{1,6}\\s|[-*]\\s|\\d+\\.\\s|>\\s)|\\*\\*|__|~~|\\[[^\\]]+\\]\\([^)]+\\)/m.test(rawValue);
-                    const htmlValue = looksLikeMarkdown
-                      ? markdownToHtml(rawValue)
-                      : escapeHtml(rawValue).replace(/\\n/g, '<br>');
-                    const selection = window.getSelection();
-                    if (selection) {
-                      const range = document.createRange();
-                      range.selectNodeContents(el);
-                      selection.removeAllRanges();
-                      selection.addRange(range);
-                    }
-                    try { document.execCommand('insertHTML', false, htmlValue); } catch {}
-                    if ((el.innerHTML || '').trim() !== htmlValue.trim()) {
-                      el.innerHTML = htmlValue;
-                    }
-                  } else {
-                    el.value = rawValue;
-                  }
-
-                  try {
-                    el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, data: rawValue, inputType: 'insertText' }));
-                  } catch {}
-                  el.dispatchEvent(new Event('input', { bubbles: true }));
-                  el.dispatchEvent(new Event('change', { bubbles: true }));
-                  try {
-                    el.dispatchEvent(new InputEvent('input', { bubbles: true, data: rawValue, inputType: 'insertText' }));
-                  } catch {}
-
-                  return JSON.stringify({
-                    ok: true,
-                    desc: fieldName + ' = "' + rawValue + '"' + ((el.isContentEditable || role === 'textbox') ? ' (rich)' : '')
-                  });
-                }
-                return JSON.stringify({ ok: false, desc: 'element not found (index ${action.index}, total=' + els.length + ')' });
-              })()
-            `)
-            const parsed = JSON.parse(result)
-            results.push({ type: 'fill', description: parsed.desc, success: parsed.ok })
-          }
-          break
-
-        case 'navigate':
-          if (action.url) {
-            webview.loadURL(action.url).catch((err: Error) => {
-              if (err.message?.includes('ERR_ABORTED')) return
-              console.warn(`${TAG} navigate error: ${err.message}`)
-            })
-            results.push({ type: 'navigate', description: action.url, success: true })
-          }
-          break
-
-        case 'scroll': {
-          const amt = action.amount ?? 500
-          const dir = action.direction === 'up' ? -amt : amt
-          await webview.executeJavaScript(`window.scrollBy(0, ${dir})`)
-          results.push({
-            type: 'scroll',
-            description: `${action.direction} ${Math.abs(dir)}px`,
-            success: true
-          })
-          break
-        }
-
-        default:
-          console.log(`${TAG}   skipped (no-op for type "${action.type}")`)
-      }
-    } catch (err) {
-      console.warn(`${TAG}   FAILED: ${action.type}`, err)
-      results.push({ type: action.type, description: `Error: ${err}`, success: false })
-    }
-
-    // 300ms delay between actions
-    await new Promise((r) => setTimeout(r, 300))
   }
 
-  return results
+  try {
+    const response = await window.api.browserTabs.executeActions(wcId, actions)
+    return (response.results ?? []).map(
+      (r: { type: string; description: string; success: boolean }) => ({
+        type: r.type,
+        description: r.description,
+        success: r.success
+      })
+    )
+  } catch (err) {
+    console.error(`${TAG} executeBrowserActions IPC failed:`, err)
+    return []
+  }
 }
 
 // ─── Page settle ────────────────────────────────────────────────────────────
@@ -481,7 +225,7 @@ export async function runAgentOnWebview(
   reportStatus('Agent: gathering page context')
 
   // Initial gather + send
-  const pageContext = await gatherPageContext(webview)
+  const pageContext = await gatherPageContext(webview, { includeScreenshot: true })
   reportStatus('Agent: requesting model plan')
   const result = await window.api.browserTabs.chat(tabId, automatedPrompt, pageContext)
   let actions: BrowserAction[] = result.actions ?? []
@@ -528,7 +272,7 @@ export async function runAgentOnWebview(
     // Re-observe
     console.log(`${TAG} Gathering updated page context...`)
     reportStatus('Agent: collecting updated page context')
-    const updatedContext = await gatherPageContext(webview)
+    const updatedContext = await gatherPageContext(webview, { includeScreenshot: true })
 
     const resultSummary = results
       .map((r) => `${r.type}: ${r.success ? 'OK' : 'FAILED'} — ${r.description}`)

@@ -1,9 +1,11 @@
 import { memo } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
+import { HandleWithTooltip } from './handle-with-tooltip'
 import { Globe, X, Radio, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BrowserTabMonitor } from '@/hooks/use-browser-tabs'
 import { NodeExecutionFooter } from './node-status-bar'
+import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
 
 export interface BrowserTabNodeData {
   title: string
@@ -18,14 +20,17 @@ export interface BrowserTabNodeData {
 }
 
 function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { title, favicon, screenshot, monitors, isRunning, runtimeStatus, onClose } = data as unknown as BrowserTabNodeData
+  const { title, favicon, screenshot, monitors, isRunning, runtimeStatus, runtimeOutput, onClose } = data as unknown as BrowserTabNodeData
   const enabledMonitors = monitors?.filter((m) => m.enabled) ?? []
   const hasMonitors = enabledMonitors.length > 0
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
+  const targetPos = getTargetPosition(direction)
 
   return (
     <div
       className={cn(
-        'group w-[240px] rounded-lg border bg-card shadow-sm transition-all hover:shadow-md',
+        'group w-[240px] rounded-lg border bg-card shadow transition-all hover:shadow-md',
         selected && 'ring-2 ring-primary'
       )}
     >
@@ -41,7 +46,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
 
         {/* Close button */}
         <button
-          className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover:opacity-100"
+          className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-white opacity-0 transition-opacity hover:bg-black/60 group-hover:opacity-100"
           onClick={(e) => {
             e.stopPropagation()
             onClose(id)
@@ -72,18 +77,14 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
       {/* Info */}
       <div className="px-2.5 py-2">
         <div className="flex items-center gap-1.5">
-          {favicon ? (
-            <img src={favicon} alt="" draggable={false} className="h-3.5 w-3.5 shrink-0" />
-          ) : (
-            <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-          )}
+          {favicon ? <img src={favicon} alt="" draggable={false} className="h-3.5 w-3.5 shrink-0" /> : null}
           <span className="truncate text-xs font-medium">{title || 'New Tab'}</span>
         </div>
       </div>
 
       {/* Per-monitor rows with inline handles */}
       {hasMonitors && (
-        <div className="border-t px-2.5 py-1.5 space-y-0.5">
+        <div className="border-t border-border/40 px-2.5 py-1.5 space-y-0.5">
           {enabledMonitors.map((monitor) => (
             <div key={monitor.id} className="relative flex items-center gap-1.5 h-5">
               <Radio className="h-2.5 w-2.5 text-amber-500 shrink-0" />
@@ -94,29 +95,36 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
                 {monitor.condition}
               </span>
               {/* Handle sits inside the row so it's vertically centered */}
-              <Handle
+              <HandleWithTooltip
+                label={monitor.condition}
                 type="source"
-                position={Position.Right}
+                position={sourcePos}
                 id={`monitor-${monitor.id}`}
-                title={monitor.condition}
-                className="!absolute !right-[-18px] !top-1/2 !-translate-y-1/2 !w-3 !h-3 !bg-amber-500 !border-2 !border-amber-300"
+                className={cn(
+                  '!absolute !w-3 !h-3 !bg-amber-500 !border-2 !border-amber-300',
+                  direction === 'vertical'
+                    ? '!bottom-[-18px] !left-1/2 !-translate-x-1/2'
+                    : '!right-[-18px] !top-1/2 !-translate-y-1/2'
+                )}
               />
             </div>
           ))}
         </div>
       )}
 
-      <NodeExecutionFooter status={runtimeStatus} isRunning={isRunning} className="px-2.5 py-1.5" />
+      <NodeExecutionFooter status={runtimeStatus} isRunning={isRunning} runtimeOutput={runtimeOutput as string | undefined} className="px-2.5 py-1.5" />
 
       {/* Default handles */}
-      <Handle
+      <HandleWithTooltip
+        label="Input"
         type="target"
-        position={Position.Left}
+        position={targetPos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
-      <Handle
+      <HandleWithTooltip
+        label="Page content"
         type="source"
-        position={Position.Right}
+        position={sourcePos}
         className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
       />
     </div>

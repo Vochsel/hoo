@@ -20,10 +20,13 @@ import {
   type Connection
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput } from 'lucide-react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft } from 'lucide-react'
+import { useAppActions } from '@/App'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BrowserTabNode, type BrowserTabNodeData } from '@/components/browser/browser-tab-node'
+import { FlowDirectionContext, type FlowDirection } from '@/components/browser/flow-direction-context'
 import { TriggerNode } from '@/components/browser/trigger-node'
 import { ScheduleTriggerNode, type ScheduleTriggerConfig } from '@/components/browser/schedule-trigger-node'
 import { FormTriggerNode, type FormTriggerConfig, type FormTriggerFieldConfig } from '@/components/browser/form-trigger-node'
@@ -34,27 +37,40 @@ import { AiPromptNode } from '@/components/browser/ai-prompt-node'
 import { TextNode } from '@/components/browser/text-node'
 import { OutputNode } from '@/components/browser/output-node'
 import { FileNode } from '@/components/browser/file-node'
+import { TerminalNode, type TerminalNodeConfig } from '@/components/browser/terminal-node'
+import { TerminalDialog } from '@/components/browser/terminal-dialog'
 import { BrowserTabDialog } from '@/components/browser/browser-tab-dialog'
 import { MonitorWebviews } from '@/components/browser/monitor-webviews'
+import { BoardTabsView } from '@/components/browser/board-tabs-view'
+import { BoardDocumentView } from '@/components/browser/board-document-view'
 import { useBrowserTabs, type BrowserTab, type BrowserTabMonitor, type MonitorRule } from '@/hooks/use-browser-tabs'
 import { useSettings } from '@/hooks/use-settings'
-import { useGraphNodes } from '@/hooks/use-graph-nodes'
+import { useGraphNodes, type GraphNode } from '@/hooks/use-graph-nodes'
 import { useBrowserEdges } from '@/hooks/use-browser-edges'
+import { useWorkspace, type WorkspaceBoard } from '@/hooks/use-workspace'
 import { executeFromTrigger } from '@/services/graph-executor'
 import { runAgentOnWebview } from '@/services/browser-agent-runner'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
 import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/lib/schedule-cron'
+import { SettingsPage } from '@/pages/settings'
 import TurndownService from 'turndown'
 
 const MONITOR_TAG = '[browser-monitor]'
 const SCHEDULE_TAG = '[schedule-trigger]'
 const BROWSER_EXEC_TAG = '[browser-exec]'
+const BROWSER_PREVIEW_TAG = '[browser-preview]'
 const FLOW_TAG = '[browser-flow]'
 const MAX_HTML_CHARS = 250_000
 const MAX_OUTPUT_CHARS = 60_000
 const SCHEDULE_POLL_INTERVAL_MS = 60_000
 const SCHEDULE_ALIGNMENT_GRACE_MS = 250
 const SCHEDULE_MIN_TIMER_DELAY_MS = 25
+const PREVIEW_LOAD_TIMEOUT_MS = 12_000
+const NETWORK_IDLE_POLL_MS = 300
+const NETWORK_IDLE_WAIT_MS = 600
+const NETWORK_IDLE_TIMEOUT_MS = 15_000
+const INTERACTIVE_SELECTOR =
+  'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
 type FlowInteractionMode = 'design' | 'map'
 
@@ -64,11 +80,63 @@ const turndown = new TurndownService({
 })
 turndown.remove(['script', 'style', 'noscript'])
 
+
 function preview(value: string | undefined, max = 160): string {
   if (!value) return ''
   const compact = value.replace(/\s+/g, ' ').trim()
   if (compact.length <= max) return compact
   return `${compact.slice(0, max)}...`
+}
+
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  const tag = target.tagName.toLowerCase()
+  return (
+    tag === 'input' ||
+    tag === 'textarea' ||
+    tag === 'select' ||
+    target.isContentEditable ||
+    !!target.closest('[contenteditable="true"], [role="textbox"]')
+  )
+}
+
+function normalizePastedUrl(input: string): string | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+  const cleaned = trimmed.replace(/^<|>$/g, '').replace(/^['"]|['"]$/g, '')
+  if (!cleaned || /\s/.test(cleaned)) return null
+  try {
+    const parsed = new URL(cleaned)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString()
+    }
+    return null
+  } catch {
+    // fall through to bare-domain parsing
+  }
+  if (/^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}([/?#:].*)?$/.test(cleaned)) {
+    try {
+      return new URL(`https://${cleaned}`).toString()
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+function normalizeIconUrl(rawUrl: string | null | undefined): string | null {
+  if (!rawUrl) return null
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return null
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+      return parsed.toString()
+    }
+  } catch {
+    return null
+  }
+  return null
 }
 
 function getNextAlignedMinuteTick(nowTs: number): number {
@@ -129,11 +197,13 @@ function normalizeFormFieldList(rawFields: unknown): FormTriggerFieldConfig[] {
 }
 
 function formatFormSubmission(fields: FormTriggerFieldConfig[], values: Record<string, string>): string {
-  const lines: string[] = ['[Form Submission]']
-  if (fields.length === 0) {
-    lines.push('(No configured fields)')
-    return lines.join('\n')
+  if (fields.length === 0) return '(No configured fields)'
+  // Single field → output the raw value directly
+  if (fields.length === 1) {
+    return values[fields[0].key] ?? ''
   }
+  // Multiple fields → labelled output
+  const lines: string[] = []
   for (const field of fields) {
     const value = values[field.key] ?? ''
     lines.push(`${field.label} (${field.key}): ${value || '(empty)'}`)
@@ -152,7 +222,8 @@ const nodeTypes: NodeTypes = {
   aiPrompt: AiPromptNode as unknown as NodeTypes['aiPrompt'],
   text: TextNode as unknown as NodeTypes['text'],
   output: OutputNode as unknown as NodeTypes['output'],
-  file: FileNode as unknown as NodeTypes['file']
+  file: FileNode as unknown as NodeTypes['file'],
+  terminal: TerminalNode as unknown as NodeTypes['terminal']
 }
 
 interface ContextMenu {
@@ -164,39 +235,333 @@ interface ContextMenu {
   flowPosition?: { x: number; y: number }
 }
 
+
 function BrowserPageInner(): React.ReactElement {
-  const { tabs, refresh, createTab, updateTab, deleteTab, savePositions: saveTabPositions } = useBrowserTabs()
-  const { getSetting } = useSettings()
+  const {
+    workspace,
+    loading: workspaceLoading,
+    activeBoard,
+    createFolder,
+    renameFolder,
+    deleteFolder,
+    createBoard,
+    renameBoard,
+    deleteBoard,
+    setActiveBoard,
+    getBoardDocumentHtml,
+    setBoardDocumentHtml,
+    setBoardActiveView
+  } = useWorkspace()
+  const activeBoardId = workspace?.activeBoardId ?? null
+  const { tabs, refresh, createTab, updateTab, deleteTab, savePositions: saveTabPositions } = useBrowserTabs(activeBoardId)
+  const { getSetting, setSetting, loading: settingsLoading } = useSettings()
   const {
     graphNodes: gNodes,
     createNode,
     updateNode,
     deleteNode,
     savePositions: saveGraphPositions
-  } = useGraphNodes()
-  const { edges: savedEdges, saveEdges } = useBrowserEdges()
+  } = useGraphNodes(activeBoardId)
+  const { edges: savedEdges, saveEdges } = useBrowserEdges(activeBoardId)
 
   const [selectedTab, setSelectedTab] = useState<BrowserTab | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [terminalDialogNodeId, setTerminalDialogNodeId] = useState<string | null>(null)
+  const [pendingSidebarTabOpen, setPendingSidebarTabOpen] = useState<{ tabId: string; boardId: string } | null>(null)
+  const [pendingSidebarTerminalOpen, setPendingSidebarTerminalOpen] = useState<{ nodeId: string; boardId: string } | null>(null)
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [monitorInput, setMonitorInput] = useState('')
   const [monitorNodeId, setMonitorNodeId] = useState<string | null>(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState<string | null>(null)
   const [runningTabs, setRunningTabs] = useState<Set<string>>(new Set())
+  const [previewingTabs, setPreviewingTabs] = useState<Set<string>>(new Set())
+  const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set())
+  const expandedFoldersInitializedRef = useRef(false)
+  const [collapsedBoards, setCollapsedBoards] = useState<Set<string>>(new Set())
+  const [boardTabsMap, setBoardTabsMap] = useState<Map<string, BrowserTab[]>>(new Map())
+  const [boardTerminalsMap, setBoardTerminalsMap] = useState<Map<string, GraphNode[]>>(new Map())
+  const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
+  const [editingFolderName, setEditingFolderName] = useState('')
+  const [editingBoardId, setEditingBoardId] = useState<string | null>(null)
+  const [editingBoardName, setEditingBoardName] = useState('')
+  const [editingTerminalId, setEditingTerminalId] = useState<string | null>(null)
+  const [editingTerminalName, setEditingTerminalName] = useState('')
+  const [createMenuOpen, setCreateMenuOpen] = useState(false)
+  const createMenuRef = useRef<HTMLDivElement | null>(null)
+  const [sidebarWidth, setSidebarWidth] = useState(288)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
+  const [boardView, setBoardView] = useState<'whiteboard' | 'tabs' | 'document'>('whiteboard')
+  const [boardDocHtml, setBoardDocHtmlState] = useState('<p></p>')
+  const [boardDocLoading, setBoardDocLoading] = useState(false)
+  const boardDocSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
+  const flowContainerRef = useRef<HTMLDivElement | null>(null)
+  const lastMouseClientPositionRef = useRef<{ x: number; y: number } | null>(null)
   const triggerWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
+  const dialogWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
+  const previewWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
+  const previewHydrationInFlightRef = useRef<Set<string>>(new Set())
   const pendingPositionOverrides = useRef<Map<string, { x: number; y: number }>>(new Map())
   const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleRunningRef = useRef(false)
   const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
+  const pendingBoardRenameRef = useRef(false)
+  const pendingFolderRenameRef = useRef(false)
+  const boardTabsViewRef = useRef<import('@/components/browser/board-tabs-view').BoardTabsViewHandle | null>(null)
   const reactFlowInstance = useReactFlow()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const isSettingsRoute = location.pathname === '/settings'
   const flowInteractionMode: FlowInteractionMode =
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const isMapMode = flowInteractionMode === 'map'
+  const flowDirection: FlowDirection =
+    (getSetting('flowDirection') as string) === 'vertical' ? 'vertical' : 'horizontal'
+
+  const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
+  const outputNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'output'), [gNodes])
+
+  // Hydrate folder/board collapse state once settings have loaded
+  useEffect(() => {
+    if (settingsLoading) return
+    if (!workspace?.folders) return
+    if (expandedFoldersInitializedRef.current) return
+    expandedFoldersInitializedRef.current = true
+
+    const savedFolders = getSetting('expandedFolders')
+    if (Array.isArray(savedFolders)) {
+      setExpandedFolders(new Set(savedFolders as string[]))
+    } else {
+      // No saved state — default all folders to expanded
+      setExpandedFolders(new Set(workspace.folders.map((f) => f.id)))
+    }
+
+    const savedBoards = getSetting('collapsedBoards')
+    if (Array.isArray(savedBoards)) {
+      setCollapsedBoards(new Set(savedBoards as string[]))
+    }
+  }, [settingsLoading, workspace?.folders, getSetting])
+
+  useEffect(() => {
+    if (!createMenuOpen) return
+    const handleClickOutside = (e: MouseEvent): void => {
+      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
+        setCreateMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [createMenuOpen])
+
+  const boardsByFolderId = useMemo(() => {
+    const map = new Map<string, WorkspaceBoard[]>()
+    if (!workspace) return map
+    for (const board of workspace.boards) {
+      const key = board.folderId ?? '__ungrouped__'
+      const existing = map.get(key) ?? []
+      existing.push(board)
+      map.set(key, existing)
+    }
+    return map
+  }, [workspace])
+
+  useEffect(() => {
+    if (!workspace) return
+    let cancelled = false
+    const loadAllBoardTabs = async (): Promise<void> => {
+      const next = new Map<string, BrowserTab[]>()
+      for (const board of workspace.boards) {
+        const boardTabs = await window.api.browserTabs.list(board.id)
+        if (cancelled) return
+        next.set(board.id, boardTabs)
+      }
+      setBoardTabsMap(next)
+    }
+    void loadAllBoardTabs()
+    return () => { cancelled = true }
+  }, [workspace, tabs])
+
+  // Load terminal nodes for non-active boards (sidebar).
+  // Mirrors the boardTabsMap pattern — only re-fetches when workspace changes.
+  useEffect(() => {
+    if (!workspace) return
+    let cancelled = false
+    const loadOtherBoardTerminals = async (): Promise<void> => {
+      const next = new Map<string, GraphNode[]>()
+      for (const board of workspace.boards) {
+        if (board.id === activeBoardId) continue
+        const allNodes: GraphNode[] = await window.api.graphNodes.list(board.id)
+        if (cancelled) return
+        const terminals = allNodes.filter((n) => n.nodeType === 'terminal')
+        if (terminals.length > 0) next.set(board.id, terminals)
+      }
+      if (!cancelled) setBoardTerminalsMap((prev) => {
+        const merged = new Map(next)
+        // Preserve active board entry from the other effect
+        const active = prev.get(activeBoardId ?? '')
+        if (active && activeBoardId) merged.set(activeBoardId, active)
+        return merged
+      })
+    }
+    void loadOtherBoardTerminals()
+    return () => { cancelled = true }
+  }, [workspace, activeBoardId])
+
+  // Keep active board's terminal entries in sync from the already-loaded gNodes
+  // (no IPC, no async — just a derived update).
+  useEffect(() => {
+    if (!activeBoardId) return
+    const terminals = gNodes.filter((n) => n.nodeType === 'terminal')
+    setBoardTerminalsMap((prev) => {
+      const next = new Map(prev)
+      if (terminals.length > 0) {
+        next.set(activeBoardId, terminals)
+      } else {
+        next.delete(activeBoardId)
+      }
+      return next
+    })
+  }, [activeBoardId, gNodes])
+
+  const toggleBoardCollapsed = useCallback((boardId: string) => {
+    setCollapsedBoards((prev) => {
+      const next = new Set(prev)
+      if (next.has(boardId)) {
+        next.delete(boardId)
+      } else {
+        next.add(boardId)
+      }
+      void setSetting('collapsedBoards', Array.from(next))
+      return next
+    })
+  }, [setSetting])
+
+  useEffect(() => {
+    if (pendingBoardRenameRef.current || pendingFolderRenameRef.current) return
+    setRunningTabs(new Set())
+    setPreviewingTabs(new Set())
+    dialogWebviews.current.clear()
+    setMonitorNodeId(null)
+    setSelectedTab(null)
+    setDialogOpen(false)
+    setTerminalDialogNodeId(null)
+    setContextMenu(null)
+  }, [activeBoardId])
+
+  useEffect(() => {
+    if (!workspace) return
+    if (editingFolderId && !workspace.folders.some((folder) => folder.id === editingFolderId)) {
+      setEditingFolderId(null)
+      setEditingFolderName('')
+    }
+    if (editingBoardId && !workspace.boards.some((board) => board.id === editingBoardId)) {
+      setEditingBoardId(null)
+      setEditingBoardName('')
+    }
+    if (editingTerminalId) {
+      const allTerminals = Array.from(boardTerminalsMap.values()).flat()
+      if (!allTerminals.some((tn) => tn.id === editingTerminalId)) {
+        setEditingTerminalId(null)
+        setEditingTerminalName('')
+      }
+    }
+  }, [workspace, editingFolderId, editingBoardId, editingTerminalId, boardTerminalsMap])
+
+  // Load board activeView when activeBoardId changes
+  useEffect(() => {
+    if (!activeBoardId) {
+      setBoardView('whiteboard')
+      return
+    }
+    let cancelled = false
+    void window.api.workspace.getBoardActiveView(activeBoardId)
+      .then((view) => {
+        if (cancelled) return
+        const v = view as string
+        if (v === 'whiteboard' || v === 'tabs' || v === 'document') {
+          setBoardView(v)
+        } else {
+          setBoardView('whiteboard')
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setBoardView('whiteboard')
+      })
+    return (): void => { cancelled = true }
+  }, [activeBoardId])
+
+  // Load board document HTML when switching to document view
+  useEffect(() => {
+    if (boardDocSaveTimerRef.current) {
+      clearTimeout(boardDocSaveTimerRef.current)
+      boardDocSaveTimerRef.current = null
+    }
+    if (boardView !== 'document' || !activeBoardId) {
+      return
+    }
+    let cancelled = false
+    setBoardDocLoading(true)
+    void getBoardDocumentHtml(activeBoardId)
+      .then((html) => {
+        if (cancelled) return
+        setBoardDocHtmlState(html || '<p></p>')
+      })
+      .catch((error) => {
+        if (cancelled) return
+        console.error(`${FLOW_TAG} failed to load board document html:`, error)
+        setBoardDocHtmlState('<p></p>')
+      })
+      .finally(() => {
+        if (!cancelled) setBoardDocLoading(false)
+      })
+    return (): void => { cancelled = true }
+  }, [activeBoardId, boardView, getBoardDocumentHtml])
+
+  useEffect(() => {
+    return (): void => {
+      if (boardDocSaveTimerRef.current) {
+        clearTimeout(boardDocSaveTimerRef.current)
+      }
+    }
+  }, [])
+
+  const handleBoardViewChange = useCallback(
+    (view: 'whiteboard' | 'tabs' | 'document') => {
+      setBoardView(view)
+      // Close terminal dialog when switching to tab/document view to avoid
+      // competing xterm instances for the same PTY session
+      if (view !== 'whiteboard') {
+        setTerminalDialogNodeId(null)
+      }
+      if (activeBoardId) {
+        void setBoardActiveView(activeBoardId, view).catch((error) => {
+          console.error(`${FLOW_TAG} failed to persist board active view:`, error)
+        })
+      }
+    },
+    [activeBoardId, setBoardActiveView]
+  )
+
+  const handleBoardDocHtmlChange = useCallback(
+    (nextHtml: string) => {
+      setBoardDocHtmlState(nextHtml)
+      if (!activeBoardId) return
+      if (boardDocSaveTimerRef.current) {
+        clearTimeout(boardDocSaveTimerRef.current)
+      }
+      boardDocSaveTimerRef.current = setTimeout(() => {
+        void setBoardDocumentHtml(activeBoardId, nextHtml).catch((error) => {
+          console.error(`${FLOW_TAG} failed to persist board document html:`, error)
+        })
+      }, 450)
+    },
+    [activeBoardId, setBoardDocumentHtml]
+  )
 
   const setNodeRuntimeStatus = useCallback(
-    (nodeId: string, status: string, isRunning?: boolean): void => {
+    (nodeId: string, status: string, isRunning?: boolean, runtimeOutput?: string): void => {
       reactFlowInstance.setNodes((nds) =>
         nds.map((n) => {
           if (n.id !== nodeId) return n
@@ -208,6 +573,9 @@ function BrowserPageInner(): React.ReactElement {
           if (isRunning !== undefined) {
             nextData.isRunning = isRunning
           }
+          if (runtimeOutput !== undefined) {
+            nextData.runtimeOutput = runtimeOutput
+          }
           return { ...n, data: nextData }
         })
       )
@@ -215,7 +583,198 @@ function BrowserPageInner(): React.ReactElement {
     [reactFlowInstance]
   )
 
+  const hydratePastedTabPreview = useCallback(
+    async (tabNodeId: string, initialUrl?: string): Promise<void> => {
+      if (previewHydrationInFlightRef.current.has(tabNodeId)) return
+      previewHydrationInFlightRef.current.add(tabNodeId)
+      setPreviewingTabs((prev) => new Set(prev).add(tabNodeId))
+      setNodeRuntimeStatus(tabNodeId, 'Browser: preparing preview', true)
+
+      try {
+        let waitAttempts = 0
+        let webview = previewWebviews.current.get(tabNodeId)
+        if (!webview) {
+          await new Promise<void>((resolve, reject) => {
+            const maxAttempts = 120
+            const check = (): void => {
+              waitAttempts += 1
+              const candidate = previewWebviews.current.get(tabNodeId)
+              if (candidate) {
+                resolve()
+                return
+              }
+              if (waitAttempts >= maxAttempts) {
+                reject(new Error('Preview webview unavailable'))
+                return
+              }
+              setTimeout(check, 50)
+            }
+            setTimeout(check, 20)
+          })
+          webview = previewWebviews.current.get(tabNodeId)
+        }
+
+        if (!webview) {
+          throw new Error('Preview webview missing after wait')
+        }
+
+        const tab = tabs.find((item) => item.id === tabNodeId)
+        const sourceUrl = normalizePastedUrl(initialUrl ?? '') ?? normalizePastedUrl(tab?.url ?? '')
+        if (!sourceUrl) {
+          setNodeRuntimeStatus(tabNodeId, 'Browser: preview skipped (invalid URL)', false)
+          return
+        }
+
+        let faviconUrl: string | null = null
+        const onFaviconUpdated = ((event: Event): void => {
+          const eventData = event as unknown as { favicons?: string[] }
+          const first = eventData.favicons?.[0]
+          const normalized = normalizeIconUrl(first)
+          if (normalized) faviconUrl = normalized
+        }) as EventListener
+
+        webview.addEventListener('page-favicon-updated', onFaviconUpdated)
+        try {
+          setNodeRuntimeStatus(tabNodeId, `Browser: loading ${preview(sourceUrl, 60)}`, true)
+          await new Promise<void>((resolve) => {
+            let settled = false
+            const cleanup = (): void => {
+              webview.removeEventListener('did-stop-loading', onDidStopLoading)
+              webview.removeEventListener('did-fail-load', onDidFailLoad)
+              clearTimeout(timeout)
+            }
+            const finish = (): void => {
+              if (settled) return
+              settled = true
+              cleanup()
+              resolve()
+            }
+            const onDidStopLoading = (): void => finish()
+            const onDidFailLoad = (event: Event): void => {
+              const fail = event as unknown as { errorCode?: number; errorDescription?: string }
+              if (fail.errorCode === -3) return
+              console.warn(
+                `${BROWSER_PREVIEW_TAG} tab=${tabNodeId} did-fail-load code=${fail.errorCode ?? 'unknown'} error="${fail.errorDescription ?? 'unknown'}"`
+              )
+              finish()
+            }
+            const timeout = setTimeout(() => {
+              console.warn(
+                `${BROWSER_PREVIEW_TAG} tab=${tabNodeId} load timeout after ${PREVIEW_LOAD_TIMEOUT_MS}ms`
+              )
+              finish()
+            }, PREVIEW_LOAD_TIMEOUT_MS)
+
+            webview.addEventListener('did-stop-loading', onDidStopLoading)
+            webview.addEventListener('did-fail-load', onDidFailLoad)
+            webview.loadURL(sourceUrl).catch((error: Error) => {
+              if (error.message?.includes('ERR_ABORTED')) {
+                finish()
+                return
+              }
+              console.warn(`${BROWSER_PREVIEW_TAG} tab=${tabNodeId} loadURL error:`, error)
+              finish()
+            })
+          })
+
+          await new Promise((resolve) => setTimeout(resolve, 500))
+
+          const currentUrl = webview.getURL()
+          const finalUrl = normalizePastedUrl(currentUrl) ?? sourceUrl
+          let finalTitle = webview.getTitle().trim()
+          if (!finalTitle) {
+            try {
+              const domTitle = (await webview.executeJavaScript('document.title')) as string
+              finalTitle = domTitle?.trim() ?? ''
+            } catch {
+              finalTitle = ''
+            }
+          }
+
+          if (!faviconUrl) {
+            try {
+              const iconHref = (await webview.executeJavaScript(`
+                (() => {
+                  const selectors = [
+                    'link[rel="icon"]',
+                    'link[rel="shortcut icon"]',
+                    'link[rel*="icon"]'
+                  ]
+                  for (const selector of selectors) {
+                    const el = document.querySelector(selector)
+                    const href = el?.getAttribute('href')
+                    if (!href) continue
+                    try {
+                      return new URL(href, location.href).toString()
+                    } catch {
+                      continue
+                    }
+                  }
+                  return null
+                })()
+              `)) as string | null
+              faviconUrl = normalizeIconUrl(iconHref)
+            } catch {
+              faviconUrl = null
+            }
+          }
+
+          const screenshot = await window.api.browserTabs.captureScreenshot(webview.getWebContentsId())
+
+          const updates: Record<string, unknown> = {}
+          if (finalUrl) updates.url = finalUrl
+          if (finalTitle) updates.title = finalTitle
+          if (faviconUrl) updates.favicon = faviconUrl
+          if (screenshot) updates.screenshot = screenshot
+
+          if (Object.keys(updates).length > 0) {
+            await updateTab(tabNodeId, updates)
+            reactFlowInstance.setNodes((nds) =>
+              nds.map((n) =>
+                n.id === tabNodeId
+                  ? { ...n, data: { ...n.data, ...updates } }
+                  : n
+              )
+            )
+          }
+
+          const metadataKeys = Object.keys(updates).filter((k) => k !== 'screenshot')
+          const summary =
+            metadataKeys.length > 0
+              ? `Browser: preview ready (${metadataKeys.join(', ')})`
+              : 'Browser: preview ready'
+          setNodeRuntimeStatus(tabNodeId, summary, false)
+          console.log(
+            `${BROWSER_PREVIEW_TAG} tab=${tabNodeId} preview ready waitAttempts=${waitAttempts} keys=${Object.keys(updates).join(',') || 'none'} title="${preview(finalTitle, 70)}"`
+          )
+        } finally {
+          webview.removeEventListener('page-favicon-updated', onFaviconUpdated)
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setNodeRuntimeStatus(tabNodeId, `Browser: preview failed (${preview(message, 55)})`, false)
+        console.warn(`${BROWSER_PREVIEW_TAG} tab=${tabNodeId} preview failed:`, error)
+      } finally {
+        previewHydrationInFlightRef.current.delete(tabNodeId)
+        setPreviewingTabs((prev) => {
+          const next = new Set(prev)
+          next.delete(tabNodeId)
+          return next
+        })
+      }
+    },
+    [reactFlowInstance, setNodeRuntimeStatus, tabs, updateTab]
+  )
+
   // ─── Browser tab agent execution ───────────────────────────────────────
+
+  const handleDialogWebviewStateChange = useCallback((tabId: string, webview: Electron.WebviewTag | null) => {
+    if (webview) {
+      dialogWebviews.current.set(tabId, webview)
+    } else {
+      dialogWebviews.current.delete(tabId)
+    }
+  }, [])
 
   const executeBrowserTab = useCallback(
     async (tabNodeId: string, inputData?: string, runId?: string): Promise<string | undefined> => {
@@ -229,19 +788,24 @@ function BrowserPageInner(): React.ReactElement {
 
       const startTs = Date.now()
       setNodeRuntimeStatus(tabNodeId, 'Browser: preparing webview', true)
-      // Mark tab as running
-      setRunningTabs((prev) => new Set(prev).add(tabNodeId))
+      const dialogWebview = dialogWebviews.current.get(tabNodeId)
+      const usingLiveDialogWebview = Boolean(dialogWebview)
+      if (!usingLiveDialogWebview) {
+        // Mark tab as running so the hidden execution webview mounts.
+        setRunningTabs((prev) => new Set(prev).add(tabNodeId))
+      }
       console.log(
-        `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} start url=${tab.url} inputLen=${inputData?.length ?? 0} inputPreview="${preview(inputData)}"`
+        `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} start url=${tab.url} inputLen=${inputData?.length ?? 0} inputPreview="${preview(inputData)}" source=${usingLiveDialogWebview ? 'dialog' : 'hidden'}`
       )
 
       try {
-        // Get or wait for the hidden webview
+        // Prefer the currently open dialog webview for this tab so execution uses
+        // the exact same in-memory page/session state the user sees.
         const webviewWaitStart = Date.now()
         let waitAttempts = 0
-        let webview = triggerWebviews.current.get(tabNodeId)
+        let webview = dialogWebview ?? triggerWebviews.current.get(tabNodeId)
 
-        if (!webview) {
+        if (!webview && !usingLiveDialogWebview) {
           // Wait for React to render the hidden webview
           setNodeRuntimeStatus(tabNodeId, 'Browser: waiting for hidden webview', true)
           await new Promise<void>((resolve) => {
@@ -260,7 +824,7 @@ function BrowserPageInner(): React.ReactElement {
           webview = triggerWebviews.current.get(tabNodeId)
         }
         console.log(
-          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webviewLookup waitMs=${Date.now() - webviewWaitStart} attempts=${waitAttempts}`
+          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webviewLookup waitMs=${Date.now() - webviewWaitStart} attempts=${waitAttempts} source=${usingLiveDialogWebview ? 'dialog' : 'hidden'}`
         )
 
         if (!webview) {
@@ -272,33 +836,134 @@ function BrowserPageInner(): React.ReactElement {
           console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} using webview userAgent attribute`)
         }
 
-        // Load the tab URL and wait for it
-        const loadStart = Date.now()
-        setNodeRuntimeStatus(tabNodeId, `Browser: loading ${preview(tab.url, 60)}`, true)
-        console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} loading url=${tab.url}`)
-        webview.loadURL(tab.url)
-        await new Promise<void>((resolve) => {
-          const timeout = setTimeout(() => {
-            console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webview load timeout after 15000ms`)
-            resolve()
-          }, 15000)
+        // If we're attached to the live dialog webview, keep its current state.
+        // Hidden webviews still navigate to the persisted tab URL before execution.
+        const currentWebviewUrl = webview.getURL()
+        const shouldLoadTabUrl =
+          !usingLiveDialogWebview ||
+          !currentWebviewUrl ||
+          currentWebviewUrl === 'about:blank'
 
-          const handler = (): void => {
-            clearTimeout(timeout)
-            webview!.removeEventListener('did-stop-loading', handler)
-            resolve()
-          }
-          webview!.addEventListener('did-stop-loading', handler)
-        })
-        console.log(
-          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} load completed ms=${Date.now() - loadStart}`
-        )
+        if (shouldLoadTabUrl) {
+          const loadStart = Date.now()
+          setNodeRuntimeStatus(tabNodeId, `Browser: loading ${preview(tab.url, 60)}`, true)
+          console.log(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} loading url=${tab.url}`)
+          webview.loadURL(tab.url)
+          await new Promise<void>((resolve) => {
+            const timeout = setTimeout(() => {
+              console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webview load timeout after 15000ms`)
+              resolve()
+            }, 15000)
 
-        // Extra settle time
+            const handler = (): void => {
+              clearTimeout(timeout)
+              webview!.removeEventListener('did-stop-loading', handler)
+              resolve()
+            }
+            webview!.addEventListener('did-stop-loading', handler)
+          })
+          console.log(
+            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} load completed ms=${Date.now() - loadStart}`
+          )
+        } else {
+          setNodeRuntimeStatus(tabNodeId, 'Browser: using live dialog session', true)
+          console.log(
+            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} reusing dialog webview currentUrl=${currentWebviewUrl}`
+          )
+        }
+
+        // Inject a PerformanceObserver to track in-flight network requests, then
+        // poll until no new resources have started/completed for a quiet window.
         setNodeRuntimeStatus(tabNodeId, 'Browser: waiting for page settle', true)
-        await new Promise((r) => setTimeout(r, 1000))
+        const networkIdleStart = Date.now()
+        if (usingLiveDialogWebview) {
+          // Never monkeypatch fetch/XHR on the user's visible page.
+          await new Promise((r) => setTimeout(r, 700))
+        } else {
+          try {
+            await webview.executeJavaScript(`
+              (() => {
+                if (window.__hooNetIdle) return;
+                window.__hooNetIdle = { pending: 0, lastActivity: Date.now() };
+                const s = window.__hooNetIdle;
+                const ob = new PerformanceObserver((list) => {
+                  for (const e of list.getEntries()) {
+                    s.lastActivity = Date.now();
+                    if (e.entryType === 'resource') {
+                      if (e.responseEnd === 0) { s.pending++; }
+                      else if (s.pending > 0) { s.pending--; }
+                    }
+                  }
+                });
+                ob.observe({ entryTypes: ['resource'] });
+                const orig = window.XMLHttpRequest.prototype.open;
+                let inflight = 0;
+                window.XMLHttpRequest.prototype.open = function(...args) {
+                  inflight++;
+                  s.pending++;
+                  s.lastActivity = Date.now();
+                  this.addEventListener('loadend', () => {
+                    inflight = Math.max(0, inflight - 1);
+                    s.pending = Math.max(0, s.pending - 1);
+                    s.lastActivity = Date.now();
+                  }, { once: true });
+                  return orig.apply(this, args);
+                };
+                const origFetch = window.fetch;
+                window.fetch = function(...args) {
+                  s.pending++;
+                  s.lastActivity = Date.now();
+                  return origFetch.apply(this, args).then(
+                    (r) => { s.pending = Math.max(0, s.pending - 1); s.lastActivity = Date.now(); return r; },
+                    (e) => { s.pending = Math.max(0, s.pending - 1); s.lastActivity = Date.now(); throw e; }
+                  );
+                };
+              })();
+            `)
+
+            // Poll until pending === 0 and no activity for NETWORK_IDLE_WAIT_MS
+            await new Promise<void>((resolve) => {
+              const deadline = setTimeout(() => {
+                console.warn(
+                  `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} network idle timeout after ${NETWORK_IDLE_TIMEOUT_MS}ms`
+                )
+                clearInterval(poller)
+                resolve()
+              }, NETWORK_IDLE_TIMEOUT_MS)
+
+              const poller = setInterval(() => {
+                webview!
+                  .executeJavaScript(
+                    `JSON.stringify({ pending: window.__hooNetIdle?.pending ?? 0, lastActivity: window.__hooNetIdle?.lastActivity ?? 0 })`
+                  )
+                  .then((raw: string) => {
+                    const state = JSON.parse(raw) as { pending: number; lastActivity: number }
+                    const quietMs = Date.now() - state.lastActivity
+                    if (state.pending <= 0 && quietMs >= NETWORK_IDLE_WAIT_MS) {
+                      clearInterval(poller)
+                      clearTimeout(deadline)
+                      resolve()
+                    }
+                  })
+                  .catch(() => {
+                    // page navigated or crashed — stop waiting
+                    clearInterval(poller)
+                    clearTimeout(deadline)
+                    resolve()
+                  })
+              }, NETWORK_IDLE_POLL_MS)
+            })
+          } catch {
+            // executeJavaScript failed (e.g. page doesn't allow scripts) — fall back to fixed wait
+            await new Promise((r) => setTimeout(r, 1000))
+          }
+
+          // Extra settle delay for late-rendering JS (e.g. client-side hydration)
+          await new Promise((r) => setTimeout(r, 1000))
+        }
+
         console.log(
-          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} page settled url=${webview.getURL()} title="${preview(webview.getTitle(), 90)}"`
+          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} page settled ms=${Date.now() - networkIdleStart} url=${webview.getURL()} title="${preview(webview.getTitle(), 90)}"`
         )
 
         let agentSummary: string | undefined
@@ -370,7 +1035,58 @@ function BrowserPageInner(): React.ReactElement {
           console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} final state sync skipped:`, syncErr)
         }
 
-        // Extract full HTML and convert to markdown for downstream prompt nodes.
+        // Capture text-first context (more reliable for SPAs) plus HTML→markdown fallback.
+        const contextCaptureStart = Date.now()
+        setNodeRuntimeStatus(tabNodeId, 'Browser: extracting page snapshot', true)
+        let visibleText = ''
+        let interactiveElements = ''
+        try {
+          const selectorLiteral = JSON.stringify(INTERACTIVE_SELECTOR)
+          const contextCapture = (await webview.executeJavaScript(`
+            (() => {
+              const sel = ${selectorLiteral};
+              const isVisible = (el) => {
+                const r = el.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0) return false;
+                const style = window.getComputedStyle(el);
+                if (style.display === 'none' || style.visibility === 'hidden') return false;
+                return true;
+              };
+              const bodyText = (document.body && document.body.innerText) || (document.documentElement && document.documentElement.innerText) || '';
+              const text = bodyText.replace(/\\s+/g, ' ').trim().slice(0, 12000);
+              const elements = Array.from(document.querySelectorAll(sel))
+                .filter(isVisible)
+                .slice(0, 120)
+                .map((el, i) => {
+                  const tag = el.tagName.toLowerCase();
+                  const role = el.getAttribute('role') || '';
+                  const text = (el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 80);
+                  const ariaLabel = el.getAttribute('aria-label') || '';
+                  const title = el.getAttribute('title') || '';
+                  const placeholder = el.getAttribute('placeholder') || '';
+                  const href = el.getAttribute('href') || '';
+                  let desc = '[' + i + '] <' + tag + '>';
+                  if (role) desc += ' role=' + role;
+                  if (text) desc += ' text="' + text + '"';
+                  if (ariaLabel) desc += ' aria-label="' + ariaLabel + '"';
+                  if (title) desc += ' title="' + title + '"';
+                  if (placeholder) desc += ' placeholder="' + placeholder + '"';
+                  if (href) desc += ' href="' + href + '"';
+                  return desc;
+                })
+                .join('\\n');
+              return { text, elements };
+            })()
+          `)) as { text?: string; elements?: string }
+          visibleText = (contextCapture?.text ?? '').trim()
+          interactiveElements = (contextCapture?.elements ?? '').trim()
+          console.log(
+            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} context captured ms=${Date.now() - contextCaptureStart} textLen=${visibleText.length} elements=${interactiveElements ? interactiveElements.split('\n').filter(Boolean).length : 0}`
+          )
+        } catch (error) {
+          console.warn(`${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} context capture failed:`, error)
+        }
+
         const htmlCaptureStart = Date.now()
         setNodeRuntimeStatus(tabNodeId, 'Browser: extracting HTML snapshot', true)
         const htmlCapture = (await webview.executeJavaScript(`
@@ -405,13 +1121,24 @@ function BrowserPageInner(): React.ReactElement {
 
         const finalUrl = webview.getURL()
         const finalTitle = webview.getTitle()
-        const snapshot = [
+        const snapshotSections = [
           '[Web Content Snapshot]',
           `URL: ${finalUrl}`,
           `Title: ${finalTitle}`,
-          '',
-          markdown
-        ].join('\n')
+          ''
+        ]
+        if (interactiveElements) {
+          snapshotSections.push('[Interactive Elements]', interactiveElements, '')
+        }
+        if (visibleText) {
+          snapshotSections.push('[Visible Text]', visibleText, '')
+        }
+        if (markdown.trim()) {
+          snapshotSections.push('[DOM Markdown]', markdown)
+        } else if (!visibleText && !interactiveElements) {
+          snapshotSections.push('(No readable page content captured)')
+        }
+        const snapshot = snapshotSections.join('\n')
 
         const output =
           snapshot.length > MAX_OUTPUT_CHARS
@@ -426,7 +1153,7 @@ function BrowserPageInner(): React.ReactElement {
             `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} output truncated from ${snapshot.length} to ${MAX_OUTPUT_CHARS}`
           )
         }
-        setNodeRuntimeStatus(tabNodeId, `Browser complete (${output.length} chars)`, false)
+        setNodeRuntimeStatus(tabNodeId, `Browser complete (${output.length} chars)`, false, output)
         return output
       } catch (err) {
         setNodeRuntimeStatus(
@@ -440,11 +1167,13 @@ function BrowserPageInner(): React.ReactElement {
         console.log(
           `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} complete totalMs=${Date.now() - startTs}`
         )
-        setRunningTabs((prev) => {
-          const next = new Set(prev)
-          next.delete(tabNodeId)
-          return next
-        })
+        if (!usingLiveDialogWebview) {
+          setRunningTabs((prev) => {
+            const next = new Set(prev)
+            next.delete(tabNodeId)
+            return next
+          })
+        }
         reactFlowInstance.setNodes((nds) =>
           nds.map((n) => {
             if (n.id !== tabNodeId) return n
@@ -476,9 +1205,19 @@ function BrowserPageInner(): React.ReactElement {
         )
       }
 
-      executeFromTrigger(nodeId, currentEdges, currentNodes, updateNodeData, undefined, executeBrowserTab)
+      executeFromTrigger(
+        nodeId,
+        currentEdges,
+        currentNodes,
+        updateNodeData,
+        undefined,
+        executeBrowserTab,
+        undefined,
+        undefined,
+        activeBoardId ?? undefined
+      )
     },
-    [reactFlowInstance, executeBrowserTab]
+    [reactFlowInstance, executeBrowserTab, activeBoardId]
   )
 
   const runFromTriggerNode = useCallback(
@@ -490,9 +1229,19 @@ function BrowserPageInner(): React.ReactElement {
           nds.map((n) => (n.id === id ? { ...n, data: updater(n.data as Record<string, unknown>) } : n))
         )
       }
-      await executeFromTrigger(nodeId, currentEdges, currentNodes, updateNodeData, undefined, executeBrowserTab, undefined, runId)
+      await executeFromTrigger(
+        nodeId,
+        currentEdges,
+        currentNodes,
+        updateNodeData,
+        undefined,
+        executeBrowserTab,
+        undefined,
+        runId,
+        activeBoardId ?? undefined
+      )
     },
-    [reactFlowInstance, executeBrowserTab]
+    [reactFlowInstance, executeBrowserTab, activeBoardId]
   )
 
   const handleScheduleTrigger = useCallback(
@@ -594,7 +1343,7 @@ function BrowserPageInner(): React.ReactElement {
         )
       )
       void window.api.graphNodes
-        .update(nodeId, { config: serializedConfig })
+        .update(nodeId, { config: serializedConfig }, activeBoardId ?? undefined)
         .catch((error) => console.error(`${FLOW_TAG} failed to persist form trigger config node=${nodeId}:`, error))
 
       setNodeRuntimeStatus(nodeId, `Form submitted (${submissionOutput.length} chars)`, true)
@@ -618,6 +1367,12 @@ function BrowserPageInner(): React.ReactElement {
         )
       }
 
+      // Pre-seed per-field outputs so field-specific handles resolve correctly
+      const preseededOutputs = new Map<string, string>()
+      for (const field of normalizedFields) {
+        preseededOutputs.set(`${nodeId}:field:${field.key}`, normalizedValues[field.key] ?? '')
+      }
+
       try {
         await executeFromTrigger(
           nodeId,
@@ -626,8 +1381,9 @@ function BrowserPageInner(): React.ReactElement {
           updateNodeData,
           submissionOutput,
           executeBrowserTab,
-          undefined,
-          runId
+          preseededOutputs,
+          runId,
+          activeBoardId ?? undefined
         )
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -635,7 +1391,7 @@ function BrowserPageInner(): React.ReactElement {
         console.error(`${FLOW_TAG} form submit failed node=${nodeId} run=${runId}:`, error)
       }
     },
-    [reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus]
+    [reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus, activeBoardId]
   )
 
   const handleEditScheduleConfig = useCallback(
@@ -761,12 +1517,13 @@ function BrowserPageInner(): React.ReactElement {
           undefined,
           executeBrowserTab,
           preseededOutputs,
-          edgeRunId
+          edgeRunId,
+          activeBoardId ?? undefined
         )
         console.log(`${MONITOR_TAG} run=${monitorRunId} edge execution complete id=${edge.id} graphRun=${edgeRunId}`)
       }
     },
-    [tabs, updateTab, reactFlowInstance, executeBrowserTab]
+    [tabs, updateTab, reactFlowInstance, executeBrowserTab, activeBoardId]
   )
 
   // Called once when AI generates a rule for a monitor — persist it
@@ -980,7 +1737,7 @@ function BrowserPageInner(): React.ReactElement {
         favicon: tab.favicon,
         screenshot: tab.screenshot,
         monitors: parseMonitors(tab),
-        isRunning: runningTabs.has(tab.id),
+        isRunning: runningTabs.has(tab.id) || previewingTabs.has(tab.id),
         onClose: handleClose
       } satisfies BrowserTabNodeData
     }))
@@ -1089,6 +1846,15 @@ function BrowserPageInner(): React.ReactElement {
           }
         }
       }
+      if (gn.nodeType === 'terminal') {
+        return {
+          ...base,
+          data: {
+            label: gn.label || 'Terminal',
+            config
+          }
+        }
+      }
       return { ...base, data: { label: gn.label } }
     })
 
@@ -1106,7 +1872,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} duplicate node ids detected: ${Array.from(duplicateIds).join(', ')}`)
     }
     return mergedNodes
-  }, [tabs, gNodes, runningTabs, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
+  }, [tabs, gNodes, runningTabs, previewingTabs, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
@@ -1167,6 +1933,46 @@ function BrowserPageInner(): React.ReactElement {
     [edges, setEdges, saveEdges]
   )
 
+  const connectingNodeRef = useRef<{ nodeId: string; handleId: string | null } | null>(null)
+
+  const handleConnectStart = useCallback(
+    (_event: MouseEvent | TouchEvent, params: { nodeId: string | null; handleId: string | null }) => {
+      if (params.nodeId) {
+        connectingNodeRef.current = { nodeId: params.nodeId, handleId: params.handleId }
+      }
+    },
+    []
+  )
+
+  const handleConnectEnd = useCallback(
+    (event: MouseEvent | TouchEvent) => {
+      const source = connectingNodeRef.current
+      connectingNodeRef.current = null
+      if (!source) return
+
+      const target = event instanceof MouseEvent ? event.target : (event as TouchEvent).touches?.[0]?.target
+      if (!(target instanceof HTMLElement)) return
+
+      // Walk up the DOM to find a ReactFlow node wrapper
+      const nodeEl = target.closest('.react-flow__node')
+      if (!nodeEl) return
+      const targetNodeId = nodeEl.getAttribute('data-id')
+      if (!targetNodeId || targetNodeId === source.nodeId) return
+
+      // Create a connection from source to the target node's default target handle
+      const connection: Connection = {
+        source: source.nodeId,
+        target: targetNodeId,
+        sourceHandle: source.handleId,
+        targetHandle: null
+      }
+      const newEdges = addEdge(connection, edges)
+      setEdges(newEdges)
+      saveEdges(newEdges)
+    },
+    [edges, setEdges, saveEdges]
+  )
+
   const handleEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
       onEdgesChange(changes)
@@ -1188,7 +1994,10 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      onNodesChange(changes)
+      // Filter out 'remove' changes — deletion is handled via context menu only
+      const filtered = changes.filter((c) => c.type !== 'remove')
+      if (filtered.length === 0) return
+      onNodesChange(filtered)
 
       const positionChanges = changes.filter(
         (c): c is NodePositionChange => c.type === 'position' && c.dragging === false && c.position !== undefined
@@ -1239,11 +2048,16 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleNodeDoubleClick = useCallback(
     (_event: React.MouseEvent, node: Node) => {
-      // Only open dialog for browser tabs (graph nodes handle their own double-click)
+      // Open dialog for browser tabs
       const tab = tabs.find((t) => t.id === node.id)
       if (tab) {
         setSelectedTab(tab)
         setDialogOpen(true)
+        return
+      }
+      // Open interactive terminal for terminal nodes
+      if (node.type === 'terminal') {
+        setTerminalDialogNodeId(node.id)
       }
     },
     [tabs]
@@ -1251,13 +2065,115 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleAddTab = useCallback(
     async (flowX?: number, flowY?: number) => {
-      await createTab({
-        flowX: flowX ?? 100 + Math.random() * 200,
-        flowY: flowY ?? 100 + Math.random() * 200
-      })
+      if (!activeBoardId) return undefined
+      // Center the node on the target position (node origin is top-left)
+      const cx = (flowX ?? 100 + Math.random() * 200) - 120
+      const cy = (flowY ?? 100 + Math.random() * 200) - 84
+      const tab = await createTab({ flowX: cx, flowY: cy })
+      return tab
     },
-    [createTab]
+    [createTab, activeBoardId]
   )
+
+  const handleSidebarTabClick = useCallback(
+    (tabId: string, boardId: string) => {
+      if (boardId !== activeBoardId) {
+        setPendingSidebarTabOpen({ tabId, boardId })
+        void setActiveBoard(boardId)
+        return
+      }
+      const tab = tabs.find((t) => t.id === tabId)
+      if (!tab) return
+      setPendingSidebarTabOpen(null)
+      if (boardView === 'tabs') {
+        boardTabsViewRef.current?.selectTab(tabId)
+      } else {
+        setSelectedTab(tab)
+        setDialogOpen(true)
+      }
+    },
+    [tabs, activeBoardId, setActiveBoard, boardView]
+  )
+
+  const handleSidebarTerminalClick = useCallback(
+    (nodeId: string, boardId: string) => {
+      if (boardId !== activeBoardId) {
+        setPendingSidebarTerminalOpen({ nodeId, boardId })
+        void setActiveBoard(boardId)
+        return
+      }
+      setPendingSidebarTerminalOpen(null)
+      if (boardView === 'tabs') {
+        boardTabsViewRef.current?.selectTab(nodeId)
+      } else {
+        setTerminalDialogNodeId(nodeId)
+      }
+    },
+    [activeBoardId, setActiveBoard, boardView]
+  )
+
+  useEffect(() => {
+    if (!pendingSidebarTabOpen) return
+    if (!activeBoardId || activeBoardId !== pendingSidebarTabOpen.boardId) return
+    const tab = tabs.find((entry) => entry.id === pendingSidebarTabOpen.tabId)
+    if (!tab) return
+    setSelectedTab(tab)
+    setDialogOpen(true)
+    setPendingSidebarTabOpen(null)
+  }, [pendingSidebarTabOpen, activeBoardId, tabs])
+
+  useEffect(() => {
+    if (!pendingSidebarTerminalOpen) return
+    if (!activeBoardId || activeBoardId !== pendingSidebarTerminalOpen.boardId) return
+    const node = gNodes.find((entry) => entry.id === pendingSidebarTerminalOpen.nodeId && entry.nodeType === 'terminal')
+    if (!node) return
+    setTerminalDialogNodeId(node.id)
+    setPendingSidebarTerminalOpen(null)
+  }, [pendingSidebarTerminalOpen, activeBoardId, gNodes])
+
+  const startInlineTerminalEdit = useCallback((nodeId: string, name: string) => {
+    setEditingFolderId(null)
+    setEditingFolderName('')
+    setEditingBoardId(null)
+    setEditingBoardName('')
+    setEditingTerminalId(nodeId)
+    setEditingTerminalName(name)
+  }, [])
+
+  const cancelInlineTerminalEdit = useCallback(() => {
+    setEditingTerminalId(null)
+    setEditingTerminalName('')
+  }, [])
+
+  const saveInlineTerminalEdit = useCallback(async () => {
+    if (!editingTerminalId) return
+    const nodeId = editingTerminalId
+    const nextName = editingTerminalName.trim()
+    setEditingTerminalId(null)
+    setEditingTerminalName('')
+    // Find which board owns this terminal
+    let ownerBoardId: string | null = null
+    for (const [boardId, terminals] of boardTerminalsMap) {
+      if (terminals.some((tn) => tn.id === nodeId)) {
+        ownerBoardId = boardId
+        break
+      }
+    }
+    const allTerminals = Array.from(boardTerminalsMap.values()).flat()
+    const currentName = allTerminals.find((tn) => tn.id === nodeId)?.label ?? ''
+    if (nextName.length === 0 || nextName === currentName || !ownerBoardId) return
+    try {
+      if (ownerBoardId === activeBoardId) {
+        await updateNode(nodeId, { label: nextName })
+      } else {
+        await window.api.graphNodes.update(nodeId, { label: nextName }, ownerBoardId)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename terminal node id=${nodeId}:`, error)
+      window.alert(`Failed to rename terminal: ${message}`)
+    }
+  }, [editingTerminalId, editingTerminalName, boardTerminalsMap, updateNode, activeBoardId])
 
   useEffect(() => {
     const onAddTab = (): void => {
@@ -1275,19 +2191,7 @@ function BrowserPageInner(): React.ReactElement {
       if (event.metaKey || event.ctrlKey || event.altKey) return
       if (event.repeat) return
 
-      const target = event.target as HTMLElement | null
-      if (target) {
-        const tag = target.tagName.toLowerCase()
-        if (
-          tag === 'input' ||
-          tag === 'textarea' ||
-          tag === 'select' ||
-          target.isContentEditable ||
-          target.closest('[contenteditable="true"], [role="textbox"]')
-        ) {
-          return
-        }
-      }
+      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) return
 
       const currentNodes = reactFlowInstance.getNodes()
       if (currentNodes.length === 0) return
@@ -1315,6 +2219,90 @@ function BrowserPageInner(): React.ReactElement {
     }
   }, [reactFlowInstance])
 
+  // Cmd+T / Ctrl+T → add new tab at cursor (or center of canvas)
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key.toLowerCase() !== 't') return
+      if (!(event.metaKey || event.ctrlKey)) return
+      if (event.repeat) return
+      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) return
+
+      event.preventDefault()
+
+      const flowRect = flowContainerRef.current?.getBoundingClientRect()
+      let clientPosition = lastMouseClientPositionRef.current
+
+      // If mouse isn't over the flow canvas, fall back to center
+      if (clientPosition && flowRect) {
+        const inside =
+          clientPosition.x >= flowRect.left &&
+          clientPosition.x <= flowRect.right &&
+          clientPosition.y >= flowRect.top &&
+          clientPosition.y <= flowRect.bottom
+        if (!inside) clientPosition = null
+      }
+
+      if (!clientPosition && flowRect) {
+        clientPosition = {
+          x: flowRect.left + flowRect.width / 2,
+          y: flowRect.top + flowRect.height / 2
+        }
+      }
+      if (!clientPosition) return
+
+      const flowPosition = reactFlowInstance.screenToFlowPosition(clientPosition)
+      void handleAddTab(flowPosition.x, flowPosition.y)
+    }
+
+    window.addEventListener('keydown', onKeyDown)
+    return (): void => {
+      window.removeEventListener('keydown', onKeyDown)
+    }
+  }, [reactFlowInstance, handleAddTab])
+
+  useEffect(() => {
+    const onPaste = (event: ClipboardEvent): void => {
+      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) return
+      const pastedText = event.clipboardData?.getData('text/plain') ?? event.clipboardData?.getData('text') ?? ''
+      const normalizedUrl = normalizePastedUrl(pastedText)
+      if (!normalizedUrl) return
+
+      const flowRect = flowContainerRef.current?.getBoundingClientRect()
+      let clientPosition = lastMouseClientPositionRef.current
+      if (!clientPosition && flowRect) {
+        clientPosition = {
+          x: flowRect.left + flowRect.width / 2,
+          y: flowRect.top + flowRect.height / 2
+        }
+      }
+      if (!clientPosition) return
+
+      if (flowRect) {
+        clientPosition = {
+          x: Math.min(Math.max(clientPosition.x, flowRect.left), flowRect.right),
+          y: Math.min(Math.max(clientPosition.y, flowRect.top), flowRect.bottom)
+        }
+      }
+
+      const flowPosition = reactFlowInstance.screenToFlowPosition(clientPosition)
+      event.preventDefault()
+      void createTab({
+        url: normalizedUrl,
+        flowX: flowPosition.x,
+        flowY: flowPosition.y
+      })
+        .then((createdTab) => hydratePastedTabPreview(createdTab.id, normalizedUrl))
+        .catch((error) => {
+          console.error(`${FLOW_TAG} failed to create tab from paste:`, error)
+        })
+    }
+
+    window.addEventListener('paste', onPaste)
+    return (): void => {
+      window.removeEventListener('paste', onPaste)
+    }
+  }, [createTab, hydratePastedTabPreview, reactFlowInstance])
+
   const handleDialogClose = useCallback(
     (open: boolean) => {
       setDialogOpen(open)
@@ -1325,6 +2313,17 @@ function BrowserPageInner(): React.ReactElement {
     },
     [tabs, selectedTab]
   )
+
+  useEffect(() => {
+    if (!selectedTab) return
+    const updated = tabs.find((tab) => tab.id === selectedTab.id)
+    if (!updated) {
+      setSelectedTab(null)
+      setDialogOpen(false)
+      return
+    }
+    setSelectedTab(updated)
+  }, [tabs, selectedTab])
 
   // ─── Context Menus ──────────────────────────────────────────────────────────
 
@@ -1495,13 +2494,91 @@ function BrowserPageInner(): React.ReactElement {
       undefined,
       executeBrowserTab,
       undefined,
-      runId
+      runId,
+      activeBoardId ?? undefined
     ).catch((error) => {
       const message = error instanceof Error ? error.message : String(error)
       setNodeRuntimeStatus(nodeId, `Manual run failed: ${preview(message, 60)}`, false)
       console.error(`${FLOW_TAG} context execute failed node=${nodeId} run=${runId}:`, error)
     })
-  }, [contextMenu, reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus])
+  }, [contextMenu, reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus, activeBoardId])
+
+  const handleContextRenameNode = useCallback(async () => {
+    const nodeId = contextMenu?.nodeId
+    if (!nodeId) {
+      setContextMenu(null)
+      return
+    }
+
+    const isGraph = nodeId.startsWith('gn-')
+    if (isGraph) {
+      const node = gNodes.find((item) => item.id === nodeId)
+      if (!node) {
+        setContextMenu(null)
+        return
+      }
+      const fallbackName = (
+        {
+          trigger: 'Run',
+          scheduleTrigger: 'Schedule',
+          formTrigger: 'Form Trigger',
+          debug: 'Debug',
+          notification: 'Notify',
+          delay: 'Delay',
+          aiPrompt: 'AI Prompt',
+          text: 'Instructions',
+          output: 'Output',
+          file: 'File',
+          terminal: 'Terminal'
+        } as const
+      )[node.nodeType] ?? 'Node'
+      const currentName = node.label?.trim() || fallbackName
+      const nextName = window.prompt('Rename node', currentName)
+      if (nextName === null) {
+        setContextMenu(null)
+        return
+      }
+      const trimmed = nextName.trim()
+      if (!trimmed || trimmed === currentName) {
+        setContextMenu(null)
+        return
+      }
+      try {
+        await updateNode(nodeId, { label: trimmed })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to rename graph node id=${nodeId}:`, error)
+        window.alert(`Failed to rename node: ${message}`)
+      }
+      setContextMenu(null)
+      return
+    }
+
+    const tab = tabs.find((item) => item.id === nodeId)
+    if (!tab) {
+      setContextMenu(null)
+      return
+    }
+    const currentTitle = tab.title?.trim() || 'New Tab'
+    const nextTitle = window.prompt('Rename tab', currentTitle)
+    if (nextTitle === null) {
+      setContextMenu(null)
+      return
+    }
+    const trimmedTitle = nextTitle.trim()
+    if (!trimmedTitle || trimmedTitle === currentTitle) {
+      setContextMenu(null)
+      return
+    }
+    try {
+      await updateTab(nodeId, { title: trimmedTitle })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename tab id=${nodeId}:`, error)
+      window.alert(`Failed to rename tab: ${message}`)
+    }
+    setContextMenu(null)
+  }, [contextMenu, gNodes, tabs, updateNode, updateTab])
 
   const handleContextDeleteNode = useCallback(async () => {
     if (!contextMenu?.nodeId) {
@@ -1509,6 +2586,14 @@ function BrowserPageInner(): React.ReactElement {
       return
     }
     if (contextMenu.nodeId.startsWith('gn-')) {
+      // Kill orphaned PTY if this is a terminal node
+      const gn = gNodes.find((n) => n.id === contextMenu.nodeId)
+      if (gn?.nodeType === 'terminal') {
+        window.api.terminal.kill(`pty-${contextMenu.nodeId}`).catch(() => {})
+        if (terminalDialogNodeId === contextMenu.nodeId) {
+          setTerminalDialogNodeId(null)
+        }
+      }
       await deleteNode(contextMenu.nodeId)
       // Also remove edges connected to this node
       const currentEdges = reactFlowInstance.getEdges()
@@ -1521,7 +2606,7 @@ function BrowserPageInner(): React.ReactElement {
       await deleteTab(contextMenu.nodeId)
     }
     setContextMenu(null)
-  }, [contextMenu, deleteTab, deleteNode, reactFlowInstance, setEdges, saveEdges])
+  }, [contextMenu, deleteTab, deleteNode, reactFlowInstance, setEdges, saveEdges, gNodes, terminalDialogNodeId])
 
   // ─── Monitor Dialog ─────────────────────────────────────────────────────────
 
@@ -1553,58 +2638,751 @@ function BrowserPageInner(): React.ReactElement {
     [tabs, updateTab]
   )
 
+  // Capture-phase Escape closes the monitor dialog reliably
+  useEffect(() => {
+    if (!monitorNodeId) return
+    const handleEscape = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') {
+        setMonitorNodeId(null)
+      }
+    }
+    window.addEventListener('keydown', handleEscape, true)
+    return (): void => window.removeEventListener('keydown', handleEscape, true)
+  }, [monitorNodeId])
+
   const monitorTab = monitorNodeId ? tabs.find((t) => t.id === monitorNodeId) : null
   const monitorTabMonitors = monitorTab ? parseMonitors(monitorTab) : []
 
   const isBrowserTabNode = contextMenu?.type === 'node' && !contextMenu.nodeId?.startsWith('gn-')
   const isGraphNode = contextMenu?.type === 'node' && contextMenu.nodeId?.startsWith('gn-')
+  const contextTerminalNode = isGraphNode && contextMenu?.nodeId
+    ? gNodes.find((n) => n.id === contextMenu.nodeId?.replace('gn-', '') && n.nodeType === 'terminal')
+    : null
+  const isTerminalNode = !!contextTerminalNode
+
+  const handleContextRestartTerminal = useCallback(() => {
+    if (!contextTerminalNode) return
+    const sessionId = `pty-${contextTerminalNode.id}`
+    window.api.terminal.kill(sessionId).catch(() => {})
+    setContextMenu(null)
+  }, [contextTerminalNode])
+  const handleFlowContainerMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    lastMouseClientPositionRef.current = { x: event.clientX, y: event.clientY }
+  }, [])
+
+  const ungroupedBoards = workspace ? boardsByFolderId.get('__ungrouped__') ?? [] : []
+  const { openChangelog } = useAppActions()
+
+  const startResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    resizeRef.current = { startX: e.clientX, startWidth: sidebarWidth }
+    const onMouseMove = (ev: MouseEvent): void => {
+      if (!resizeRef.current) return
+      const delta = ev.clientX - resizeRef.current.startX
+      const newWidth = Math.max(200, Math.min(480, resizeRef.current.startWidth + delta))
+      setSidebarWidth(newWidth)
+    }
+    const onMouseUp = (): void => {
+      resizeRef.current = null
+      document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseup', onMouseUp)
+    }
+    document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseup', onMouseUp)
+  }, [sidebarWidth])
+
+  const toggleFolderExpanded = useCallback((folderId: string) => {
+    setExpandedFolders((prev) => {
+      const next = new Set(prev)
+      if (next.has(folderId)) {
+        next.delete(folderId)
+      } else {
+        next.add(folderId)
+      }
+      void setSetting('expandedFolders', Array.from(next))
+      return next
+    })
+  }, [setSetting])
+
+  const handleCreateFolder = useCallback(async () => {
+    try {
+      await createFolder()
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to create folder:`, error)
+      window.alert(`Failed to create folder: ${message}`)
+    }
+  }, [createFolder])
+
+  const startInlineFolderEdit = useCallback((folderId: string, name: string) => {
+    setEditingBoardId(null)
+    setEditingBoardName('')
+    setEditingFolderId(folderId)
+    setEditingFolderName(name)
+  }, [])
+
+  const cancelInlineFolderEdit = useCallback(() => {
+    setEditingFolderId(null)
+    setEditingFolderName('')
+  }, [])
+
+  const saveInlineFolderEdit = useCallback(async () => {
+    if (!editingFolderId) return
+    const folderId = editingFolderId
+    const nextName = editingFolderName.trim()
+    const currentName = workspace?.folders.find((folder) => folder.id === folderId)?.name ?? ''
+    setEditingFolderId(null)
+    setEditingFolderName('')
+    if (nextName.length === 0 || nextName === currentName) return
+    try {
+      pendingFolderRenameRef.current = true
+      await renameFolder(folderId, nextName)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename folder id=${folderId}:`, error)
+      window.alert(`Failed to rename folder: ${message}`)
+    } finally {
+      pendingFolderRenameRef.current = false
+    }
+  }, [editingFolderId, editingFolderName, workspace, renameFolder])
+
+  const handleDeleteFolder = useCallback(
+    async (folderId: string, folderName: string) => {
+      const confirmed = window.confirm(
+        `Delete folder "${folderName}"? Boards in this folder will be moved to Ungrouped.`
+      )
+      if (!confirmed) return
+      await deleteFolder(folderId)
+    },
+    [deleteFolder]
+  )
+
+  const handleCreateBoard = useCallback(
+    async (folderId?: string | null) => {
+      try {
+        await createBoard({ folderId: folderId ?? null })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to create board:`, error)
+        window.alert(`Failed to create board: ${message}`)
+      }
+    },
+    [createBoard]
+  )
+
+  const startInlineBoardEdit = useCallback((boardId: string, name: string) => {
+    setEditingFolderId(null)
+    setEditingFolderName('')
+    setEditingBoardId(boardId)
+    setEditingBoardName(name)
+  }, [])
+
+  const cancelInlineBoardEdit = useCallback(() => {
+    setEditingBoardId(null)
+    setEditingBoardName('')
+  }, [])
+
+  const saveInlineBoardEdit = useCallback(async () => {
+    if (!editingBoardId) return
+    const boardId = editingBoardId
+    const nextName = editingBoardName.trim()
+    const currentName = workspace?.boards.find((board) => board.id === boardId)?.name ?? ''
+    setEditingBoardId(null)
+    setEditingBoardName('')
+    if (nextName.length === 0 || nextName === currentName) return
+    try {
+      pendingBoardRenameRef.current = true
+      await renameBoard(boardId, nextName)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to rename board id=${boardId}:`, error)
+      window.alert(`Failed to rename board: ${message}`)
+    } finally {
+      pendingBoardRenameRef.current = false
+    }
+  }, [editingBoardId, editingBoardName, workspace, renameBoard])
+
+  const handleDeleteBoard = useCallback(
+    async (boardId: string, boardName: string) => {
+      const confirmed = window.confirm(`Delete board "${boardName}"?`)
+      if (!confirmed) return
+      await deleteBoard(boardId)
+    },
+    [deleteBoard]
+  )
+
+  const handleSelectBoard = useCallback(
+    async (boardId: string) => {
+      await setActiveBoard(boardId)
+    },
+    [setActiveBoard]
+  )
 
   return (
-    <div className="flex h-full flex-col" onClick={closeContextMenu}>
-      {/* Canvas */}
-      <div className="flex-1">
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          nodeTypes={nodeTypes}
-          onNodesChange={handleNodesChange}
-          onEdgesChange={handleEdgesChange}
-          onConnect={handleConnect}
-          onReconnect={handleReconnect}
-          onNodeDoubleClick={handleNodeDoubleClick}
-          onPaneContextMenu={handlePaneContextMenu}
-          onNodeContextMenu={handleNodeContextMenu}
-          fitView
-          fitViewOptions={{ padding: 0.5 }}
-          minZoom={0.3}
-          maxZoom={2}
-          nodesDraggable={!isMapMode}
-          nodesConnectable={!isMapMode}
-          elementsSelectable={!isMapMode}
-          selectionOnDrag={!isMapMode}
-          selectionMode={isMapMode ? SelectionMode.Full : SelectionMode.Partial}
-          panOnDrag={isMapMode ? [0, 1] : [1]}
-          panOnScroll={!isMapMode}
-          panOnScrollMode={PanOnScrollMode.Free}
-          zoomOnScroll={isMapMode}
-          proOptions={{ hideAttribution: true }}
-        >
-          <Background />
-          <Panel position="bottom-center">
-            <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border">
-              {isMapMode
-                ? 'Map mode: drag to pan and scroll to zoom'
-                : 'Design mode: scroll to pan · drag-select supports partial overlap'}
-            </p>
-          </Panel>
-        </ReactFlow>
+    <div className="flex h-full min-h-0" onClick={closeContextMenu}>
+      {!sidebarCollapsed && (
+        <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border/40 bg-muted/30 flex flex-col min-h-0">
+          <div className="flex items-center justify-between px-3 py-2.5">
+            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace</h2>
+            <div className="flex items-center gap-0.5">
+            <div className="relative" ref={createMenuRef}>
+              <button
+                type="button"
+                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                onClick={() => setCreateMenuOpen((v) => !v)}
+                title="Create new item"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
+              {createMenuOpen && (
+                <div className="absolute left-0 top-full z-50 mt-1 w-36 rounded-md border border-border/40 bg-popover p-1 shadow-sm">
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
+                    onClick={() => { setCreateMenuOpen(false); void handleCreateFolder() }}
+                  >
+                    <Folder className="h-3.5 w-3.5" />
+                    Folder
+                  </button>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
+                    onClick={() => { setCreateMenuOpen(false); void handleCreateBoard(null) }}
+                  >
+                    <Workflow className="h-3.5 w-3.5" />
+                    Board
+                  </button>
+                </div>
+              )}
+            </div>
+            </div>
+          </div>
+
+          <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1">
+            <div className="space-y-0.5">
+              {workspace?.folders.map((folder) => {
+                const folderBoards = boardsByFolderId.get(folder.id) ?? []
+                const expanded = expandedFolders.has(folder.id)
+                return (
+                  <section key={folder.id}>
+                    <div className="group/folderItem flex items-center gap-1 rounded-sm px-2 py-1 hover:bg-accent/60 transition-colors">
+                      {editingFolderId === folder.id ? (
+                        <Input
+                          value={editingFolderName}
+                          onChange={(event) => setEditingFolderName(event.target.value)}
+                          onBlur={() => void saveInlineFolderEdit()}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.currentTarget.blur()
+                              return
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              cancelInlineFolderEdit()
+                            }
+                          }}
+                          className="h-7 flex-1 text-xs"
+                          autoFocus
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="group/folder flex min-w-0 flex-1 items-center gap-1 text-left"
+                          onClick={() => toggleFolderExpanded(folder.id)}
+                          onDoubleClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            startInlineFolderEdit(folder.id, folder.name)
+                          }}
+                        >
+                          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                            {expanded ? <FolderOpen className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" /> : <Folder className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" />}
+                            {expanded ? (
+                              <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
+                            ) : (
+                              <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
+                            )}
+                          </span>
+                          <span className="truncate text-[13px] font-medium">{folder.name}</span>
+                          <span className="text-[10px] text-muted-foreground">{folderBoards.length}</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:text-foreground"
+                        onClick={() => void handleCreateBoard(folder.id)}
+                        title="New board in folder"
+                      >
+                        <Workflow className="h-3.5 w-3.5" />
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:text-destructive"
+                        onClick={() => void handleDeleteFolder(folder.id, folder.name)}
+                        title="Delete folder"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </button>
+                    </div>
+                    {expanded && (
+                      <div className="ml-3 space-y-0.5 border-l border-border/60 pl-2 py-0.5">
+                        {folderBoards.length === 0 ? (
+                          <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
+                        ) : (
+                          <>
+                            {folderBoards.map((board) => {
+                              const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
+                              const collapsed = collapsedBoards.has(board.id)
+                              return (
+                              <div
+                                key={board.id}
+                                className={[
+                                  'group/boardItem rounded-sm px-2 py-1 transition-colors',
+                                  board.id === activeBoardId
+                                    ? 'bg-accent'
+                                    : 'hover:bg-accent/50'
+                                ].join(' ')}
+                              >
+                                <div className="flex items-center gap-1">
+                                  {editingBoardId === board.id ? (
+                                    <Input
+                                      value={editingBoardName}
+                                      onChange={(event) => setEditingBoardName(event.target.value)}
+                                      onBlur={() => void saveInlineBoardEdit()}
+                                      onKeyDown={(event) => {
+                                        if (event.key === 'Enter') {
+                                          event.currentTarget.blur()
+                                          return
+                                        }
+                                        if (event.key === 'Escape') {
+                                          event.preventDefault()
+                                          cancelInlineBoardEdit()
+                                        }
+                                      }}
+                                      className="h-7 flex-1 text-xs"
+                                      autoFocus
+                                    />
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      className="group/board flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
+                                      onClick={() => void handleSelectBoard(board.id)}
+                                      onDoubleClick={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        startInlineBoardEdit(board.id, board.name)
+                                      }}
+                                    >
+                                      <span
+                                        className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                                        onClick={(event) => {
+                                          event.preventDefault()
+                                          event.stopPropagation()
+                                          toggleBoardCollapsed(board.id)
+                                        }}
+                                      >
+                                        <Workflow className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" />
+                                        {collapsed ? (
+                                          <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                        ) : (
+                                          <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                        )}
+                                      </span>
+                                      <span className="truncate">{board.name}</span>
+                                    </button>
+                                  )}
+                                  <button
+                                    type="button"
+                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-destructive"
+                                    onClick={() => void handleDeleteBoard(board.id, board.name)}
+                                    title="Delete board"
+                                  >
+                                    <Trash2 className="h-3 w-3" />
+                                  </button>
+                                </div>
+                                {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
+                                  <div className="ml-5 mt-0.5 space-y-px">
+                                    {bTabs.map((tab) => (
+                                      <button
+                                        key={tab.id}
+                                        type="button"
+                                        onClick={() => handleSidebarTabClick(tab.id, board.id)}
+                                        className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                                      >
+                                        {tab.favicon ? (
+                                          <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
+                                        ) : (
+                                          <Globe className="h-3.5 w-3.5" />
+                                        )}
+                                        <span className="truncate">{tab.title || tab.url || 'New Tab'}</span>
+                                      </button>
+                                    ))}
+                                    {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
+                                      <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors">
+                                        <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                                        {editingTerminalId === tn.id ? (
+                                          <Input
+                                            value={editingTerminalName}
+                                            onChange={(event) => setEditingTerminalName(event.target.value)}
+                                            onBlur={() => void saveInlineTerminalEdit()}
+                                            onKeyDown={(event) => {
+                                              if (event.key === 'Enter') {
+                                                event.currentTarget.blur()
+                                                return
+                                              }
+                                              if (event.key === 'Escape') {
+                                                event.preventDefault()
+                                                cancelInlineTerminalEdit()
+                                              }
+                                            }}
+                                            className="h-5 flex-1 text-xs px-1 py-0"
+                                            autoFocus
+                                          />
+                                        ) : (
+                                          <button
+                                            type="button"
+                                            className="min-w-0 flex-1 truncate text-left"
+                                            onClick={() => handleSidebarTerminalClick(tn.id, board.id)}
+                                            onDoubleClick={(event) => {
+                                              event.preventDefault()
+                                              event.stopPropagation()
+                                              startInlineTerminalEdit(tn.id, tn.label || 'Terminal')
+                                            }}
+                                          >
+                                            {tn.label || 'Terminal'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                              )
+                            })}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </section>
+                )
+              })}
+
+              {ungroupedBoards.map((board) => {
+                const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
+                const collapsed = collapsedBoards.has(board.id)
+                return (
+                  <div
+                    key={board.id}
+                    className={[
+                      'group/boardItem rounded-sm px-2 py-1 transition-colors',
+                      board.id === activeBoardId
+                        ? 'bg-accent'
+                        : 'hover:bg-accent/50'
+                    ].join(' ')}
+                  >
+                    <div className="flex items-center gap-1">
+                      {editingBoardId === board.id ? (
+                        <Input
+                          value={editingBoardName}
+                          onChange={(event) => setEditingBoardName(event.target.value)}
+                          onBlur={() => void saveInlineBoardEdit()}
+                          onKeyDown={(event) => {
+                            if (event.key === 'Enter') {
+                              event.currentTarget.blur()
+                              return
+                            }
+                            if (event.key === 'Escape') {
+                              event.preventDefault()
+                              cancelInlineBoardEdit()
+                            }
+                          }}
+                          className="h-7 flex-1 text-xs"
+                          autoFocus
+                        />
+                      ) : (
+                        <button
+                          type="button"
+                          className="group/board flex min-w-0 flex-1 items-center gap-1.5 truncate text-left text-xs font-medium"
+                          onClick={() => void handleSelectBoard(board.id)}
+                          onDoubleClick={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            startInlineBoardEdit(board.id, board.name)
+                          }}
+                        >
+                          <span
+                            className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
+                            onClick={(event) => {
+                              event.preventDefault()
+                              event.stopPropagation()
+                              toggleBoardCollapsed(board.id)
+                            }}
+                          >
+                            <Workflow className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" />
+                            {collapsed ? (
+                              <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                            ) : (
+                              <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                            )}
+                          </span>
+                          <span className="truncate">{board.name}</span>
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-destructive"
+                        onClick={() => void handleDeleteBoard(board.id, board.name)}
+                        title="Delete board"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                    {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
+                      <div className="ml-5 mt-0.5 space-y-px">
+                        {bTabs.map((tab) => (
+                          <button
+                            key={tab.id}
+                            type="button"
+                            onClick={() => handleSidebarTabClick(tab.id, board.id)}
+                            className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                          >
+                            {tab.favicon ? (
+                              <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
+                            ) : (
+                              <Globe className="h-3.5 w-3.5" />
+                            )}
+                            <span className="truncate">{tab.title || tab.url || 'New Tab'}</span>
+                          </button>
+                        ))}
+                        {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
+                          <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors">
+                            <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                            {editingTerminalId === tn.id ? (
+                              <Input
+                                value={editingTerminalName}
+                                onChange={(event) => setEditingTerminalName(event.target.value)}
+                                onBlur={() => void saveInlineTerminalEdit()}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter') {
+                                    event.currentTarget.blur()
+                                    return
+                                  }
+                                  if (event.key === 'Escape') {
+                                    event.preventDefault()
+                                    cancelInlineTerminalEdit()
+                                  }
+                                }}
+                                className="h-5 flex-1 text-xs px-1 py-0"
+                                autoFocus
+                              />
+                            ) : (
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 truncate text-left"
+                                onClick={() => handleSidebarTerminalClick(tn.id, board.id)}
+                                onDoubleClick={(event) => {
+                                  event.preventDefault()
+                                  event.stopPropagation()
+                                  startInlineTerminalEdit(tn.id, tn.label || 'Terminal')
+                                }}
+                              >
+                                {tn.label || 'Terminal'}
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="border-t border-border/40 px-3 py-2 space-y-0.5">
+            <NavLink
+              to="/settings"
+              className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            >
+              <Settings className="h-3.5 w-3.5" />
+              Settings
+            </NavLink>
+            <button
+              type="button"
+              onClick={openChangelog}
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+            >
+              <ScrollText className="h-3.5 w-3.5" />
+              Changelog
+            </button>
+          </div>
+        </aside>
+      )}
+      {!sidebarCollapsed && (
+        <div
+          className="w-0 shrink-0 relative cursor-col-resize before:absolute before:-left-1 before:top-0 before:bottom-0 before:w-2 before:z-10 hover:before:bg-border/60 active:before:bg-border before:transition-colors"
+          onMouseDown={startResize}
+        />
+      )}
+
+      <div className="flex min-h-0 flex-1 flex-col">
+          <div className="flex items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                onClick={() => setSidebarCollapsed((v) => !v)}
+                title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+              </button>
+              {isSettingsRoute && (
+                <button
+                  type="button"
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  onClick={() => navigate('/')}
+                  title="Back"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+              )}
+              <p className="min-w-0 truncate text-sm font-semibold">
+                {isSettingsRoute ? 'Settings' : workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
+              </p>
+            </div>
+            {!isSettingsRoute && activeBoardId && (
+              <div className="flex shrink-0 items-center gap-2">
+                <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
+                  <button
+                    type="button"
+                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'whiteboard' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => handleBoardViewChange('whiteboard')}
+                    title="Whiteboard"
+                  >
+                    <LayoutGrid className="h-3.5 w-3.5" />
+                    Board
+                  </button>
+                  <button
+                    type="button"
+                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'tabs' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => handleBoardViewChange('tabs')}
+                    title="Tabs"
+                  >
+                    <PanelTop className="h-3.5 w-3.5" />
+                    Tabs
+                  </button>
+                  <button
+                    type="button"
+                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'document' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    onClick={() => handleBoardViewChange('document')}
+                    title="Document"
+                  >
+                    <FileText className="h-3.5 w-3.5" />
+                    Document
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  onClick={() => window.dispatchEvent(new CustomEvent('hoo:browser-add-tab'))}
+                  title="Add tab"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            )}
+          </div>
+          {isSettingsRoute && (
+            <SettingsPage />
+          )}
+          {!isSettingsRoute && boardView === 'whiteboard' && (
+          <FlowDirectionContext.Provider value={flowDirection}>
+          <div ref={flowContainerRef} className="flex-1" onMouseMove={handleFlowContainerMouseMove}>
+            <ReactFlow
+              nodes={nodes}
+              edges={edges}
+              nodeTypes={nodeTypes}
+              onNodesChange={handleNodesChange}
+              onEdgesChange={handleEdgesChange}
+              onConnect={handleConnect}
+              onReconnect={handleReconnect}
+              onConnectStart={handleConnectStart}
+              onConnectEnd={handleConnectEnd}
+              onNodeDoubleClick={handleNodeDoubleClick}
+              onPaneContextMenu={handlePaneContextMenu}
+              onNodeContextMenu={handleNodeContextMenu}
+              fitView
+              fitViewOptions={{ padding: 0.5 }}
+              minZoom={0.3}
+              maxZoom={2}
+              nodesDraggable={!isMapMode}
+              nodesConnectable={!isMapMode}
+              elementsSelectable={!isMapMode}
+              selectionOnDrag={!isMapMode}
+              selectionMode={isMapMode ? SelectionMode.Full : SelectionMode.Partial}
+              panOnDrag={isMapMode ? [0, 1] : [1]}
+              panOnScroll={!isMapMode}
+              panOnScrollMode={PanOnScrollMode.Free}
+              zoomOnScroll={isMapMode}
+              proOptions={{ hideAttribution: true }}
+            >
+              <Background />
+              <Panel position="bottom-center">
+                <div className="flex items-center gap-2">
+                  <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border border-border/40">
+                    {isMapMode
+                      ? 'Map mode: drag to pan and scroll to zoom'
+                      : 'Design mode: scroll to pan · drag-select supports partial overlap'}
+                  </p>
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border border-border/40 hover:text-foreground transition-colors"
+                    onClick={() => void setSetting('flowDirection', flowDirection === 'horizontal' ? 'vertical' : 'horizontal')}
+                    title={`Edge direction: ${flowDirection}`}
+                  >
+                    {flowDirection === 'horizontal' ? '→' : '↓'}
+                  </button>
+                </div>
+              </Panel>
+            </ReactFlow>
+          </div>
+          </FlowDirectionContext.Provider>
+          )}
+          {!isSettingsRoute && boardView === 'tabs' && (
+            <BoardTabsView
+              ref={boardTabsViewRef}
+              tabs={tabs}
+              terminalNodes={terminalNodes}
+              activeBoardId={activeBoardId}
+              onTabUpdate={updateTab}
+              onCreateTab={() => handleAddTab()}
+              onDeleteTab={(id) => void deleteTab(id)}
+              onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
+              onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
+              onUpdateNode={updateNode}
+              workspaceRootDir={workspace?.rootDir}
+            />
+          )}
+          {!isSettingsRoute && boardView === 'document' && (
+            <BoardDocumentView
+              boardId={activeBoardId}
+              html={boardDocHtml}
+              loading={boardDocLoading}
+              tabs={tabs}
+              terminalNodes={terminalNodes}
+              outputNodes={outputNodes}
+              onChange={handleBoardDocHtmlChange}
+              onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
+              onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
+            />
+          )}
       </div>
 
       {/* Context Menu */}
-      {contextMenu && (
+      {contextMenu && boardView === 'whiteboard' && (
         <div
           ref={contextMenuRef}
-          className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[180px] overflow-y-auto rounded-md border bg-popover p-1 shadow-md animate-in fade-in-0 zoom-in-95"
+          className="fixed z-50 max-h-[calc(100vh-16px)] min-w-[180px] overflow-y-auto rounded-md border border-border/40 bg-popover p-1 shadow-sm animate-in fade-in-0 zoom-in-95"
           style={{
             left: contextMenuPosition?.x ?? contextMenu.x,
             top: contextMenuPosition?.y ?? contextMenu.y
@@ -1693,6 +3471,13 @@ function BrowserPageInner(): React.ReactElement {
                 <NotebookPen className="h-4 w-4" />
                 Add Instructions
               </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => handleContextAddGraphNode('terminal', 'Terminal')}
+              >
+                <Terminal className="h-4 w-4" />
+                Add Terminal
+              </button>
 
               <div className="my-1 h-px bg-border" />
 
@@ -1738,6 +3523,13 @@ function BrowserPageInner(): React.ReactElement {
                 <Play className="h-4 w-4" />
                 Execute node
               </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleContextRenameNode()}
+              >
+                <NotebookPen className="h-4 w-4" />
+                Rename tab
+              </button>
               <div className="my-1 h-px bg-border" />
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
@@ -1770,7 +3562,7 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <div className="my-1 h-px bg-border" />
               <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
                 onClick={handleContextDeleteNode}
               >
                 <Trash2 className="h-4 w-4" />
@@ -1787,9 +3579,25 @@ function BrowserPageInner(): React.ReactElement {
                 <Play className="h-4 w-4" />
                 Execute node
               </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleContextRenameNode()}
+              >
+                <NotebookPen className="h-4 w-4" />
+                Rename node
+              </button>
+              {isTerminalNode && (
+                <button
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                  onClick={handleContextRestartTerminal}
+                >
+                  <Terminal className="h-4 w-4" />
+                  Restart terminal
+                </button>
+              )}
               <div className="my-1 h-px bg-border" />
               <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-destructive/10"
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
                 onClick={handleContextDeleteNode}
               >
                 <Trash2 className="h-4 w-4" />
@@ -1804,7 +3612,7 @@ function BrowserPageInner(): React.ReactElement {
       {monitorNodeId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setMonitorNodeId(null)}>
           <div
-            className="w-[400px] rounded-lg border bg-card p-4 shadow-lg space-y-3"
+            className="w-[400px] rounded-lg border border-border/40 bg-card p-4 shadow-sm space-y-3"
             onClick={(e) => e.stopPropagation()}
           >
             <h3 className="text-sm font-semibold">Add Monitor / Watch</h3>
@@ -1820,7 +3628,7 @@ function BrowserPageInner(): React.ReactElement {
                   const isExpanded = expandedMonitorId === m.id
                   const hasRule = !!m.rule
                   return (
-                    <div key={m.id} className="rounded-md border overflow-hidden">
+                    <div key={m.id} className="rounded-md border border-border/40 overflow-hidden">
                       <div className="flex items-center gap-2 px-2 py-1.5 text-xs">
                         <button
                           className="text-muted-foreground hover:text-foreground shrink-0"
@@ -1848,14 +3656,14 @@ function BrowserPageInner(): React.ReactElement {
                         </button>
                       </div>
                       {isExpanded && (
-                        <div className="border-t bg-muted/30 px-2.5 py-2 space-y-1.5">
+                        <div className="border-t border-border/40 bg-muted/20 px-2.5 py-2 space-y-1.5">
                           {hasRule ? (
                             <>
                               <div className="flex items-start gap-1.5">
                                 <Search className="h-3 w-3 text-muted-foreground shrink-0 mt-0.5" />
                                 <div className="min-w-0 flex-1">
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">CSS Selector</p>
-                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border">
+                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border border-border/40">
                                     {m.rule!.cssSelector}
                                   </code>
                                 </div>
@@ -1866,7 +3674,7 @@ function BrowserPageInner(): React.ReactElement {
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">
                                     Regex <span className="normal-case">(group {m.rule!.regexGroup})</span>
                                   </p>
-                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border">
+                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border border-border/40">
                                     /{m.rule!.regex}/
                                   </code>
                                 </div>
@@ -1876,9 +3684,9 @@ function BrowserPageInner(): React.ReactElement {
                                 <div className="min-w-0 flex-1">
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Check</p>
                                   <p className="text-[11px] text-foreground/80 mt-0.5">
-                                    <span className="font-mono bg-background rounded px-1 py-0.5 border">{m.rule!.check}</span>
+                                    <span className="font-mono bg-background rounded px-1 py-0.5 border border-border/40">{m.rule!.check}</span>
                                     {m.rule!.value !== undefined && (
-                                      <span className="ml-1.5 font-mono bg-background rounded px-1 py-0.5 border">{m.rule!.value}</span>
+                                      <span className="ml-1.5 font-mono bg-background rounded px-1 py-0.5 border border-border/40">{m.rule!.value}</span>
                                     )}
                                   </p>
                                 </div>
@@ -1886,7 +3694,7 @@ function BrowserPageInner(): React.ReactElement {
                               {m.lastExtracted !== undefined && (
                                 <div className="mt-1 pt-1.5 border-t">
                                   <p className="text-[9px] text-muted-foreground uppercase tracking-wider">Last extracted value</p>
-                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border max-h-[60px] overflow-auto">
+                                  <code className="block text-[11px] font-mono text-foreground/80 break-all bg-background rounded px-1.5 py-0.5 mt-0.5 border border-border/40 max-h-[60px] overflow-auto">
                                     {m.lastExtracted || <span className="text-muted-foreground/50 italic">(empty)</span>}
                                   </code>
                                 </div>
@@ -1938,6 +3746,43 @@ function BrowserPageInner(): React.ReactElement {
         />
       )}
 
+      {/* Hidden webviews for pasted-tab preview hydration */}
+      {previewingTabs.size > 0 && (
+        <div
+          style={{
+            position: 'absolute',
+            width: '1px',
+            height: '1px',
+            opacity: 0,
+            pointerEvents: 'none',
+            overflow: 'hidden'
+          }}
+        >
+          {Array.from(previewingTabs).map((tabId) => {
+            const tab = tabs.find((item) => item.id === tabId)
+            return (
+              <webview
+                key={`preview-${tabId}`}
+                ref={(el) => {
+                  if (el) {
+                    const wv = el as unknown as Electron.WebviewTag
+                    previewWebviews.current.set(tabId, wv)
+                    wv.addEventListener('focus', () => wv.blur())
+                  } else {
+                    previewWebviews.current.delete(tabId)
+                  }
+                }}
+                src={tab?.url && tab.url !== 'about:blank' ? tab.url : 'about:blank'}
+                partition="persist:browser-tabs"
+                useragent={WEBVIEW_USER_AGENT}
+                tabIndex={-1}
+                style={{ width: '1280px', height: '800px' }}
+              />
+            )
+          })}
+        </div>
+      )}
+
       {/* Hidden webviews for graph-triggered browser tab agent runs */}
       {runningTabs.size > 0 && (
         <div
@@ -1955,7 +3800,9 @@ function BrowserPageInner(): React.ReactElement {
               key={tabId}
               ref={(el) => {
                 if (el) {
-                  triggerWebviews.current.set(tabId, el as unknown as Electron.WebviewTag)
+                  const wv = el as unknown as Electron.WebviewTag
+                  triggerWebviews.current.set(tabId, wv)
+                  wv.addEventListener('focus', () => wv.blur())
                 } else {
                   triggerWebviews.current.delete(tabId)
                 }
@@ -1963,8 +3810,7 @@ function BrowserPageInner(): React.ReactElement {
               src="about:blank"
               partition="persist:browser-tabs"
               useragent={WEBVIEW_USER_AGENT}
-              // @ts-expect-error webview attributes aren't fully typed in React
-              allowpopups="true"
+              tabIndex={-1}
               style={{ width: '1024px', height: '768px' }}
             />
           ))}
@@ -1973,12 +3819,35 @@ function BrowserPageInner(): React.ReactElement {
 
       {/* Dialog */}
       <BrowserTabDialog
+        key={selectedTab?.id ?? 'browser-tab-dialog-empty'}
         tab={selectedTab}
+        boardId={activeBoardId}
         open={dialogOpen}
         onOpenChange={handleDialogClose}
         onTabUpdate={updateTab}
         onRecaptureScreenshot={refresh}
+        onWebviewStateChange={handleDialogWebviewStateChange}
       />
+
+      {(() => {
+        const gn = terminalDialogNodeId ? gNodes.find((n) => n.id === terminalDialogNodeId) : null
+        const cfg = gn ? (parseNodeConfig(gn.config) as TerminalNodeConfig) : {}
+        return (
+          <TerminalDialog
+            key={terminalDialogNodeId ?? 'terminal-dialog-empty'}
+            open={!!terminalDialogNodeId}
+            onOpenChange={(o) => { if (!o) setTerminalDialogNodeId(null) }}
+            sessionId={terminalDialogNodeId ? `pty-${terminalDialogNodeId}` : ''}
+            config={cfg}
+            onUpdateConfig={(nextCfg) => {
+              if (terminalDialogNodeId) {
+                void updateNode(terminalDialogNodeId, { config: JSON.stringify(nextCfg) })
+              }
+            }}
+            workspaceRootDir={workspace?.rootDir}
+          />
+        )
+      })()}
     </div>
   )
 }

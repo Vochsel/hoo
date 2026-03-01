@@ -1,10 +1,7 @@
 import { createContext, useContext, useState } from 'react'
-import { HashRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom'
-import { Plus, ScrollText } from 'lucide-react'
+import { HashRouter, Route, Routes } from 'react-router-dom'
 import { BrowserPage } from '@/pages/browser'
-import { SettingsPage } from '@/pages/settings'
 import { useTheme, type Theme } from '@/hooks/use-theme'
-import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -26,6 +23,16 @@ const ThemeContext = createContext<ThemeContextValue>({
 })
 
 export const useThemeContext = (): ThemeContextValue => useContext(ThemeContext)
+
+interface AppActionsContextValue {
+  openChangelog: () => void
+}
+
+const AppActionsContext = createContext<AppActionsContextValue>({
+  openChangelog: () => {}
+})
+
+export const useAppActions = (): AppActionsContextValue => useContext(AppActionsContext)
 
 interface ChangelogEntry {
   title: string
@@ -72,100 +79,51 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   }
 ]
 
-function NavItem({ to, label }: { to: string; label: string }): React.ReactElement {
-  return (
-    <NavLink
-      to={to}
-      className={({ isActive }) =>
-        [
-          'px-3 py-1.5 rounded-md text-sm font-medium transition-colors no-drag',
-          isActive
-            ? 'bg-primary text-primary-foreground'
-            : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-        ].join(' ')
-      }
-    >
-      {label}
-    </NavLink>
-  )
-}
-
 function AppShell(): React.ReactElement {
-  const location = useLocation()
-  const isBrowserRoute = location.pathname === '/' || location.pathname === '/browser'
   const [changelogOpen, setChangelogOpen] = useState(false)
 
+  const appActions: AppActionsContextValue = {
+    openChangelog: () => setChangelogOpen(true)
+  }
+
   return (
-    <div className="flex h-screen flex-col bg-background">
-      <header className="drag-region border-b px-4 py-3">
-        <div className="titlebar-nav-offset flex items-center justify-between gap-3">
-          <div className="no-drag flex items-center gap-2">
-            <NavItem to="/browser" label="Browser" />
-            <NavItem to="/settings" label="Settings" />
-            <button
-              type="button"
-              className={[
-                'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-colors no-drag',
-                changelogOpen
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground hover:bg-accent'
-              ].join(' ')}
-              onClick={() => setChangelogOpen(true)}
-            >
-              <ScrollText className="h-4 w-4" />
-              Changelog
-            </button>
-          </div>
+    <AppActionsContext.Provider value={appActions}>
+      <div className="flex h-screen flex-col bg-background">
+        <div className="drag-region h-9 shrink-0 border-b border-border/40" />
 
-          {isBrowserRoute ? (
-            <div className="no-drag">
-              <Button
-                size="sm"
-                className="gap-1"
-                onClick={() => {
-                  window.dispatchEvent(new CustomEvent('hoo:browser-add-tab'))
-                }}
-              >
-                <Plus className="h-4 w-4" />
-                Add Tab
-              </Button>
+        <main className="min-h-0 flex-1">
+          <Routes>
+            <Route path="/" element={<BrowserPage />} />
+            <Route path="/browser" element={<BrowserPage />} />
+            <Route path="/settings" element={<BrowserPage />} />
+          </Routes>
+        </main>
+
+        <Dialog open={changelogOpen} onOpenChange={setChangelogOpen}>
+          <DialogContent className="sm:max-w-[760px] max-h-[84vh] overflow-hidden">
+            <DialogHeader>
+              <DialogTitle>Changelog</DialogTitle>
+              <DialogDescription>Recent updates shipped in Hoo.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-3 overflow-y-auto pr-1">
+              {CHANGELOG_ENTRIES.map((entry) => (
+                <section key={`${entry.title}-${entry.date}`} className="rounded-md border bg-card/40 p-3">
+                  <div className="mb-2 flex items-center justify-between gap-2">
+                    <h3 className="text-sm font-semibold">{entry.title}</h3>
+                    <span className="text-[11px] text-muted-foreground">{entry.date}</span>
+                  </div>
+                  <ul className="list-disc space-y-1 pl-4 text-xs text-foreground/90">
+                    {entry.points.map((point) => (
+                      <li key={point}>{point}</li>
+                    ))}
+                  </ul>
+                </section>
+              ))}
             </div>
-          ) : null}
-        </div>
-      </header>
-
-      <main className="min-h-0 flex-1">
-        <Routes>
-          <Route path="/" element={<BrowserPage />} />
-          <Route path="/browser" element={<BrowserPage />} />
-          <Route path="/settings" element={<SettingsPage />} />
-        </Routes>
-      </main>
-
-      <Dialog open={changelogOpen} onOpenChange={setChangelogOpen}>
-        <DialogContent className="sm:max-w-[760px] max-h-[84vh] overflow-hidden">
-          <DialogHeader>
-            <DialogTitle>Changelog</DialogTitle>
-            <DialogDescription>Recent updates shipped in Hoo.</DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3 overflow-y-auto pr-1">
-            {CHANGELOG_ENTRIES.map((entry) => (
-              <section key={`${entry.title}-${entry.date}`} className="rounded-md border bg-card/40 p-3">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold">{entry.title}</h3>
-                  <span className="text-[11px] text-muted-foreground">{entry.date}</span>
-                </div>
-                <ul className="list-disc space-y-1 pl-4 text-xs text-foreground/90">
-                  {entry.points.map((point) => (
-                    <li key={point}>{point}</li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </AppActionsContext.Provider>
   )
 }
 

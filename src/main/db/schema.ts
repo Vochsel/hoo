@@ -36,7 +36,7 @@ export const browserTabMessages = sqliteTable('browser_tab_messages', {
 
 export const graphNodes = sqliteTable('graph_nodes', {
   id: text('id').primaryKey(),
-  nodeType: text('node_type', { enum: ['trigger', 'scheduleTrigger', 'formTrigger', 'debug', 'notification', 'aiPrompt', 'delay', 'text', 'output', 'file'] }).notNull(),
+  nodeType: text('node_type', { enum: ['trigger', 'scheduleTrigger', 'formTrigger', 'debug', 'notification', 'aiPrompt', 'delay', 'text', 'output', 'file', 'terminal'] }).notNull(),
   label: text('label').notNull().default(''),
   config: text('config').notNull().default('{}'),
   flowX: real('flow_x').notNull().default(0),

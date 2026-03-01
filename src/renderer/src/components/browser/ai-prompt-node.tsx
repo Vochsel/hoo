@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
 import { Sparkles, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
 import {
   Dialog,
   DialogContent,
@@ -12,6 +13,7 @@ import {
 } from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
+import { HandleWithTooltip } from './handle-with-tooltip'
 
 export interface AiPromptNodeData {
   label: string
@@ -147,6 +149,10 @@ function AiPromptNodeInner({ id, data, selected }: NodeProps): React.ReactElemen
     }
   }
 
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
+  const targetPos = getTargetPosition(direction)
+
   return (
     <>
       <div
@@ -160,14 +166,16 @@ function AiPromptNodeInner({ id, data, selected }: NodeProps): React.ReactElemen
           setOpen(true)
         }}
       >
-        <Handle
+        <HandleWithTooltip
+          label="Input"
           type="target"
-          position={Position.Left}
+          position={targetPos}
           className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
         />
-        <Handle
+        <HandleWithTooltip
+          label="Response"
           type="source"
-          position={Position.Right}
+          position={sourcePos}
           className="!w-3 !h-3 !bg-purple-500 !border-2 !border-purple-300"
         />
 

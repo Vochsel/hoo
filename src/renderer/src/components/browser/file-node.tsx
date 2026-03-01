@@ -1,7 +1,9 @@
 import { memo, useEffect, useState } from 'react'
-import { type NodeProps, Handle, Position } from '@xyflow/react'
+import { type NodeProps, Position } from '@xyflow/react'
 import { File, FolderOpen, Save, ArrowDownToLine, ArrowUpToLine, AlertTriangle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { HandleWithTooltip } from './handle-with-tooltip'
+import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
 import { Input } from '@/components/ui/input'
 import {
   Dialog,
@@ -82,6 +84,10 @@ function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
     }
   }
 
+  const direction = useFlowDirection()
+  const sourcePos = getSourcePosition(direction)
+  const targetPos = getTargetPosition(direction)
+
   return (
     <>
       <div
@@ -94,14 +100,16 @@ function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
           setOpen(true)
         }}
       >
-        <Handle
+        <HandleWithTooltip
+          label="Input"
           type="target"
-          position={Position.Left}
+          position={targetPos}
           className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
         />
-        <Handle
+        <HandleWithTooltip
+          label="File contents"
           type="source"
-          position={Position.Right}
+          position={sourcePos}
           className="!w-3 !h-3 !bg-cyan-500 !border-2 !border-cyan-300"
         />
 
