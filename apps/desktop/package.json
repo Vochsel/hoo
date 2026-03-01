@@ -3,12 +3,8 @@
   "productName": "Hoo",
   "version": "0.1.0",
   "description": "Extracted Electron browser-automation app (tabs-as-nodes + settings/env + graph execution)",
-  "bin": {
-    "hoo-server": "./scripts/hoo-server.js"
-  },
   "main": "./out/main/index.js",
   "scripts": {
-    "hoo-server": "node ./scripts/hoo-server.js",
     "rebuild:native": "electron-rebuild -f -w better-sqlite3,node-pty",
     "dev": "bun run rebuild:native && electron-vite dev",
     "build": "electron-vite build",
