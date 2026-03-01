@@ -52,6 +52,7 @@ import { executeFromTrigger } from '@/services/graph-executor'
 import { runAgentOnWebview } from '@/services/browser-agent-runner'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
 import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/lib/schedule-cron'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { SettingsPage } from '@/pages/settings'
 import TurndownService from 'turndown'
 
@@ -296,6 +297,9 @@ function BrowserPageInner(): React.ReactElement {
   const [boardDocHtml, setBoardDocHtmlState] = useState('<p></p>')
   const [boardDocLoading, setBoardDocLoading] = useState(false)
   const boardDocSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [boardRootDir, setBoardRootDir] = useState<string | null>(null)
+  const [settingsDialogBoardId, setSettingsDialogBoardId] = useState<string | null>(null)
+  const [settingsDialogRootDir, setSettingsDialogRootDir] = useState('')
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const flowContainerRef = useRef<HTMLDivElement | null>(null)
   const lastMouseClientPositionRef = useRef<{ x: number; y: number } | null>(null)
@@ -488,6 +492,23 @@ function BrowserPageInner(): React.ReactElement {
       })
       .catch(() => {
         if (!cancelled) setBoardView('whiteboard')
+      })
+    return (): void => { cancelled = true }
+  }, [activeBoardId])
+
+  // Load board rootDir when activeBoardId changes
+  useEffect(() => {
+    if (!activeBoardId) {
+      setBoardRootDir(null)
+      return
+    }
+    let cancelled = false
+    void window.api.workspace.getBoardRootDir(activeBoardId)
+      .then((dir) => {
+        if (!cancelled) setBoardRootDir((dir as string) || null)
+      })
+      .catch(() => {
+        if (!cancelled) setBoardRootDir(null)
       })
     return (): void => { cancelled = true }
   }, [activeBoardId])
@@ -3000,6 +3021,19 @@ function BrowserPageInner(): React.ReactElement {
                                   )}
                                   <button
                                     type="button"
+                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
+                                    onClick={() => {
+                                      setSettingsDialogBoardId(board.id)
+                                      void window.api.workspace.getBoardRootDir(board.id).then((dir) => {
+                                        setSettingsDialogRootDir((dir as string) || '')
+                                      })
+                                    }}
+                                    title="Board settings"
+                                  >
+                                    <Settings className="h-3 w-3" />
+                                  </button>
+                                  <button
+                                    type="button"
                                     className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-destructive"
                                     onClick={() => void handleDeleteBoard(board.id, board.name)}
                                     title="Delete board"
@@ -3135,6 +3169,19 @@ function BrowserPageInner(): React.ReactElement {
                           <span className="truncate">{board.name}</span>
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
+                        onClick={() => {
+                          setSettingsDialogBoardId(board.id)
+                          void window.api.workspace.getBoardRootDir(board.id).then((dir) => {
+                            setSettingsDialogRootDir((dir as string) || '')
+                          })
+                        }}
+                        title="Board settings"
+                      >
+                        <Settings className="h-3 w-3" />
+                      </button>
                       <button
                         type="button"
                         className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-destructive"
@@ -3368,6 +3415,7 @@ function BrowserPageInner(): React.ReactElement {
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
               onUpdateNode={updateNode}
               workspaceRootDir={workspace?.rootDir}
+              boardRootDir={boardRootDir}
             />
           )}
           {!isSettingsRoute && boardView === 'document' && (
@@ -3852,9 +3900,61 @@ function BrowserPageInner(): React.ReactElement {
               }
             }}
             workspaceRootDir={workspace?.rootDir}
+            boardRootDir={boardRootDir}
           />
         )
       })()}
+
+      {/* Board Settings Dialog */}
+      <Dialog open={!!settingsDialogBoardId} onOpenChange={(o) => { if (!o) setSettingsDialogBoardId(null) }}>
+        <DialogContent className="sm:max-w-[420px]">
+          <DialogHeader>
+            <DialogTitle>Board Settings</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4 py-2">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Root Directory</label>
+              <p className="text-xs text-muted-foreground">
+                Terminals in this board will start in this directory by default.
+              </p>
+              <div className="flex gap-2">
+                <Input
+                  value={settingsDialogRootDir}
+                  onChange={(e) => setSettingsDialogRootDir(e.target.value)}
+                  placeholder="(none — uses workspace root)"
+                  className="flex-1 text-sm font-mono"
+                />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="shrink-0"
+                  onClick={async () => {
+                    const picked = await window.api.workspace.pickBoardRootDir(settingsDialogRootDir || undefined)
+                    if (picked) setSettingsDialogRootDir(picked as string)
+                  }}
+                >
+                  <FolderOpen className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setSettingsDialogBoardId(null)}>
+              Cancel
+            </Button>
+            <Button onClick={async () => {
+              if (!settingsDialogBoardId) return
+              await window.api.workspace.setBoardRootDir(settingsDialogBoardId, settingsDialogRootDir.trim() || null)
+              if (settingsDialogBoardId === activeBoardId) {
+                setBoardRootDir(settingsDialogRootDir.trim() || null)
+              }
+              setSettingsDialogBoardId(null)
+            }}>
+              Save
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

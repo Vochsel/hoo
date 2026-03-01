@@ -126,7 +126,7 @@
 }
 
 .board-doc-editor-content ul[data-type="taskList"] li {
-  @apply flex items-start gap-2;
+  @apply flex items-center gap-2;
 }
 
 .board-doc-editor-content ul[data-type="taskList"] li label {

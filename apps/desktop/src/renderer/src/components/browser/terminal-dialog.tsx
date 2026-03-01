@@ -15,6 +15,7 @@ interface TerminalDialogProps {
   config: TerminalNodeConfig
   onUpdateConfig: (config: TerminalNodeConfig) => void
   workspaceRootDir?: string
+  boardRootDir?: string | null
 }
 
 export function TerminalDialog({
@@ -23,7 +24,8 @@ export function TerminalDialog({
   config,
   onUpdateConfig,
   sessionId,
-  workspaceRootDir
+  workspaceRootDir,
+  boardRootDir
 }: TerminalDialogProps): React.ReactElement {
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -83,7 +85,7 @@ export function TerminalDialog({
     try {
       const result = await window.api.terminal.spawn(sid, {
         shell: cfg.shell || undefined,
-        cwd: cfg.cwd || workspaceRootDir || undefined,
+        cwd: cfg.cwd || boardRootDir || workspaceRootDir || undefined,
         cols: term.cols || 80,
         rows: term.rows || 24
       })
@@ -103,7 +105,7 @@ export function TerminalDialog({
     } catch (err) {
       term.writeln(`\r\nRestart error: ${err instanceof Error ? err.message : String(err)}`)
     }
-  }, [workspaceRootDir])
+  }, [workspaceRootDir, boardRootDir])
 
   /** Serialize xterm buffer content to a string */
   const serializeBuffer = useCallback((): string => {
@@ -213,7 +215,7 @@ export function TerminalDialog({
             // Spawn fresh PTY
             const result = await window.api.terminal.spawn(sid, {
               shell: cfg.shell || undefined,
-              cwd: cfg.cwd || workspaceRootDir || undefined,
+              cwd: cfg.cwd || boardRootDir || workspaceRootDir || undefined,
               cols: term.cols || 80,
               rows: term.rows || 24
             })
@@ -410,7 +412,7 @@ export function TerminalDialog({
                 <Input
                   value={editCwd}
                   onChange={(e) => setEditCwd(e.target.value)}
-                  placeholder="(defaults to home)"
+                  placeholder={boardRootDir ? `(board: ${boardRootDir})` : '(defaults to home)'}
                   className="text-xs"
                 />
               </div>

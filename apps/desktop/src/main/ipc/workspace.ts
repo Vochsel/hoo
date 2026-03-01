@@ -133,4 +133,43 @@ export function registerWorkspaceHandlers(): void {
     await writeBoardDocument(boardId, doc)
     return { success: true }
   })
+
+  ipcMain.handle('workspace:getBoardRootDir', async (_event, boardId: string) => {
+    if (!(await boardExists(boardId))) {
+      return null
+    }
+    const doc = await readBoardDocument(boardId)
+    return doc.rootDir ?? null
+  })
+
+  ipcMain.handle('workspace:setBoardRootDir', async (_event, boardId: string, rootDir: string | null) => {
+    if (!(await boardExists(boardId))) {
+      throw new Error('Board not found')
+    }
+    const doc = await readBoardDocument(boardId)
+    if (rootDir && rootDir.trim().length > 0) {
+      doc.rootDir = rootDir.trim()
+    } else {
+      delete doc.rootDir
+    }
+    await writeBoardDocument(boardId, doc)
+    return { success: true }
+  })
+
+  ipcMain.handle('workspace:pickBoardRootDir', async (event, defaultPath?: string) => {
+    const parentWindow = BrowserWindow.fromWebContents(event.sender) ?? undefined
+    const result = parentWindow
+      ? await dialog.showOpenDialog(parentWindow, {
+          title: 'Choose board root directory',
+          defaultPath: defaultPath?.trim() || undefined,
+          properties: ['openDirectory', 'createDirectory', 'dontAddToRecent']
+        })
+      : await dialog.showOpenDialog({
+          title: 'Choose board root directory',
+          defaultPath: defaultPath?.trim() || undefined,
+          properties: ['openDirectory', 'createDirectory', 'dontAddToRecent']
+        })
+    if (result.canceled) return null
+    return result.filePaths[0] ?? null
+  })
 }

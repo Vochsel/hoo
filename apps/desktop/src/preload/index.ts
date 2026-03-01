@@ -90,7 +90,10 @@ const api = {
     getBoardActiveView: (boardId: string) => ipcRenderer.invoke('workspace:getBoardActiveView', boardId),
     getBoardDocumentHtml: (boardId: string) => ipcRenderer.invoke('workspace:getBoardDocumentHtml', boardId),
     setBoardDocumentHtml: (boardId: string, html: string) => ipcRenderer.invoke('workspace:setBoardDocumentHtml', boardId, html),
-    setBoardActiveView: (boardId: string, view: string) => ipcRenderer.invoke('workspace:setBoardActiveView', boardId, view)
+    setBoardActiveView: (boardId: string, view: string) => ipcRenderer.invoke('workspace:setBoardActiveView', boardId, view),
+    getBoardRootDir: (boardId: string) => ipcRenderer.invoke('workspace:getBoardRootDir', boardId),
+    setBoardRootDir: (boardId: string, rootDir: string | null) => ipcRenderer.invoke('workspace:setBoardRootDir', boardId, rootDir),
+    pickBoardRootDir: (defaultPath?: string) => ipcRenderer.invoke('workspace:pickBoardRootDir', defaultPath)
   },
 
   terminal: {

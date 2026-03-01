@@ -25,6 +25,7 @@ interface BoardTabsViewProps {
   onOpenTerminal: (nodeId: string) => void
   onUpdateNode: (id: string, data: Record<string, unknown>) => Promise<unknown>
   workspaceRootDir?: string
+  boardRootDir?: string | null
 }
 
 function parseNodeConfig(rawConfig: string): Record<string, unknown> {
@@ -46,7 +47,8 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
   onOpenTab,
   onOpenTerminal,
   onUpdateNode,
-  workspaceRootDir
+  workspaceRootDir,
+  boardRootDir
 }, ref): React.ReactElement {
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     if (tabs.length > 0) return tabs[0].id
@@ -213,7 +215,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
             onUpdateConfig={(nextCfg) => {
               void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
             }}
-            workspaceRootDir={workspaceRootDir}
+            workspaceRootDir={boardRootDir || workspaceRootDir}
           />
         )}
         {!selectedItem && (

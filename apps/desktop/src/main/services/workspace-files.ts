@@ -45,6 +45,7 @@ export interface BoardDocument {
   edges: Array<Record<string, unknown>>
   documentHtml?: string
   activeView?: BoardViewMode
+  rootDir?: string
 }
 
 function parseStringSetting(rawValue: string | null | undefined): string | null {
@@ -272,6 +273,9 @@ function normalizeBoardDocument(raw: unknown): BoardDocument {
   }
   if (isValidBoardViewMode(value.activeView)) {
     doc.activeView = value.activeView
+  }
+  if (typeof value.rootDir === 'string' && value.rootDir.trim().length > 0) {
+    doc.rootDir = value.rootDir
   }
   return doc
 }
