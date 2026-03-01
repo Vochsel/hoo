@@ -20,8 +20,8 @@ import {
   type Connection
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
-import { NavLink } from 'react-router-dom'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { NavLink, useLocation, useNavigate } from 'react-router-dom'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -52,6 +52,7 @@ import { executeFromTrigger } from '@/services/graph-executor'
 import { runAgentOnWebview } from '@/services/browser-agent-runner'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
 import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/lib/schedule-cron'
+import { SettingsPage } from '@/pages/settings'
 import TurndownService from 'turndown'
 
 const MONITOR_TAG = '[browser-monitor]'
@@ -310,6 +311,9 @@ function BrowserPageInner(): React.ReactElement {
   const pendingFolderRenameRef = useRef(false)
   const boardTabsViewRef = useRef<import('@/components/browser/board-tabs-view').BoardTabsViewHandle | null>(null)
   const reactFlowInstance = useReactFlow()
+  const location = useLocation()
+  const navigate = useNavigate()
+  const isSettingsRoute = location.pathname === '/settings'
   const flowInteractionMode: FlowInteractionMode =
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const isMapMode = flowInteractionMode === 'map'
@@ -2816,31 +2820,11 @@ function BrowserPageInner(): React.ReactElement {
 
   return (
     <div className="flex h-full min-h-0" onClick={closeContextMenu}>
-      {sidebarCollapsed && (
-        <div className="flex shrink-0 flex-col items-center border-r border-border/40 bg-muted/30 py-2 px-1">
-          <button
-            type="button"
-            className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-            onClick={() => setSidebarCollapsed(false)}
-            title="Expand sidebar"
-          >
-            <PanelLeftOpen className="h-4 w-4" />
-          </button>
-        </div>
-      )}
       {!sidebarCollapsed && (
         <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border/40 bg-muted/30 flex flex-col min-h-0">
           <div className="flex items-center justify-between px-3 py-2.5">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace</h2>
             <div className="flex items-center gap-0.5">
-              <button
-                type="button"
-                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                onClick={() => setSidebarCollapsed(true)}
-                title="Collapse sidebar"
-              >
-                <PanelLeftClose className="h-3.5 w-3.5" />
-              </button>
             <div className="relative" ref={createMenuRef}>
               <button
                 type="button"
@@ -2882,13 +2866,6 @@ function BrowserPageInner(): React.ReactElement {
                 return (
                   <section key={folder.id}>
                     <div className="group/folderItem flex items-center gap-1 rounded-sm px-2 py-1 hover:bg-accent/60 transition-colors">
-                      <button
-                        type="button"
-                        className="rounded-sm p-0.5 text-muted-foreground/60 hover:text-muted-foreground"
-                        onClick={() => toggleFolderExpanded(folder.id)}
-                      >
-                        {expanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                      </button>
                       {editingFolderId === folder.id ? (
                         <Input
                           value={editingFolderName}
@@ -2910,7 +2887,7 @@ function BrowserPageInner(): React.ReactElement {
                       ) : (
                         <button
                           type="button"
-                          className="flex min-w-0 flex-1 items-center gap-1 text-left"
+                          className="group/folder flex min-w-0 flex-1 items-center gap-1 text-left"
                           onClick={() => toggleFolderExpanded(folder.id)}
                           onDoubleClick={(event) => {
                             event.preventDefault()
@@ -2918,7 +2895,14 @@ function BrowserPageInner(): React.ReactElement {
                             startInlineFolderEdit(folder.id, folder.name)
                           }}
                         >
-                          <FolderOpen className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                            <FolderOpen className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" />
+                            {expanded ? (
+                              <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
+                            ) : (
+                              <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
+                            )}
+                          </span>
                           <span className="truncate text-[13px] font-medium">{folder.name}</span>
                           <span className="text-[10px] text-muted-foreground">{folderBoards.length}</span>
                         </button>
@@ -3243,11 +3227,31 @@ function BrowserPageInner(): React.ReactElement {
 
       <div className="flex min-h-0 flex-1 flex-col">
           <div className="flex items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
-            <p className="min-w-0 truncate text-sm font-semibold">
-              {workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
-            </p>
-            <div className="flex items-center gap-2">
-              {activeBoardId && (
+            <div className="flex items-center gap-2 min-w-0">
+              <button
+                type="button"
+                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                onClick={() => setSidebarCollapsed((v) => !v)}
+                title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
+              </button>
+              {isSettingsRoute && (
+                <button
+                  type="button"
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  onClick={() => navigate('/')}
+                  title="Back"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+              )}
+              <p className="min-w-0 truncate text-sm font-semibold">
+                {isSettingsRoute ? 'Settings' : workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
+              </p>
+            </div>
+            {!isSettingsRoute && activeBoardId && (
+              <div className="flex shrink-0 items-center gap-2">
                 <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
                   <button
                     type="button"
@@ -3277,8 +3281,6 @@ function BrowserPageInner(): React.ReactElement {
                     Document
                   </button>
                 </div>
-              )}
-              {activeBoardId && (
                 <button
                   type="button"
                   className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
@@ -3287,10 +3289,13 @@ function BrowserPageInner(): React.ReactElement {
                 >
                   <Plus className="h-3.5 w-3.5" />
                 </button>
-              )}
-            </div>
+              </div>
+            )}
           </div>
-          {boardView === 'whiteboard' && (
+          {isSettingsRoute && (
+            <SettingsPage />
+          )}
+          {!isSettingsRoute && boardView === 'whiteboard' && (
           <FlowDirectionContext.Provider value={flowDirection}>
           <div ref={flowContainerRef} className="flex-1" onMouseMove={handleFlowContainerMouseMove}>
             <ReactFlow
@@ -3343,7 +3348,7 @@ function BrowserPageInner(): React.ReactElement {
           </div>
           </FlowDirectionContext.Provider>
           )}
-          {boardView === 'tabs' && (
+          {!isSettingsRoute && boardView === 'tabs' && (
             <BoardTabsView
               ref={boardTabsViewRef}
               tabs={tabs}
@@ -3358,7 +3363,7 @@ function BrowserPageInner(): React.ReactElement {
               workspaceRootDir={workspace?.rootDir}
             />
           )}
-          {boardView === 'document' && (
+          {!isSettingsRoute && boardView === 'document' && (
             <BoardDocumentView
               boardId={activeBoardId}
               html={boardDocHtml}

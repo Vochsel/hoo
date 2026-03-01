@@ -30,7 +30,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
   return (
     <div
       className={cn(
-        'group w-[240px] rounded-lg border border-border/60 bg-card shadow-sm transition-all hover:shadow',
+        'group w-[240px] rounded-lg border bg-card shadow transition-all hover:shadow-md',
         selected && 'ring-2 ring-primary'
       )}
     >

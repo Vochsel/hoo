@@ -1,7 +1,6 @@
 import { createContext, useContext, useState } from 'react'
 import { HashRouter, Route, Routes } from 'react-router-dom'
 import { BrowserPage } from '@/pages/browser'
-import { SettingsPage } from '@/pages/settings'
 import { useTheme, type Theme } from '@/hooks/use-theme'
 import {
   Dialog,
@@ -90,13 +89,13 @@ function AppShell(): React.ReactElement {
   return (
     <AppActionsContext.Provider value={appActions}>
       <div className="flex h-screen flex-col bg-background">
-        <div className="drag-region h-3 shrink-0" />
+        <div className="drag-region h-9 shrink-0 border-b border-border/40" />
 
         <main className="min-h-0 flex-1">
           <Routes>
             <Route path="/" element={<BrowserPage />} />
             <Route path="/browser" element={<BrowserPage />} />
-            <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/settings" element={<BrowserPage />} />
           </Routes>
         </main>
 
