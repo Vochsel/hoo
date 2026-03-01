@@ -2219,46 +2219,53 @@ function BrowserPageInner(): React.ReactElement {
     }
   }, [reactFlowInstance])
 
-  // Cmd+T / Ctrl+T → add new tab at cursor (or center of canvas)
+  // Cmd+T / Ctrl+T → add new tab (works across all board views)
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key.toLowerCase() !== 't') return
       if (!(event.metaKey || event.ctrlKey)) return
       if (event.repeat) return
-      if (isEditableTarget(event.target) || isEditableTarget(document.activeElement)) return
 
       event.preventDefault()
 
-      const flowRect = flowContainerRef.current?.getBoundingClientRect()
-      let clientPosition = lastMouseClientPositionRef.current
+      if (boardView === 'whiteboard') {
+        const flowRect = flowContainerRef.current?.getBoundingClientRect()
+        let clientPosition = lastMouseClientPositionRef.current
 
-      // If mouse isn't over the flow canvas, fall back to center
-      if (clientPosition && flowRect) {
-        const inside =
-          clientPosition.x >= flowRect.left &&
-          clientPosition.x <= flowRect.right &&
-          clientPosition.y >= flowRect.top &&
-          clientPosition.y <= flowRect.bottom
-        if (!inside) clientPosition = null
-      }
-
-      if (!clientPosition && flowRect) {
-        clientPosition = {
-          x: flowRect.left + flowRect.width / 2,
-          y: flowRect.top + flowRect.height / 2
+        // If mouse isn't over the flow canvas, fall back to center
+        if (clientPosition && flowRect) {
+          const inside =
+            clientPosition.x >= flowRect.left &&
+            clientPosition.x <= flowRect.right &&
+            clientPosition.y >= flowRect.top &&
+            clientPosition.y <= flowRect.bottom
+          if (!inside) clientPosition = null
         }
-      }
-      if (!clientPosition) return
 
-      const flowPosition = reactFlowInstance.screenToFlowPosition(clientPosition)
-      void handleAddTab(flowPosition.x, flowPosition.y)
+        if (!clientPosition && flowRect) {
+          clientPosition = {
+            x: flowRect.left + flowRect.width / 2,
+            y: flowRect.top + flowRect.height / 2
+          }
+        }
+        if (!clientPosition) return
+
+        const flowPosition = reactFlowInstance.screenToFlowPosition(clientPosition)
+        void handleAddTab(flowPosition.x, flowPosition.y)
+      } else {
+        void handleAddTab().then((tab) => {
+          if (tab && boardView === 'tabs') {
+            boardTabsViewRef.current?.selectTab(tab.id)
+          }
+        })
+      }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return (): void => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [reactFlowInstance, handleAddTab])
+  }, [reactFlowInstance, handleAddTab, boardView])
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent): void => {
