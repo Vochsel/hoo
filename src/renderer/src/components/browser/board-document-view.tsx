@@ -848,7 +848,7 @@ export function BoardDocumentView({
   }
 
   return (
-    <div className="flex flex-1 flex-col min-h-0">
+    <div className="flex flex-1 flex-col min-h-0 bg-card">
       <div className="min-h-0 flex-1 overflow-y-auto px-6 pt-4 pb-16">
         <div className="mx-auto w-full max-w-[720px]">
           {/* Toolbar */}

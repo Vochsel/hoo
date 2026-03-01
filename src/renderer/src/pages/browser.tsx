@@ -3765,7 +3765,9 @@ function BrowserPageInner(): React.ReactElement {
                 key={`preview-${tabId}`}
                 ref={(el) => {
                   if (el) {
-                    previewWebviews.current.set(tabId, el as unknown as Electron.WebviewTag)
+                    const wv = el as unknown as Electron.WebviewTag
+                    previewWebviews.current.set(tabId, wv)
+                    wv.addEventListener('focus', () => wv.blur())
                   } else {
                     previewWebviews.current.delete(tabId)
                   }
@@ -3773,6 +3775,7 @@ function BrowserPageInner(): React.ReactElement {
                 src={tab?.url && tab.url !== 'about:blank' ? tab.url : 'about:blank'}
                 partition="persist:browser-tabs"
                 useragent={WEBVIEW_USER_AGENT}
+                tabIndex={-1}
                 style={{ width: '1280px', height: '800px' }}
               />
             )
@@ -3797,7 +3800,9 @@ function BrowserPageInner(): React.ReactElement {
               key={tabId}
               ref={(el) => {
                 if (el) {
-                  triggerWebviews.current.set(tabId, el as unknown as Electron.WebviewTag)
+                  const wv = el as unknown as Electron.WebviewTag
+                  triggerWebviews.current.set(tabId, wv)
+                  wv.addEventListener('focus', () => wv.blur())
                 } else {
                   triggerWebviews.current.delete(tabId)
                 }
@@ -3805,6 +3810,7 @@ function BrowserPageInner(): React.ReactElement {
               src="about:blank"
               partition="persist:browser-tabs"
               useragent={WEBVIEW_USER_AGENT}
+              tabIndex={-1}
               style={{ width: '1024px', height: '768px' }}
             />
           ))}
