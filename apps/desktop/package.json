@@ -9,7 +9,7 @@
   "main": "./out/main/index.js",
   "scripts": {
     "hoo-server": "node ./scripts/hoo-server.js",
-    "rebuild:native": "electron-rebuild -f -w better-sqlite3,node-pty --module-dir ../../node_modules",
+    "rebuild:native": "electron-rebuild -f -w better-sqlite3,node-pty",
     "dev": "bun run rebuild:native && electron-vite dev",
     "build": "electron-vite build",
     "dist:mac:arm64": "bun run build && electron-builder --mac --arm64 --publish never",
