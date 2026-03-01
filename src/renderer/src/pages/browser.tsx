@@ -2896,7 +2896,7 @@ function BrowserPageInner(): React.ReactElement {
                           }}
                         >
                           <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                            <FolderOpen className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" />
+                            {expanded ? <FolderOpen className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" /> : <Folder className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" />}
                             {expanded ? (
                               <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
                             ) : (
@@ -2925,7 +2925,7 @@ function BrowserPageInner(): React.ReactElement {
                       </button>
                     </div>
                     {expanded && (
-                      <div className="space-y-0.5 pl-4 py-0.5">
+                      <div className="ml-3 space-y-0.5 border-l border-border/60 pl-2 py-0.5">
                         {folderBoards.length === 0 ? (
                           <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
                         ) : (
@@ -3220,7 +3220,7 @@ function BrowserPageInner(): React.ReactElement {
       )}
       {!sidebarCollapsed && (
         <div
-          className="w-1 shrink-0 cursor-col-resize hover:bg-border/60 active:bg-border transition-colors"
+          className="w-0 shrink-0 relative cursor-col-resize before:absolute before:-left-1 before:top-0 before:bottom-0 before:w-2 before:z-10 hover:before:bg-border/60 active:before:bg-border before:transition-colors"
           onMouseDown={startResize}
         />
       )}
