@@ -4,7 +4,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   main: {
-    plugins: [externalizeDepsPlugin({ exclude: ['nanoid'] })],
+    plugins: [externalizeDepsPlugin({ exclude: ['nanoid', 'zod', '@ai-sdk/anthropic', '@ai-sdk/openai', '@ai-sdk/provider', '@ai-sdk/provider-utils', '@ai-sdk/gateway', 'ai'] })],
     resolve: {
       alias: {
         '@main': resolve('src/main')

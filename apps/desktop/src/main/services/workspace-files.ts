@@ -129,6 +129,132 @@ function defaultBoardDocument(): BoardDocument {
   }
 }
 
+function templateTab(title: string, url: string, flowX: number, flowY: number): Record<string, unknown> {
+  const now = new Date().toISOString()
+  return {
+    id: `tab-${randomUUID()}`,
+    title,
+    url,
+    favicon: null,
+    screenshot: null,
+    monitors: null,
+    flowX,
+    flowY,
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+function templateGraphNode(
+  nodeType: string,
+  label: string,
+  config: Record<string, unknown>,
+  flowX: number,
+  flowY: number
+): Record<string, unknown> {
+  const now = new Date().toISOString()
+  return {
+    id: `gn-${randomUUID()}`,
+    nodeType,
+    label,
+    config: JSON.stringify(config),
+    flowX,
+    flowY,
+    createdAt: now,
+    updatedAt: now
+  }
+}
+
+function templateEdge(sourceId: string, targetId: string, sourceHandle?: string): Record<string, unknown> {
+  return {
+    id: `edge-${randomUUID()}`,
+    source: sourceId,
+    target: targetId,
+    ...(sourceHandle ? { sourceHandle } : {})
+  }
+}
+
+async function seedDefaultWorkspace(rootDir: string): Promise<string[]> {
+  const createdFiles: string[] = []
+
+  // ── Folder: Discover ─────────────────────────────────────────
+  const discoverDir = join(rootDir, 'Discover')
+  await fs.mkdir(discoverDir, { recursive: true })
+
+  // Board: News Feed — Hacker News with AI summary trigger
+  const hnTab = templateTab('Hacker News', 'https://news.ycombinator.com', 0, 0)
+  const hnTrigger = templateGraphNode('trigger', 'Summarise', {}, -300, 0)
+  const hnPrompt = templateGraphNode(
+    'aiPrompt',
+    'Summarise HN',
+    { prompt: 'Summarise the top stories on this page. Give a brief one-liner for each of the top 10 stories with their points and comment count.' },
+    -300,
+    200
+  )
+  const hnOutput = templateGraphNode('output', 'Summary', {}, -300, 400)
+  const newsFeedDoc: BoardDocument = {
+    version: 1,
+    tabs: [hnTab],
+    graphNodes: [hnTrigger, hnPrompt, hnOutput],
+    edges: [
+      templateEdge(hnTrigger.id as string, hnTab.id as string),
+      templateEdge(hnTab.id as string, hnPrompt.id as string),
+      templateEdge(hnPrompt.id as string, hnOutput.id as string)
+    ]
+  }
+  const newsFeedPath = join(discoverDir, `News Feed${BOARD_FILE_SUFFIX}`)
+  await fs.writeFile(newsFeedPath, JSON.stringify(newsFeedDoc, null, 2), 'utf8')
+  createdFiles.push(newsFeedPath)
+
+  // Board: Browse — starter tabs for browsing
+  const browseDoc: BoardDocument = {
+    version: 1,
+    tabs: [
+      templateTab('Google', 'https://www.google.com', 0, 0),
+      templateTab('Reddit', 'https://www.reddit.com', 300, 0),
+      templateTab('GitHub Trending', 'https://github.com/trending', 600, 0)
+    ],
+    graphNodes: [],
+    edges: []
+  }
+  const browsePath = join(discoverDir, `Browse${BOARD_FILE_SUFFIX}`)
+  await fs.writeFile(browsePath, JSON.stringify(browseDoc, null, 2), 'utf8')
+  createdFiles.push(browsePath)
+
+  // ── Folder: Work ─────────────────────────────────────────────
+  const workDir = join(rootDir, 'Work')
+  await fs.mkdir(workDir, { recursive: true })
+
+  // Board: Daily — Gmail, Calendar, common work links
+  const dailyDoc: BoardDocument = {
+    version: 1,
+    tabs: [
+      templateTab('Gmail', 'https://mail.google.com', 0, 0),
+      templateTab('Google Calendar', 'https://calendar.google.com', 300, 0),
+      templateTab('Google Drive', 'https://drive.google.com', 600, 0),
+      templateTab('Notion', 'https://www.notion.so', 0, 300)
+    ],
+    graphNodes: [],
+    edges: []
+  }
+  const dailyPath = join(workDir, `Daily${BOARD_FILE_SUFFIX}`)
+  await fs.writeFile(dailyPath, JSON.stringify(dailyDoc, null, 2), 'utf8')
+  createdFiles.push(dailyPath)
+
+  // Board: Research — blank board for research workflows
+  const researchDoc: BoardDocument = {
+    version: 1,
+    tabs: [],
+    graphNodes: [],
+    edges: []
+  }
+  const researchPath = join(workDir, `Research${BOARD_FILE_SUFFIX}`)
+  await fs.writeFile(researchPath, JSON.stringify(researchDoc, null, 2), 'utf8')
+  createdFiles.push(researchPath)
+
+  return createdFiles
+}
+
 function isValidBoardViewMode(v: unknown): v is BoardViewMode {
   return v === 'whiteboard' || v === 'tabs' || v === 'document'
 }
@@ -396,9 +522,13 @@ export async function ensureWorkspaceInitialized(): Promise<void> {
     await migrateLegacyWorkspaceDb(rootDir)
     boardFiles = await listWorkspaceBoardFiles(rootDir)
     if (boardFiles.length === 0) {
-      const filePath = await ensureUniquePath(rootDir, 'Board 1', BOARD_FILE_SUFFIX)
-      await fs.writeFile(filePath, JSON.stringify(defaultBoardDocument(), null, 2), 'utf8')
-      boardFiles = [filePath]
+      const seeded = await seedDefaultWorkspace(rootDir)
+      boardFiles = seeded.length > 0 ? seeded : boardFiles
+      if (boardFiles.length === 0) {
+        const filePath = await ensureUniquePath(rootDir, 'Board 1', BOARD_FILE_SUFFIX)
+        await fs.writeFile(filePath, JSON.stringify(defaultBoardDocument(), null, 2), 'utf8')
+        boardFiles = [filePath]
+      }
     }
   }
 

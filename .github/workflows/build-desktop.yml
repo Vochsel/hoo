@@ -37,25 +37,26 @@ jobs:
       - name: Prepare electron-builder package-manager detection
         run: |
           node -e "const fs=require('node:fs'); const pkg=JSON.parse(fs.readFileSync('package.json','utf8')); delete pkg.packageManager; fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');"
+          node -e "const fs=require('node:fs'); const pkg=JSON.parse(fs.readFileSync('apps/desktop/package.json','utf8')); delete pkg.packageManager; fs.writeFileSync('apps/desktop/package.json', JSON.stringify(pkg, null, 2) + '\n');"
           rm -f bun.lock bun.lockb
 
       - name: Validate icon assets
         run: |
-          test -f build/icon.icns
-          test -f build/icon.ico
-          test -f build/icon.png
+          test -f apps/desktop/build/icon.icns
+          test -f apps/desktop/build/icon.ico
+          test -f apps/desktop/build/icon.png
 
       - name: Build macOS artifacts
-        run: npm run build && npx electron-builder --mac --arm64 --publish never
+        run: cd apps/desktop && npx electron-vite build && npx electron-builder --mac --arm64 --publish never
 
       - name: Upload macOS artifacts
         uses: actions/upload-artifact@v4
         with:
           name: hoo-macos-arm64
           path: |
-            dist/*.dmg
-            dist/*.zip
-            dist/*.yml
+            apps/desktop/dist/*.dmg
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.yml
           if-no-files-found: error
 
   build-windows-x64:
@@ -85,19 +86,19 @@ jobs:
       - name: Validate icon assets
         shell: pwsh
         run: |
-          if (!(Test-Path "build/icon.icns")) { throw "Missing build/icon.icns" }
-          if (!(Test-Path "build/icon.ico")) { throw "Missing build/icon.ico" }
-          if (!(Test-Path "build/icon.png")) { throw "Missing build/icon.png" }
+          if (!(Test-Path "apps/desktop/build/icon.icns")) { throw "Missing apps/desktop/build/icon.icns" }
+          if (!(Test-Path "apps/desktop/build/icon.ico")) { throw "Missing apps/desktop/build/icon.ico" }
+          if (!(Test-Path "apps/desktop/build/icon.png")) { throw "Missing apps/desktop/build/icon.png" }
 
       - name: Build Windows artifacts
-        run: bun run dist:win:x64
+        run: bun run --cwd apps/desktop dist:win:x64
 
       - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
           name: hoo-windows-x64
           path: |
-            dist/*.exe
-            dist/*.zip
-            dist/*.yml
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.zip
+            apps/desktop/dist/*.yml
           if-no-files-found: error
