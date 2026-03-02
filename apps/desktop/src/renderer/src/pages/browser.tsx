@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft } from 'lucide-react'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -282,6 +282,7 @@ function BrowserPageInner(): React.ReactElement {
   const [collapsedBoards, setCollapsedBoards] = useState<Set<string>>(new Set())
   const [boardTabsMap, setBoardTabsMap] = useState<Map<string, BrowserTab[]>>(new Map())
   const [boardTerminalsMap, setBoardTerminalsMap] = useState<Map<string, GraphNode[]>>(new Map())
+  const [boardFilesMap, setBoardFilesMap] = useState<Map<string, GraphNode[]>>(new Map())
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
   const [editingFolderName, setEditingFolderName] = useState('')
   const [editingBoardId, setEditingBoardId] = useState<string | null>(null)
@@ -325,6 +326,7 @@ function BrowserPageInner(): React.ReactElement {
     (getSetting('flowDirection') as string) === 'vertical' ? 'vertical' : 'horizontal'
 
   const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
+  const fileNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'file'), [gNodes])
   const outputNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'output'), [gNodes])
 
   // Hydrate folder/board collapse state once settings have loaded
@@ -387,33 +389,43 @@ function BrowserPageInner(): React.ReactElement {
     return () => { cancelled = true }
   }, [workspace, tabs])
 
-  // Load terminal nodes for non-active boards (sidebar).
+  // Load terminal and file nodes for non-active boards (sidebar).
   // Mirrors the boardTabsMap pattern — only re-fetches when workspace changes.
   useEffect(() => {
     if (!workspace) return
     let cancelled = false
-    const loadOtherBoardTerminals = async (): Promise<void> => {
-      const next = new Map<string, GraphNode[]>()
+    const loadOtherBoardNodes = async (): Promise<void> => {
+      const nextTerminals = new Map<string, GraphNode[]>()
+      const nextFiles = new Map<string, GraphNode[]>()
       for (const board of workspace.boards) {
         if (board.id === activeBoardId) continue
         const allNodes: GraphNode[] = await window.api.graphNodes.list(board.id)
         if (cancelled) return
         const terminals = allNodes.filter((n) => n.nodeType === 'terminal')
-        if (terminals.length > 0) next.set(board.id, terminals)
+        const files = allNodes.filter((n) => n.nodeType === 'file')
+        if (terminals.length > 0) nextTerminals.set(board.id, terminals)
+        if (files.length > 0) nextFiles.set(board.id, files)
       }
-      if (!cancelled) setBoardTerminalsMap((prev) => {
-        const merged = new Map(next)
-        // Preserve active board entry from the other effect
-        const active = prev.get(activeBoardId ?? '')
-        if (active && activeBoardId) merged.set(activeBoardId, active)
-        return merged
-      })
+      if (!cancelled) {
+        setBoardTerminalsMap((prev) => {
+          const merged = new Map(nextTerminals)
+          const active = prev.get(activeBoardId ?? '')
+          if (active && activeBoardId) merged.set(activeBoardId, active)
+          return merged
+        })
+        setBoardFilesMap((prev) => {
+          const merged = new Map(nextFiles)
+          const active = prev.get(activeBoardId ?? '')
+          if (active && activeBoardId) merged.set(activeBoardId, active)
+          return merged
+        })
+      }
     }
-    void loadOtherBoardTerminals()
+    void loadOtherBoardNodes()
     return () => { cancelled = true }
   }, [workspace, activeBoardId])
 
-  // Keep active board's terminal entries in sync from the already-loaded gNodes
+  // Keep active board's terminal and file entries in sync from the already-loaded gNodes
   // (no IPC, no async — just a derived update).
   useEffect(() => {
     if (!activeBoardId) return
@@ -422,6 +434,16 @@ function BrowserPageInner(): React.ReactElement {
       const next = new Map(prev)
       if (terminals.length > 0) {
         next.set(activeBoardId, terminals)
+      } else {
+        next.delete(activeBoardId)
+      }
+      return next
+    })
+    const files = gNodes.filter((n) => n.nodeType === 'file')
+    setBoardFilesMap((prev) => {
+      const next = new Map(prev)
+      if (files.length > 0) {
+        next.set(activeBoardId, files)
       } else {
         next.delete(activeBoardId)
       }
@@ -2080,6 +2102,11 @@ function BrowserPageInner(): React.ReactElement {
       if (node.type === 'terminal') {
         setTerminalDialogNodeId(node.id)
       }
+      // Open file preview in tabs view
+      if (node.type === 'file') {
+        setBoardView('tabs')
+        setTimeout(() => boardTabsViewRef.current?.selectTab(node.id), 0)
+      }
     },
     [tabs]
   )
@@ -2131,6 +2158,17 @@ function BrowserPageInner(): React.ReactElement {
       }
     },
     [activeBoardId, setActiveBoard, boardView]
+  )
+
+  const handleSidebarFileClick = useCallback(
+    (nodeId: string, boardId: string) => {
+      if (boardId !== activeBoardId) {
+        void setActiveBoard(boardId)
+      }
+      setBoardView('tabs')
+      setTimeout(() => boardTabsViewRef.current?.selectTab(nodeId), 0)
+    },
+    [activeBoardId, setActiveBoard]
   )
 
   useEffect(() => {
@@ -2684,9 +2722,13 @@ function BrowserPageInner(): React.ReactElement {
   const isBrowserTabNode = contextMenu?.type === 'node' && !contextMenu.nodeId?.startsWith('gn-')
   const isGraphNode = contextMenu?.type === 'node' && contextMenu.nodeId?.startsWith('gn-')
   const contextTerminalNode = isGraphNode && contextMenu?.nodeId
-    ? gNodes.find((n) => n.id === contextMenu.nodeId?.replace('gn-', '') && n.nodeType === 'terminal')
+    ? gNodes.find((n) => n.id === contextMenu.nodeId && n.nodeType === 'terminal')
     : null
   const isTerminalNode = !!contextTerminalNode
+  const contextFileNode = isGraphNode && contextMenu?.nodeId
+    ? gNodes.find((n) => n.id === contextMenu.nodeId && n.nodeType === 'file')
+    : null
+  const isFileNode = !!contextFileNode
 
   const handleContextRestartTerminal = useCallback(() => {
     if (!contextTerminalNode) return
@@ -2694,6 +2736,13 @@ function BrowserPageInner(): React.ReactElement {
     window.api.terminal.kill(sessionId).catch(() => {})
     setContextMenu(null)
   }, [contextTerminalNode])
+
+  const handleContextShowFileAsTab = useCallback(() => {
+    if (!contextFileNode) return
+    setBoardView('tabs')
+    setTimeout(() => boardTabsViewRef.current?.selectTab(contextFileNode.id), 0)
+    setContextMenu(null)
+  }, [contextFileNode])
   const handleFlowContainerMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     lastMouseClientPositionRef.current = { x: event.clientX, y: event.clientY }
   }, [])
@@ -3041,7 +3090,7 @@ function BrowserPageInner(): React.ReactElement {
                                     <Trash2 className="h-3 w-3" />
                                   </button>
                                 </div>
-                                {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
+                                {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0 || (boardFilesMap.get(board.id) ?? []).length > 0) && (
                                   <div className="ml-5 mt-0.5 space-y-px">
                                     {bTabs.map((tab) => (
                                       <button
@@ -3094,6 +3143,17 @@ function BrowserPageInner(): React.ReactElement {
                                           </button>
                                         )}
                                       </div>
+                                    ))}
+                                    {(boardFilesMap.get(board.id) ?? []).map((fn) => (
+                                      <button
+                                        key={fn.id}
+                                        type="button"
+                                        onClick={() => handleSidebarFileClick(fn.id, board.id)}
+                                        className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                                      >
+                                        <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
+                                        <span className="truncate">{fn.label || 'File'}</span>
+                                      </button>
                                     ))}
                                   </div>
                                 )}
@@ -3191,7 +3251,7 @@ function BrowserPageInner(): React.ReactElement {
                         <Trash2 className="h-3 w-3" />
                       </button>
                     </div>
-                    {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0) && (
+                    {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0 || (boardFilesMap.get(board.id) ?? []).length > 0) && (
                       <div className="ml-5 mt-0.5 space-y-px">
                         {bTabs.map((tab) => (
                           <button
@@ -3244,6 +3304,17 @@ function BrowserPageInner(): React.ReactElement {
                               </button>
                             )}
                           </div>
+                        ))}
+                        {(boardFilesMap.get(board.id) ?? []).map((fn) => (
+                          <button
+                            key={fn.id}
+                            type="button"
+                            onClick={() => handleSidebarFileClick(fn.id, board.id)}
+                            className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                          >
+                            <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
+                            <span className="truncate">{fn.label || 'File'}</span>
+                          </button>
                         ))}
                       </div>
                     )}
@@ -3407,6 +3478,7 @@ function BrowserPageInner(): React.ReactElement {
               ref={boardTabsViewRef}
               tabs={tabs}
               terminalNodes={terminalNodes}
+              fileNodes={fileNodes}
               activeBoardId={activeBoardId}
               onTabUpdate={updateTab}
               onCreateTab={() => handleAddTab()}
@@ -3648,6 +3720,15 @@ function BrowserPageInner(): React.ReactElement {
                 >
                   <Terminal className="h-4 w-4" />
                   Restart terminal
+                </button>
+              )}
+              {isFileNode && (
+                <button
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                  onClick={handleContextShowFileAsTab}
+                >
+                  <File className="h-4 w-4" />
+                  Show as tab
                 </button>
               )}
               <div className="my-1 h-px bg-border" />

@@ -1,6 +1,7 @@
-import { memo, useEffect, useState } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
+import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { type NodeProps } from '@xyflow/react'
 import { File, FolderOpen, Save, ArrowDownToLine, ArrowUpToLine, AlertTriangle } from 'lucide-react'
+import { marked } from 'marked'
 import { Button } from '@/components/ui/button'
 import { HandleWithTooltip } from './handle-with-tooltip'
 import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
@@ -40,6 +41,11 @@ export interface FileNodeData {
   [key: string]: unknown
 }
 
+function getFileExtension(filePath: string): string {
+  const dot = filePath.lastIndexOf('.')
+  return dot >= 0 ? filePath.slice(dot).toLowerCase() : ''
+}
+
 function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
   const { label, config, isRunning, runtimeStatus, onEditConfig, onPickFile } = data as unknown as FileNodeData
   const filePath = config?.filePath || ''
@@ -51,11 +57,60 @@ function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
   const [editPath, setEditPath] = useState(filePath)
   const [editWriteMode, setEditWriteMode] = useState<'overwrite' | 'append'>(writeMode)
 
+  // Live preview state
+  const [fileContent, setFileContent] = useState<string | null>(null)
+  const [fileError, setFileError] = useState<string | null>(null)
+  const watchedPathRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (!open) return
     setEditPath(filePath)
     setEditWriteMode(writeMode)
   }, [open, filePath, writeMode])
+
+  // Watch file for live preview
+  useEffect(() => {
+    if (!filePath) {
+      setFileContent(null)
+      setFileError(null)
+      return
+    }
+
+    let cancelled = false
+    watchedPathRef.current = filePath
+
+    window.api.graphNodes.watchFile(filePath).then((result) => {
+      if (cancelled) return
+      if (result.error) {
+        setFileError(result.error)
+        setFileContent(null)
+      } else {
+        setFileContent(result.content)
+        setFileError(null)
+      }
+    })
+
+    const cleanup = window.api.graphNodes.onFileChanged((data) => {
+      if (data.filePath === filePath && !cancelled) {
+        setFileContent(data.content)
+        setFileError(null)
+      }
+    })
+
+    return () => {
+      cancelled = true
+      cleanup()
+      window.api.graphNodes.unwatchFile(filePath)
+      watchedPathRef.current = null
+    }
+  }, [filePath])
+
+  const ext = useMemo(() => getFileExtension(filePath), [filePath])
+
+  const renderedHtml = useMemo(() => {
+    if (!fileContent || ext !== '.md') return null
+    return marked.parse(fileContent, { gfm: true, breaks: true }) as string
+  }, [fileContent, ext])
 
   const handlePick = async (mode: 'open' | 'save'): Promise<void> => {
     setPicking(mode)
@@ -92,7 +147,7 @@ function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
     <>
       <div
         className={cn(
-          'w-[250px] rounded-lg border bg-card p-3 shadow-sm transition-all hover:shadow-md',
+          'w-[300px] rounded-lg border bg-card p-3 shadow-sm transition-all hover:shadow-md',
           selected && 'ring-2 ring-primary'
         )}
         onDoubleClick={(e) => {
@@ -132,23 +187,40 @@ function FileNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
           Write mode: <span className="font-medium">{writeMode}</span>
         </p>
 
-        {config?.lastError ? (
+        {/* Live file preview */}
+        {filePath && fileError && (
+          <p className="mt-1.5 text-[10px] text-destructive/90 line-clamp-2" title={fileError}>
+            {fileError}
+          </p>
+        )}
+        {filePath && fileContent !== null && !fileError && (
+          <div className="mt-1.5 max-h-[200px] overflow-y-auto rounded border border-border/40 bg-muted/30 p-1.5 text-[10px]">
+            {ext === '.md' && renderedHtml ? (
+              <div
+                className="prose prose-xs dark:prose-invert max-w-none text-[10px] leading-relaxed [&_h1]:text-xs [&_h2]:text-[11px] [&_h3]:text-[10px] [&_p]:my-1 [&_ul]:my-1 [&_ol]:my-1 [&_li]:my-0 [&_pre]:text-[9px] [&_code]:text-[9px]"
+                dangerouslySetInnerHTML={{ __html: renderedHtml }}
+              />
+            ) : ext === '.html' ? (
+              <div
+                className="prose prose-xs dark:prose-invert max-w-none text-[10px] leading-relaxed"
+                dangerouslySetInnerHTML={{ __html: fileContent }}
+              />
+            ) : (
+              <pre className="whitespace-pre-wrap break-all font-mono text-[10px] text-foreground/80">
+                {fileContent.length > 5000 ? fileContent.slice(0, 5000) + '\n...' : fileContent}
+              </pre>
+            )}
+          </div>
+        )}
+        {filePath && fileContent === null && !fileError && (
+          <p className="mt-1.5 text-[10px] text-muted-foreground/50 italic">Loading...</p>
+        )}
+
+        {/* Legacy status info (when no live preview) */}
+        {!filePath && config?.lastError && (
           <p className="mt-1 text-[10px] text-destructive/90 line-clamp-2" title={config.lastError}>
             {config.lastError}
           </p>
-        ) : (
-          <>
-            {config?.lastOperation && (
-              <p className="mt-1 text-[10px] text-muted-foreground/70">
-                Last {config.lastOperation} {config.lastBytes !== undefined ? `(${config.lastBytes} bytes)` : ''}
-              </p>
-            )}
-            {config?.lastReadPreview && (
-              <p className="mt-1 rounded bg-muted/40 px-1.5 py-1 text-[10px] text-foreground/70 line-clamp-3">
-                {config.lastReadPreview}
-              </p>
-            )}
-          </>
         )}
 
         <NodeExecutionFooter

@@ -64,7 +64,18 @@ const api = {
     executeAiPrompt: (nodeId: string, inputData?: string, runId?: string, boardId?: string) =>
       ipcRenderer.invoke('graphNodes:executeAiPrompt', nodeId, inputData, runId, boardId),
     notify: (title: string, body: string, playSound?: boolean) =>
-      ipcRenderer.invoke('graphNodes:notify', title, body, playSound)
+      ipcRenderer.invoke('graphNodes:notify', title, body, playSound),
+    watchFile: (filePath: string) =>
+      ipcRenderer.invoke('graphNodes:watchFile', filePath) as Promise<{ content: string | null; error?: string }>,
+    unwatchFile: (filePath: string) =>
+      ipcRenderer.invoke('graphNodes:unwatchFile', filePath),
+    onFileChanged: (callback: (data: { filePath: string; content: string }) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: { filePath: string; content: string }): void => {
+        callback(data)
+      }
+      ipcRenderer.on('graphNodes:fileChanged', listener)
+      return () => { ipcRenderer.removeListener('graphNodes:fileChanged', listener) }
+    }
   },
 
   browserEdges: {

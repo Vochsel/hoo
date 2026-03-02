@@ -1,14 +1,17 @@
 import { useState, useCallback, useEffect, useImperativeHandle, forwardRef } from 'react'
-import { Globe, Terminal, Plus, X } from 'lucide-react'
+import { Globe, Terminal, File, Plus, X } from 'lucide-react'
 import { BrowserTabContent } from './browser-tab-content'
 import { TerminalContent } from './terminal-content'
+import { FileContent } from './file-content'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import type { GraphNode } from '@/hooks/use-graph-nodes'
 import type { TerminalNodeConfig } from './terminal-node'
+import type { FileNodeConfig } from './file-node'
 
 type TabItem =
   | { kind: 'browser'; tab: BrowserTab }
   | { kind: 'terminal'; node: GraphNode }
+  | { kind: 'file'; node: GraphNode }
 
 export interface BoardTabsViewHandle {
   selectTab: (id: string) => void
@@ -17,6 +20,7 @@ export interface BoardTabsViewHandle {
 interface BoardTabsViewProps {
   tabs: BrowserTab[]
   terminalNodes: GraphNode[]
+  fileNodes: GraphNode[]
   activeBoardId: string | null
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
   onCreateTab: () => Promise<BrowserTab | void>
@@ -40,6 +44,7 @@ function parseNodeConfig(rawConfig: string): Record<string, unknown> {
 export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>(function BoardTabsView({
   tabs,
   terminalNodes,
+  fileNodes,
   activeBoardId,
   onTabUpdate,
   onCreateTab,
@@ -53,6 +58,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     if (tabs.length > 0) return tabs[0].id
     if (terminalNodes.length > 0) return terminalNodes[0].id
+    if (fileNodes.length > 0) return fileNodes[0].id
     return null
   })
 
@@ -62,7 +68,8 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
 
   const allItems: TabItem[] = [
     ...tabs.map((tab): TabItem => ({ kind: 'browser', tab })),
-    ...terminalNodes.map((node): TabItem => ({ kind: 'terminal', node }))
+    ...terminalNodes.map((node): TabItem => ({ kind: 'terminal', node })),
+    ...fileNodes.map((node): TabItem => ({ kind: 'file', node }))
   ]
 
   const selectedItem = allItems.find((item) => {
@@ -98,7 +105,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
     setSelectedId(id)
   }, [])
 
-  const handleCloseTab = useCallback((e: React.MouseEvent, id: string, kind: 'browser' | 'terminal') => {
+  const handleCloseTab = useCallback((e: React.MouseEvent, id: string, kind: 'browser' | 'terminal' | 'file') => {
     e.stopPropagation()
     if (kind === 'browser') {
       onDeleteTab(id)
@@ -143,7 +150,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
           const isSelected = id === selectedId
           const title = item.kind === 'browser'
             ? (item.tab.title || item.tab.url || 'New Tab')
-            : (item.node.label || 'Terminal')
+            : (item.node.label || (item.kind === 'terminal' ? 'Terminal' : 'File'))
           const favicon = item.kind === 'browser' ? item.tab.favicon : null
 
           return (
@@ -158,7 +165,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
               onClick={() => handleSelectTab(id)}
               onDoubleClick={() => {
                 if (item.kind === 'browser') onOpenTab(item.tab)
-                else onOpenTerminal(item.node.id)
+                else if (item.kind === 'terminal') onOpenTerminal(item.node.id)
               }}
               title={title}
             >
@@ -168,8 +175,10 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
                 ) : (
                   <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                 )
-              ) : (
+              ) : item.kind === 'terminal' ? (
                 <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+              ) : (
+                <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
               )}
               <span className="truncate">{title}</span>
               {item.kind === 'browser' && (
@@ -216,6 +225,16 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
               void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
             }}
             workspaceRootDir={boardRootDir || workspaceRootDir}
+          />
+        )}
+        {selectedItem?.kind === 'file' && (
+          <FileContent
+            key={selectedItem.node.id}
+            nodeId={selectedItem.node.id}
+            config={parseNodeConfig(selectedItem.node.config) as FileNodeConfig}
+            onUpdateConfig={(nextCfg) => {
+              void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
+            }}
           />
         )}
         {!selectedItem && (

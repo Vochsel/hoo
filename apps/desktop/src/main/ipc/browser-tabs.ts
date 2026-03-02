@@ -1,6 +1,7 @@
 import { ipcMain, webContents, Notification, dialog, BrowserWindow, nativeImage } from 'electron'
 import { exec } from 'child_process'
 import { promises as fs } from 'node:fs'
+import { watch as fsWatch, type FSWatcher } from 'node:fs'
 import { dirname } from 'node:path'
 import { eq, asc } from 'drizzle-orm'
 import { nanoid } from 'nanoid'
@@ -1506,6 +1507,59 @@ export function registerBrowserTabHandlers(): void {
       const msg = error instanceof Error ? error.message : String(error)
       console.error(`${TAG} Notification failed title="${preview(title)}" error=${msg}`, error)
       return { success: false, error: msg }
+    }
+  })
+
+  // ── File watching ──────────────────────────────────────────────────────
+
+  const fileWatchers = new Map<string, { watcher: FSWatcher; refCount: number; debounceTimer: ReturnType<typeof setTimeout> | null }>()
+
+  function broadcastFileChanged(filePath: string, content: string): void {
+    for (const wc of webContents.getAllWebContents()) {
+      wc.send('graphNodes:fileChanged', { filePath, content })
+    }
+  }
+
+  ipcMain.handle('graphNodes:watchFile', async (_event, filePath: string) => {
+    try {
+      const content = await fs.readFile(filePath, 'utf-8')
+      const existing = fileWatchers.get(filePath)
+      if (existing) {
+        existing.refCount++
+        return { content }
+      }
+
+      const watcher = fsWatch(filePath, () => {
+        const entry = fileWatchers.get(filePath)
+        if (!entry) return
+        if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
+        entry.debounceTimer = setTimeout(async () => {
+          try {
+            const updated = await fs.readFile(filePath, 'utf-8')
+            broadcastFileChanged(filePath, updated)
+          } catch {
+            // File may have been deleted/moved — send empty
+            broadcastFileChanged(filePath, '')
+          }
+        }, 300)
+      })
+
+      fileWatchers.set(filePath, { watcher, refCount: 1, debounceTimer: null })
+      return { content }
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error)
+      return { content: null, error: msg }
+    }
+  })
+
+  ipcMain.handle('graphNodes:unwatchFile', async (_event, filePath: string) => {
+    const entry = fileWatchers.get(filePath)
+    if (!entry) return
+    entry.refCount--
+    if (entry.refCount <= 0) {
+      if (entry.debounceTimer) clearTimeout(entry.debounceTimer)
+      entry.watcher.close()
+      fileWatchers.delete(filePath)
     }
   })
 }
