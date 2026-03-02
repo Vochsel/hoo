@@ -15,26 +15,49 @@ import {
 import { useGitHubStars } from './useGitHubStars'
 import { useTheme } from './useTheme'
 
+function OwlLogo({ className = 'w-8 h-8' }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 48 48"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="3.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M13 15 L9 8" />
+      <path d="M35 15 L39 8" />
+      <path d="M13 15 C6 19 3 26 3 33 C3 41 12 46 24 46 C36 46 45 41 45 33 C45 26 42 19 35 15 C31 11 28 9 24 9 C20 9 17 11 13 15 Z" />
+      <circle cx="16" cy="28" r="7" />
+      <circle cx="16" cy="28" r="3" fill="currentColor" stroke="none" />
+      <circle cx="32" cy="28" r="7" />
+      <circle cx="32" cy="28" r="3" fill="currentColor" stroke="none" />
+      <path d="M21 35 L24 40 L27 35" />
+    </svg>
+  )
+}
+
 const features = [
   {
     icon: Layers,
     title: 'Spatial Canvas',
-    description: 'Arrange your tabs as nodes on an infinite canvas. Group, connect, and navigate visually.'
+    description: 'Arrange tabs as nodes on an infinite canvas. Group, connect, and navigate visually.'
   },
   {
     icon: Bot,
-    title: 'AI Agent Integration',
-    description: 'Built-in AI agents that can browse, extract, and act across your open tabs autonomously.'
+    title: 'AI Agents',
+    description: 'Built-in agents that browse, extract, and act across your open tabs autonomously.'
   },
   {
     icon: Workflow,
     title: 'Visual Workflows',
-    description: 'Connect tabs into executable graphs. Automate multi-step browser tasks with drag and drop.'
+    description: 'Wire tabs into executable graphs. Automate multi-step browser tasks with drag and drop.'
   },
   {
     icon: Globe,
     title: 'Full Browser Engine',
-    description: 'Chromium-powered webviews with dev tools, extensions support, and full web compatibility.'
+    description: 'Chromium-powered webviews with dev tools, extensions, and full web compatibility.'
   },
   {
     icon: MonitorSmartphone,
@@ -57,7 +80,10 @@ export default function App() {
       <div className="min-h-screen">
         {/* Nav */}
         <nav className="flex items-center justify-between px-6 py-4 max-w-6xl mx-auto">
-          <span className="text-lg font-semibold tracking-tight">Hoo</span>
+          <div className="flex items-center gap-2">
+            <OwlLogo className="w-7 h-7" />
+            <span className="text-lg font-semibold tracking-tight">Hoo</span>
+          </div>
           <div className="flex items-center gap-3">
             <a
               href="https://github.com/Vochsel/hoo"
@@ -85,15 +111,16 @@ export default function App() {
 
         {/* Hero */}
         <section className="flex flex-col items-center text-center px-6 pt-24 pb-32 max-w-3xl mx-auto overflow-visible">
+          <OwlLogo className="w-20 h-20 mb-6 text-neutral-800 dark:text-neutral-200" />
           <h1
             className="text-5xl sm:text-6xl font-bold tracking-tight leading-[1.1]"
             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
           >
-            Spatial Tabs
+            Hoo
           </h1>
           <p className="mt-4 text-lg sm:text-xl text-neutral-500 dark:text-neutral-400 max-w-xl">
-            The true browser for AI. Arrange tabs on a canvas, wire them into workflows, and let
-            agents do the rest.
+            A visual workspace for browser automation. Tabs, terminals, files, and AI
+            agents &mdash; all on one canvas.
           </p>
           <div className="flex gap-3 mt-8">
             <a
@@ -120,7 +147,7 @@ export default function App() {
           <div className="mt-16 w-[200%] max-w-none">
             <img
               src="/hero.png"
-              alt="Hoo — Spatial Tabs"
+              alt="Hoo — Visual Browser Workspace"
               className="w-full"
             />
           </div>
@@ -170,7 +197,10 @@ export default function App() {
 
         {/* Footer */}
         <footer className="border-t border-neutral-200/60 dark:border-neutral-800/60 py-8 text-center text-sm text-neutral-400 dark:text-neutral-600">
-          Hoo &mdash; Open Source
+          <div className="flex items-center justify-center gap-2">
+            <OwlLogo className="w-4 h-4" />
+            <span>Hoo &mdash; Open Source</span>
+          </div>
         </footer>
       </div>
     </>
