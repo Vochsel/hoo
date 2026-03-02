@@ -86,9 +86,24 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
   }, [selectedId, selectedItem, allItems])
 
   // Cmd+1-9 keyboard shortcuts to switch tabs
+  // Ctrl+Tab / Ctrl+Shift+Tab to cycle next/previous tab
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (!e.metaKey && !e.ctrlKey) return
+
+      // Ctrl+Tab / Ctrl+Shift+Tab to cycle tabs
+      if (e.ctrlKey && e.key === 'Tab' && allItems.length > 0) {
+        e.preventDefault()
+        const currentIndex = allItems.findIndex((item) =>
+          item.kind === 'browser' ? item.tab.id === selectedId : item.node.id === selectedId
+        )
+        const direction = e.shiftKey ? -1 : 1
+        const nextIndex = (currentIndex + direction + allItems.length) % allItems.length
+        const target = allItems[nextIndex]
+        setSelectedId(target.kind === 'browser' ? target.tab.id : target.node.id)
+        return
+      }
+
       const num = parseInt(e.key, 10)
       if (num < 1 || num > 9 || isNaN(num)) return
       const index = num - 1
@@ -99,7 +114,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [allItems])
+  }, [allItems, selectedId])
 
   const handleSelectTab = useCallback((id: string) => {
     setSelectedId(id)
