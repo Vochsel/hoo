@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   Layers,
   Bot,
@@ -35,6 +36,42 @@ function OwlLogo({ className = 'w-8 h-8' }: { className?: string }) {
       <circle cx="32" cy="28" r="3" fill="currentColor" stroke="none" />
       <path d="M21 35 L24 40 L27 35" />
     </svg>
+  )
+}
+
+const viewModes = [
+  { key: 'whiteboard', label: 'Whiteboard', src: '/hero.png' },
+  { key: 'document', label: 'Document', src: '/document.png' },
+  { key: 'tabs', label: 'Tabs', src: '/tabs.png' },
+] as const
+
+function ViewModeSwitcher() {
+  const [active, setActive] = useState<string>('whiteboard')
+  const current = viewModes.find((m) => m.key === active)!
+
+  return (
+    <div className="mt-24 w-[200%] max-w-none flex flex-col items-center gap-6">
+      <div className="flex gap-2 relative z-10 mb-[-12px]">
+        {viewModes.map((mode) => (
+          <button
+            key={mode.key}
+            onClick={() => setActive(mode.key)}
+            className={`px-4 py-1.5 rounded-full text-sm font-medium transition-colors ${
+              active === mode.key
+                ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900'
+                : 'text-neutral-400 dark:text-neutral-500 hover:text-neutral-600 dark:hover:text-neutral-300'
+            }`}
+          >
+            {mode.label}
+          </button>
+        ))}
+      </div>
+      <img
+        src={current.src}
+        alt={`${current.label} view`}
+        className="w-full"
+      />
+    </div>
   )
 }
 
@@ -82,7 +119,7 @@ export default function App() {
         <nav className="flex items-center justify-between px-6 py-4 max-w-6xl mx-auto">
           <div className="flex items-center gap-2">
             <OwlLogo className="w-7 h-7" />
-            <span className="text-lg tracking-tight" style={{ fontFamily: "'DM Serif Display', serif" }}>Hoo</span>
+            <span className="text-xl tracking-tight" style={{ fontFamily: "'Pacifico', cursive" }}>Hoo</span>
           </div>
           <div className="flex items-center gap-3">
             <a
@@ -111,15 +148,6 @@ export default function App() {
 
         {/* Hero */}
         <section className="flex flex-col items-center text-center px-6 pt-24 pb-32 max-w-3xl mx-auto overflow-visible">
-          <div className="flex items-center gap-4 mb-6">
-            <OwlLogo className="w-16 h-16 text-neutral-800 dark:text-neutral-200" />
-            <span
-              className="text-5xl sm:text-6xl tracking-tight"
-              style={{ fontFamily: "'DM Serif Display', serif" }}
-            >
-              Hoo
-            </span>
-          </div>
           <h1
             className="text-5xl sm:text-6xl font-bold tracking-tight leading-[1.1]"
             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
@@ -151,14 +179,8 @@ export default function App() {
             </a>
           </div>
 
-          {/* Hero Image */}
-          <div className="mt-16 w-[200%] max-w-none">
-            <img
-              src="/hero.png"
-              alt="Hoo — Visual Browser Workspace"
-              className="w-full"
-            />
-          </div>
+          {/* View Mode Switcher */}
+          <ViewModeSwitcher />
         </section>
 
         {/* Features */}
