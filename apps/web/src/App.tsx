@@ -205,14 +205,8 @@ export default function App() {
           <h2 className="text-2xl sm:text-3xl font-semibold tracking-tight text-center mb-12">Why a Browser?</h2>
           <div className="space-y-6 text-base sm:text-lg leading-relaxed text-neutral-600 dark:text-neutral-400">
             <p>
-              APIs seem great on paper. But after two years of wrangling OAuth logins and
-              integrations, the reality is clear: there are too many gaps in API coverage, too many
-              tools with no programmatic access at all. Browser-use is the real path to automating
-              knowledge work.
-            </p>
-            <p>
               Hoo starts from a simple idea &mdash; <em>tabs as nodes</em>. Inspired by the power of
-              node graphs in tools like Houdini, where complexity is tamed through visual,
+              node graphs in tools like <a href="https://www.sidefx.com" target="_blank" rel="noopener noreferrer" className="underline hover:text-neutral-900 dark:hover:text-white transition-colors">Houdini</a>, where complexity is tamed through visual,
               hierarchical abstraction. Every tab becomes a step. Every connection becomes a workflow.
               Every workflow becomes repeatable and introspectable.
             </p>
@@ -220,6 +214,12 @@ export default function App() {
               This isn't just a browser with AI bolted on. It's a spatial interface where humans and
               agents collaborate in the same canvas, on the same tasks, using the same web everyone
               already knows.
+            </p>
+            <p>
+              APIs seem great on paper. But after two years of wrangling OAuth logins and
+              integrations, the reality is clear: there are too many gaps in API coverage, too many
+              tools with no programmatic access at all. Browser-use is the real path to automating
+              knowledge work.
             </p>
             <p className="text-neutral-900 dark:text-white font-medium">&mdash; Ben</p>
           </div>
