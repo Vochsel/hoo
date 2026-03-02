@@ -82,7 +82,7 @@ export default function App() {
         <nav className="flex items-center justify-between px-6 py-4 max-w-6xl mx-auto">
           <div className="flex items-center gap-2">
             <OwlLogo className="w-7 h-7" />
-            <span className="text-lg font-semibold tracking-tight">Hoo</span>
+            <span className="text-lg tracking-tight" style={{ fontFamily: "'DM Serif Display', serif" }}>Hoo</span>
           </div>
           <div className="flex items-center gap-3">
             <a
@@ -111,16 +111,24 @@ export default function App() {
 
         {/* Hero */}
         <section className="flex flex-col items-center text-center px-6 pt-24 pb-32 max-w-3xl mx-auto overflow-visible">
-          <OwlLogo className="w-20 h-20 mb-6 text-neutral-800 dark:text-neutral-200" />
+          <div className="flex items-center gap-4 mb-6">
+            <OwlLogo className="w-16 h-16 text-neutral-800 dark:text-neutral-200" />
+            <span
+              className="text-5xl sm:text-6xl tracking-tight"
+              style={{ fontFamily: "'DM Serif Display', serif" }}
+            >
+              Hoo
+            </span>
+          </div>
           <h1
             className="text-5xl sm:text-6xl font-bold tracking-tight leading-[1.1]"
             style={{ fontFamily: "'Space Grotesk', sans-serif" }}
           >
-            Hoo
+            Spatial Tabs
           </h1>
           <p className="mt-4 text-lg sm:text-xl text-neutral-500 dark:text-neutral-400 max-w-xl">
-            A visual workspace for browser automation. Tabs, terminals, files, and AI
-            agents &mdash; all on one canvas.
+            Browse the web the way your mind works. Group tabs spatially, in a document,
+            or in a traditional tab layout.
           </p>
           <div className="flex gap-3 mt-8">
             <a
