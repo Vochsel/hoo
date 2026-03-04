@@ -12,6 +12,8 @@ interface TerminalDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   sessionId: string
+  label?: string
+  onRename?: (name: string) => void
   config: TerminalNodeConfig
   onUpdateConfig: (config: TerminalNodeConfig) => void
   workspaceRootDir?: string
@@ -21,6 +23,8 @@ interface TerminalDialogProps {
 export function TerminalDialog({
   open,
   onOpenChange,
+  label,
+  onRename,
   config,
   onUpdateConfig,
   sessionId,
@@ -34,6 +38,9 @@ export function TerminalDialog({
   const cleanupListenersRef = useRef<(() => void) | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [termContextMenu, setTermContextMenu] = useState<{ x: number; y: number } | null>(null)
+  const [editingName, setEditingName] = useState(false)
+  const [nameValue, setNameValue] = useState(label || 'Terminal')
+  const nameInputRef = useRef<HTMLInputElement>(null)
 
   // Local config editing state
   const [editCommand, setEditCommand] = useState(config.command || '')
@@ -323,8 +330,33 @@ export function TerminalDialog({
         <div className="flex flex-1 min-w-0 flex-col">
           <div className="flex items-center justify-between border-b px-4 py-2">
             <div className="flex items-center gap-2 min-w-0">
-              <span className="text-sm font-medium shrink-0">Interactive Terminal</span>
-              {config.command && (
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  value={nameValue}
+                  onChange={(e) => setNameValue(e.target.value)}
+                  onBlur={() => {
+                    const trimmed = nameValue.trim()
+                    if (trimmed && trimmed !== label && onRename) onRename(trimmed)
+                    setEditingName(false)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    if (e.key === 'Escape') { setNameValue(label || 'Terminal'); setEditingName(false) }
+                  }}
+                  className="h-6 rounded border bg-background px-1.5 text-sm font-medium focus:outline-none focus:ring-1 focus:ring-ring/50"
+                  autoFocus
+                />
+              ) : (
+                <span
+                  className="text-sm font-medium shrink-0 cursor-pointer hover:underline"
+                  onDoubleClick={() => { setNameValue(label || 'Terminal'); setEditingName(true) }}
+                  title="Double-click to rename"
+                >
+                  {label || 'Terminal'}
+                </span>
+              )}
+              {config.command && !editingName && (
                 <span className="truncate text-xs text-muted-foreground font-mono">$ {config.command}</span>
               )}
             </div>

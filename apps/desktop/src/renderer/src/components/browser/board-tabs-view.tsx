@@ -235,6 +235,7 @@ export const BoardTabsView = forwardRef<BoardTabsViewHandle, BoardTabsViewProps>
           <TerminalContent
             key={selectedItem.node.id}
             sessionId={`pty-${selectedItem.node.id}`}
+            label={selectedItem.node.label}
             config={parseNodeConfig(selectedItem.node.config) as TerminalNodeConfig}
             onUpdateConfig={(nextCfg) => {
               void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })

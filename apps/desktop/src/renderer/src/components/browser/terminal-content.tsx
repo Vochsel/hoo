@@ -7,6 +7,7 @@ import type { TerminalNodeConfig } from './terminal-node'
 
 interface TerminalContentProps {
   sessionId: string
+  label?: string
   config: TerminalNodeConfig
   onUpdateConfig: (config: TerminalNodeConfig) => void
   workspaceRootDir?: string
@@ -14,6 +15,7 @@ interface TerminalContentProps {
 
 export function TerminalContent({
   sessionId,
+  label,
   config,
   onUpdateConfig,
   workspaceRootDir
@@ -139,6 +141,7 @@ export function TerminalContent({
 
         const term = new Terminal({
           cursorBlink: true,
+          scrollback: 10_000,
           fontSize: 13,
           fontFamily: 'Menlo, Monaco, "Courier New", monospace',
           theme: {
@@ -155,6 +158,16 @@ export function TerminalContent({
         termRef.current = term
         fitRef.current = fitAddon
 
+        // Shift+Enter sends a distinct escape sequence so interactive CLIs
+        // (e.g. Claude Code) can treat it as "new line" rather than "submit".
+        term.attachCustomKeyEventHandler((event) => {
+          if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
+            window.api.terminal.write(sid, '\x1b[13;2u').catch(() => {})
+            return false
+          }
+          return true
+        })
+
         try { fitAddon.fit() } catch {}
 
         window.api.terminal
@@ -162,7 +175,11 @@ export function TerminalContent({
           .then(async (alive) => {
             if (alive) {
               const buffer = await window.api.terminal.getBuffer(sid)
-              if (buffer) term.write(buffer)
+              if (buffer) {
+                term.write(buffer, () => {
+                  term.scrollToBottom()
+                })
+              }
               spawnedRef.current = true
               try {
                 fitAddon.fit()
@@ -242,7 +259,7 @@ export function TerminalContent({
   return (
     <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
       <div className="flex items-center gap-2 border-b px-4 py-2">
-        <span className="text-sm font-medium shrink-0">Terminal</span>
+        <span className="text-sm font-medium shrink-0">{label || 'Terminal'}</span>
         {config.command && (
           <span className="truncate text-xs text-muted-foreground font-mono">$ {config.command}</span>
         )}

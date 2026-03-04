@@ -43,6 +43,30 @@ interface ChangelogEntry {
 
 const CHANGELOG_ENTRIES: ChangelogEntry[] = [
   {
+    title: 'Terminal & Dialog Improvements',
+    date: 'March 4, 2026',
+    points: [
+      'Terminal scrollback increased to 10,000 lines and backend buffer to 500KB — reopening terminals no longer loses scroll history.',
+      'Shift+Enter in terminal now sends a distinct key sequence so interactive CLIs like Claude Code can treat it as newline.',
+      'AI chat sidebar in the browser dialog is now collapsed by default.',
+      'Cmd+L / Ctrl+L now focuses the URL bar in both the dialog and the tabs view.',
+      'Address bar auto-adds https:// for multi-part TLDs like .com.au and .co.uk.',
+      'Added a "Node Open Action" setting to choose single-click or double-click to open nodes.',
+      'Node renaming now uses a proper dialog instead of window.prompt — works reliably in Electron.',
+      'Terminal dialog header shows the node name and supports inline rename via double-click.',
+      'Terminal label is now displayed consistently across whiteboard nodes, sidebar, tabs view, and dialogs.'
+    ]
+  },
+  {
+    title: 'Notarization & Desktop Build',
+    date: 'March 4, 2026',
+    points: [
+      'Added macOS entitlements and notarization support for distribution.',
+      'Added auto-update banner component.',
+      'Terminal preview component for whiteboard node thumbnails.'
+    ]
+  },
+  {
     title: 'Workflow Canvas Overhaul',
     date: 'February 24, 2026',
     points: [

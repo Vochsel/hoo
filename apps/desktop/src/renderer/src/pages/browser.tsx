@@ -289,6 +289,8 @@ function BrowserPageInner(): React.ReactElement {
   const [editingBoardName, setEditingBoardName] = useState('')
   const [editingTerminalId, setEditingTerminalId] = useState<string | null>(null)
   const [editingTerminalName, setEditingTerminalName] = useState('')
+  const [renameDialog, setRenameDialog] = useState<{ nodeId: string; currentName: string; isTab: boolean } | null>(null)
+  const [renameDialogValue, setRenameDialogValue] = useState('')
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const createMenuRef = useRef<HTMLDivElement | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(288)
@@ -324,6 +326,7 @@ function BrowserPageInner(): React.ReactElement {
   const isMapMode = flowInteractionMode === 'map'
   const flowDirection: FlowDirection =
     (getSetting('flowDirection') as string) === 'vertical' ? 'vertical' : 'horizontal'
+  const nodeOpenClick = (getSetting('nodeOpenClick') as string) === 'single' ? 'single' : 'double'
 
   const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
   const fileNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'file'), [gNodes])
@@ -2569,7 +2572,7 @@ function BrowserPageInner(): React.ReactElement {
     })
   }, [contextMenu, reactFlowInstance, executeBrowserTab, setNodeRuntimeStatus, activeBoardId])
 
-  const handleContextRenameNode = useCallback(async () => {
+  const handleContextRenameNode = useCallback(() => {
     const nodeId = contextMenu?.nodeId
     if (!nodeId) {
       setContextMenu(null)
@@ -2599,23 +2602,8 @@ function BrowserPageInner(): React.ReactElement {
         } as const
       )[node.nodeType] ?? 'Node'
       const currentName = node.label?.trim() || fallbackName
-      const nextName = window.prompt('Rename node', currentName)
-      if (nextName === null) {
-        setContextMenu(null)
-        return
-      }
-      const trimmed = nextName.trim()
-      if (!trimmed || trimmed === currentName) {
-        setContextMenu(null)
-        return
-      }
-      try {
-        await updateNode(nodeId, { label: trimmed })
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error)
-        console.error(`${FLOW_TAG} failed to rename graph node id=${nodeId}:`, error)
-        window.alert(`Failed to rename node: ${message}`)
-      }
+      setRenameDialog({ nodeId, currentName, isTab: false })
+      setRenameDialogValue(currentName)
       setContextMenu(null)
       return
     }
@@ -2626,25 +2614,29 @@ function BrowserPageInner(): React.ReactElement {
       return
     }
     const currentTitle = tab.title?.trim() || 'New Tab'
-    const nextTitle = window.prompt('Rename tab', currentTitle)
-    if (nextTitle === null) {
-      setContextMenu(null)
-      return
-    }
-    const trimmedTitle = nextTitle.trim()
-    if (!trimmedTitle || trimmedTitle === currentTitle) {
-      setContextMenu(null)
+    setRenameDialog({ nodeId, currentName: currentTitle, isTab: true })
+    setRenameDialogValue(currentTitle)
+    setContextMenu(null)
+  }, [contextMenu, gNodes, tabs])
+
+  const handleRenameDialogSubmit = useCallback(async () => {
+    if (!renameDialog) return
+    const trimmed = renameDialogValue.trim()
+    if (!trimmed || trimmed === renameDialog.currentName) {
+      setRenameDialog(null)
       return
     }
     try {
-      await updateTab(nodeId, { title: trimmedTitle })
+      if (renameDialog.isTab) {
+        await updateTab(renameDialog.nodeId, { title: trimmed })
+      } else {
+        await updateNode(renameDialog.nodeId, { label: trimmed })
+      }
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      console.error(`${FLOW_TAG} failed to rename tab id=${nodeId}:`, error)
-      window.alert(`Failed to rename tab: ${message}`)
+      console.error(`${FLOW_TAG} failed to rename node id=${renameDialog.nodeId}:`, error)
     }
-    setContextMenu(null)
-  }, [contextMenu, gNodes, tabs, updateNode, updateTab])
+    setRenameDialog(null)
+  }, [renameDialog, renameDialogValue, updateTab, updateNode])
 
   const handleContextDeleteNode = useCallback(async () => {
     if (!contextMenu?.nodeId) {
@@ -3433,7 +3425,8 @@ function BrowserPageInner(): React.ReactElement {
               onReconnect={handleReconnect}
               onConnectStart={handleConnectStart}
               onConnectEnd={handleConnectEnd}
-              onNodeDoubleClick={handleNodeDoubleClick}
+              onNodeClick={nodeOpenClick === 'single' ? handleNodeDoubleClick : undefined}
+              onNodeDoubleClick={nodeOpenClick === 'double' ? handleNodeDoubleClick : undefined}
               onPaneContextMenu={handlePaneContextMenu}
               onNodeContextMenu={handleNodeContextMenu}
               fitView
@@ -3974,6 +3967,12 @@ function BrowserPageInner(): React.ReactElement {
             open={!!terminalDialogNodeId}
             onOpenChange={(o) => { if (!o) setTerminalDialogNodeId(null) }}
             sessionId={terminalDialogNodeId ? `pty-${terminalDialogNodeId}` : ''}
+            label={gn?.label || 'Terminal'}
+            onRename={(name) => {
+              if (terminalDialogNodeId) {
+                void updateNode(terminalDialogNodeId, { label: name })
+              }
+            }}
             config={cfg}
             onUpdateConfig={(nextCfg) => {
               if (terminalDialogNodeId) {
@@ -4033,6 +4032,25 @@ function BrowserPageInner(): React.ReactElement {
             }}>
               Save
             </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename Node Dialog */}
+      <Dialog open={!!renameDialog} onOpenChange={(o) => { if (!o) setRenameDialog(null) }}>
+        <DialogContent className="sm:max-w-[360px]">
+          <DialogHeader>
+            <DialogTitle>Rename</DialogTitle>
+          </DialogHeader>
+          <Input
+            value={renameDialogValue}
+            onChange={(e) => setRenameDialogValue(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') void handleRenameDialogSubmit() }}
+            autoFocus
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameDialog(null)}>Cancel</Button>
+            <Button onClick={() => void handleRenameDialogSubmit()}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

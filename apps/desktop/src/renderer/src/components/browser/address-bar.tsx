@@ -17,7 +17,7 @@ function resolveInput(input: string): string {
   const trimmed = input.trim()
   if (!trimmed) return trimmed
   if (/^https?:\/\//i.test(trimmed)) return trimmed
-  if (/^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z]{2,}(\/|$)/.test(trimmed)) {
+  if (/^[a-zA-Z0-9][-a-zA-Z0-9]*\.[a-zA-Z0-9][-a-zA-Z0-9.]*[a-zA-Z](\/|$)/.test(trimmed)) {
     return `https://${trimmed}`
   }
   return `https://www.google.com/search?q=${encodeURIComponent(trimmed)}`

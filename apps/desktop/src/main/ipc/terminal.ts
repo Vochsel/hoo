@@ -4,7 +4,7 @@ import { homedir } from 'os'
 
 const sessions = new Map<string, pty.IPty>()
 const buffers = new Map<string, string>()
-const MAX_BUFFER_SIZE = 100_000 // ~100KB per session
+const MAX_BUFFER_SIZE = 500_000 // ~500KB per session
 
 function stripAnsi(str: string): string {
   // eslint-disable-next-line no-control-regex

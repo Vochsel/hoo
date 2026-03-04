@@ -40,7 +40,7 @@ export function BrowserTabDialog({
   const [currentUrl, setCurrentUrl] = useState(tab?.url ?? 'about:blank')
   const currentUrlRef = useRef(currentUrl)
   const [pageLoading, setPageLoading] = useState(false)
-  const [chatCollapsed, setChatCollapsed] = useState(false)
+  const [chatCollapsed, setChatCollapsed] = useState(true)
   const pageLoadingRef = useRef(false)
   const tabIdRef = useRef<string | null>(tab?.id ?? null)
   const webContentsIdRef = useRef<number | null>(null)

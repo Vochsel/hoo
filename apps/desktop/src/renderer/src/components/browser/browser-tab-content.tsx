@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback, useEffect } from 'react'
-import { AddressBar } from './address-bar'
+import { AddressBar, type AddressBarHandle } from './address-bar'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
 
@@ -18,6 +18,7 @@ export function BrowserTabContent({
   onTabUpdate
 }: BrowserTabContentProps): React.ReactElement {
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
+  const addressBarRef = useRef<AddressBarHandle>(null)
   const initialUrlRef = useRef(tab.url || 'about:blank')
   const [currentUrl, setCurrentUrl] = useState(tab.url ?? 'about:blank')
   const [pageLoading, setPageLoading] = useState(false)
@@ -38,6 +39,18 @@ export function BrowserTabContent({
     const nextUrl = tab.url || 'about:blank'
     setCurrentUrl(nextUrl)
   }, [tab.id])
+
+  // Cmd+L / Ctrl+L focuses the address bar
+  useEffect(() => {
+    const handleKeyDown = (e: globalThis.KeyboardEvent): void => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
+        e.preventDefault()
+        addressBarRef.current?.focus()
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return (): void => window.removeEventListener('keydown', handleKeyDown)
+  }, [])
 
   const publishLiveWebContents = useCallback((webContentsId?: number | null): void => {
     const tabId = tabIdRef.current
@@ -240,6 +253,7 @@ export function BrowserTabContent({
   return (
     <div className="flex flex-1 flex-col min-h-0">
       <AddressBar
+        ref={addressBarRef}
         url={currentUrl}
         loading={pageLoading}
         onNavigate={handleNavigate}
