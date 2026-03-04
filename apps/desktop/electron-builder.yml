@@ -1,6 +1,11 @@
 appId: com.hoo.app
 productName: Hoo
 
+publish:
+  provider: github
+  owner: Vochsel
+  repo: hoo
+
 directories:
   output: dist
 
@@ -12,9 +17,15 @@ asarUnpack:
   - node_modules/better-sqlite3/**
   - node_modules/node-pty/**
 
+afterSign: build/notarize.cjs
+
 mac:
   icon: build/icon.icns
   category: public.app-category.productivity
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
   target:
     - target: dmg
       arch:

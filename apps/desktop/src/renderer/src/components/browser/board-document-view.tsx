@@ -16,6 +16,7 @@ import TaskItem from '@tiptap/extension-task-item'
 import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, ListChecks, Undo2, Redo2, Globe, Terminal, FileText, ChevronDown, ChevronRight, AlertTriangle, Circle, Loader2, CheckCircle2 } from 'lucide-react'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import type { GraphNode } from '@/hooks/use-graph-nodes'
+import { TerminalPreview } from './terminal-preview'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -315,6 +316,7 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
   const nodeId = props.node.attrs.nodeId as string
   const boardData = props.editor.storage.boardData as BoardData | undefined
   const node = boardData?.terminalNodes.find((n) => n.id === nodeId)
+  const [expanded, setExpanded] = useState(false)
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null)
 
   const handleContextMenu = useCallback((e: React.MouseEvent) => {
@@ -361,6 +363,13 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
           className="flex w-full items-center gap-3 px-4 py-3 text-left"
           onClick={() => boardData?.onOpenTerminal(node.id)}
         >
+          <button
+            type="button"
+            className="shrink-0 text-muted-foreground/50 hover:text-foreground"
+            onClick={(e) => { e.stopPropagation(); setExpanded(!expanded) }}
+          >
+            {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+          </button>
           <Terminal className="h-5 w-5 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{node.label || 'Terminal'}</p>
@@ -369,6 +378,16 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
             )}
           </div>
         </button>
+        {expanded && (
+          <div className="border-t border-border/40">
+            <TerminalPreview
+              sessionId={`pty-${nodeId}`}
+              className="w-full h-[200px]"
+              fontSize={11}
+              onClick={() => boardData?.onOpenTerminal(node.id)}
+            />
+          </div>
+        )}
       </div>
       {contextMenu && (
         <EmbedContextMenu x={contextMenu.x} y={contextMenu.y} onDelete={handleDelete} onClose={() => setContextMenu(null)} />

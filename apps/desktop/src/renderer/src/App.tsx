@@ -2,6 +2,7 @@ import { createContext, useContext, useState } from 'react'
 import { HashRouter, Route, Routes } from 'react-router-dom'
 import { BrowserPage } from '@/pages/browser'
 import { useTheme, type Theme } from '@/hooks/use-theme'
+import { UpdateBanner } from '@/components/update-banner'
 import {
   Dialog,
   DialogContent,
@@ -89,6 +90,7 @@ function AppShell(): React.ReactElement {
   return (
     <AppActionsContext.Provider value={appActions}>
       <div className="flex h-screen flex-col bg-background">
+        <UpdateBanner />
         <div className="drag-region h-9 shrink-0 border-b border-border/40" />
 
         <main className="min-h-0 flex-1">

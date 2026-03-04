@@ -1,10 +1,11 @@
 import { memo } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import { Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
 import { HandleWithTooltip } from './handle-with-tooltip'
 import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
+import { TerminalPreview } from './terminal-preview'
 
 export interface TerminalNodeConfig {
   command?: string
@@ -27,9 +28,8 @@ export interface TerminalNodeData {
   [key: string]: unknown
 }
 
-function TerminalNodeInner({ id: _id, data, selected }: NodeProps): React.ReactElement {
+function TerminalNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
   const { label, config, isRunning, runtimeStatus } = data as unknown as TerminalNodeData
-  const command = config?.command || ''
   const direction = useFlowDirection()
   const sourcePos = getSourcePosition(direction)
   const targetPos = getTargetPosition(direction)
@@ -41,31 +41,12 @@ function TerminalNodeInner({ id: _id, data, selected }: NodeProps): React.ReactE
         selected && 'ring-2 ring-primary'
       )}
     >
-      {/* Terminal preview area */}
-      <div className="relative w-full overflow-hidden rounded-t-lg bg-[#1a1a2e]">
-        <div className="flex min-h-[100px] w-full flex-col px-3 py-2.5">
-          {/* Fake title bar dots */}
-          <div className="mb-2 flex items-center gap-1.5">
-            <div className="h-2 w-2 rounded-full bg-red-500/60" />
-            <div className="h-2 w-2 rounded-full bg-yellow-500/60" />
-            <div className="h-2 w-2 rounded-full bg-green-500/60" />
-          </div>
-          {command ? (
-            <p className="font-mono text-[10px] text-green-400/80 leading-relaxed">
-              <span className="text-green-500/60">$</span> {command}
-            </p>
-          ) : (
-            <p className="font-mono text-[10px] text-green-400/40 italic">
-              Double-click to open terminal
-            </p>
-          )}
-          {config?.lastOutput && (
-            <p className="mt-1 font-mono text-[9px] text-gray-400/70 line-clamp-3 leading-relaxed">
-              {config.lastOutput.slice(0, 200)}
-            </p>
-          )}
-        </div>
-      </div>
+      {/* Live terminal preview */}
+      <TerminalPreview
+        sessionId={`pty-${id}`}
+        className="w-full h-[100px] rounded-t-lg overflow-hidden"
+        fontSize={9}
+      />
 
       {/* Info */}
       <div className="px-2.5 py-2">

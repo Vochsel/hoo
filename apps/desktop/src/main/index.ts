@@ -1,7 +1,8 @@
-import { app, shell, BrowserWindow } from 'electron'
+import { app, shell, BrowserWindow, ipcMain } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
+import { autoUpdater } from 'electron-updater'
 import { getDb } from './db/client'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerBrowserTabHandlers } from './ipc/browser-tabs'
@@ -69,6 +70,45 @@ function createWindow(iconPath: string | null): void {
   }
 }
 
+function setupAutoUpdater(): void {
+  autoUpdater.autoDownload = false
+  autoUpdater.autoInstallOnAppQuit = true
+
+  autoUpdater.on('update-available', (info) => {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('updater:update-available', {
+        version: info.version,
+        releaseNotes: info.releaseNotes
+      })
+    }
+  })
+
+  autoUpdater.on('download-progress', (progress) => {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('updater:download-progress', {
+        percent: progress.percent
+      })
+    }
+  })
+
+  autoUpdater.on('update-downloaded', () => {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('updater:update-downloaded')
+    }
+  })
+
+  autoUpdater.on('error', (error) => {
+    console.warn('[updater] Error checking for updates:', error.message)
+  })
+
+  ipcMain.handle('updater:check', () => autoUpdater.checkForUpdates())
+  ipcMain.handle('updater:download', () => autoUpdater.downloadUpdate())
+  ipcMain.handle('updater:install', () => autoUpdater.quitAndInstall())
+}
+
 app.setName('Hoo')
 
 app.whenReady().then(() => {
@@ -92,8 +132,13 @@ app.whenReady().then(() => {
   registerWorkspaceHandlers()
   registerBrowserTabHandlers()
   registerTerminalHandlers()
+  setupAutoUpdater()
 
   createWindow(iconPath)
+
+  if (!is.dev) {
+    autoUpdater.checkForUpdates().catch(() => {})
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow(iconPath)
