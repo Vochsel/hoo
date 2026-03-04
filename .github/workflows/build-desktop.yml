@@ -51,7 +51,14 @@ jobs:
           test -f apps/desktop/build/icon.png
 
       - name: Build macOS artifacts
-        run: cd apps/desktop && npx electron-vite build && npx electron-builder --mac --arm64 --publish never
+        run: |
+          if [ -z "$CSC_LINK" ]; then
+            echo "No signing certificate — disabling code signing"
+            unset CSC_LINK
+            unset CSC_KEY_PASSWORD
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          cd apps/desktop && npx electron-vite build && npx electron-builder --mac --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

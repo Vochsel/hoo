@@ -9,8 +9,8 @@ exports.default = async function notarizing(context) {
   const appleIdPassword = process.env.APPLE_APP_SPECIFIC_PASSWORD
   const teamId = process.env.APPLE_TEAM_ID
 
-  if (!appleId || !appleIdPassword || !teamId) {
-    console.log('Skipping notarization — missing APPLE_ID, APPLE_APP_SPECIFIC_PASSWORD, or APPLE_TEAM_ID')
+  if (!appleId || !appleIdPassword || !teamId || !process.env.CSC_LINK) {
+    console.log('Skipping notarization — missing signing certificate or Apple credentials')
     return
   }
 
