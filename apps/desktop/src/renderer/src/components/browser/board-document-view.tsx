@@ -16,7 +16,6 @@ import TaskItem from '@tiptap/extension-task-item'
 import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, ListChecks, Undo2, Redo2, Globe, Terminal, FileText, ChevronDown, ChevronRight, AlertTriangle, Circle, Loader2, CheckCircle2 } from 'lucide-react'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import type { GraphNode } from '@/hooks/use-graph-nodes'
-import { TerminalPreview } from './terminal-preview'
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -380,12 +379,22 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
         </button>
         {expanded && (
           <div className="border-t border-border/40">
-            <TerminalPreview
-              sessionId={`pty-${nodeId}`}
-              className="w-full h-[200px]"
-              fontSize={11}
-              onClick={() => boardData?.onOpenTerminal(node.id)}
-            />
+            {config.lastScreenshot ? (
+              <img
+                src={String(config.lastScreenshot)}
+                alt="Terminal screenshot"
+                className="w-full cursor-pointer object-contain"
+                onClick={() => boardData?.onOpenTerminal(node.id)}
+              />
+            ) : (
+              <div
+                className="flex w-full h-[200px] items-center justify-center cursor-pointer"
+                style={{ background: '#1a1a2e' }}
+                onClick={() => boardData?.onOpenTerminal(node.id)}
+              >
+                <Terminal className="h-8 w-8 text-muted-foreground/30" />
+              </div>
+            )}
           </div>
         )}
       </div>

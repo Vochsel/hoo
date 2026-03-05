@@ -5,7 +5,6 @@ import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
 import { HandleWithTooltip } from './handle-with-tooltip'
 import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
-import { TerminalPreview } from './terminal-preview'
 
 export interface TerminalNodeConfig {
   command?: string
@@ -17,6 +16,7 @@ export interface TerminalNodeConfig {
   lastExitCode?: number
   lastRunAt?: string
   lastScrollback?: string
+  lastScreenshot?: string
   useLatestUpstreamOnly?: boolean
 }
 
@@ -28,7 +28,7 @@ export interface TerminalNodeData {
   [key: string]: unknown
 }
 
-function TerminalNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
+function TerminalNodeInner({ data, selected }: NodeProps): React.ReactElement {
   const { label, config, isRunning, runtimeStatus } = data as unknown as TerminalNodeData
   const direction = useFlowDirection()
   const sourcePos = getSourcePosition(direction)
@@ -41,12 +41,18 @@ function TerminalNodeInner({ id, data, selected }: NodeProps): React.ReactElemen
         selected && 'ring-2 ring-primary'
       )}
     >
-      {/* Live terminal preview */}
-      <TerminalPreview
-        sessionId={`pty-${id}`}
-        className="w-full h-[100px] rounded-t-lg overflow-hidden"
-        fontSize={9}
-      />
+      {/* Terminal screenshot / placeholder */}
+      {config?.lastScreenshot ? (
+        <img
+          src={config.lastScreenshot}
+          alt="Terminal screenshot"
+          className="w-full rounded-t-lg"
+        />
+      ) : (
+        <div className="flex w-full h-[100px] items-center justify-center rounded-t-lg" style={{ background: '#1a1a2e' }}>
+          <Terminal className="h-8 w-8 text-muted-foreground/30" />
+        </div>
+      )}
 
       {/* Info */}
       <div className="px-2.5 py-2">

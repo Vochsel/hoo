@@ -131,6 +131,88 @@ export function TerminalDialog({
     return lines.join('\n')
   }, [])
 
+  /** Render terminal buffer onto a canvas with colors and return a PNG data URL */
+  const captureScreenshot = useCallback((): string | undefined => {
+    const term = termRef.current
+    if (!term) return undefined
+    const buf = term.buffer.active
+    if (!buf || buf.length === 0) return undefined
+
+    // Standard ANSI 16-color palette
+    const ansiColors = [
+      '#000000', '#cd3131', '#0dbc79', '#e5e510', '#2472c8', '#bc3fbc', '#11a8cd', '#e5e5e5',
+      '#666666', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#e5e5e5'
+    ]
+    const defaultFg = '#e0e0e0'
+    const bgColor = '#1a1a2e'
+
+    const dpr = window.devicePixelRatio || 2
+    const fontSize = 12
+    const lineHeight = Math.ceil(fontSize * 1.3)
+    const fontFamily = 'Menlo, Monaco, "Courier New", monospace'
+    const cols = term.cols || 80
+    const visibleRows = term.rows || 24
+
+    // Measure actual character width
+    const measureCanvas = document.createElement('canvas')
+    const measureCtx = measureCanvas.getContext('2d')!
+    measureCtx.font = `${fontSize}px ${fontFamily}`
+    const charWidth = measureCtx.measureText('M').width
+
+    const padding = 8
+    const canvasLogicalW = Math.ceil(cols * charWidth + padding * 2)
+    const canvasLogicalH = visibleRows * lineHeight + padding * 2
+
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil(canvasLogicalW * dpr)
+    canvas.height = Math.ceil(canvasLogicalH * dpr)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return undefined
+
+    ctx.scale(dpr, dpr)
+
+    // Background
+    ctx.fillStyle = bgColor
+    ctx.fillRect(0, 0, canvasLogicalW, canvasLogicalH)
+
+    // Render cells with color
+    const startRow = Math.max(0, buf.length - visibleRows)
+    ctx.font = `${fontSize}px ${fontFamily}`
+    ctx.textBaseline = 'top'
+
+    for (let row = 0; row < visibleRows && (startRow + row) < buf.length; row++) {
+      const line = buf.getLine(startRow + row)
+      if (!line) continue
+      const y = padding + row * lineHeight
+
+      for (let col = 0; col < cols; col++) {
+        const cell = line.getCell(col)
+        if (!cell) continue
+        const ch = cell.getChars()
+        if (!ch || ch === ' ') continue
+
+        // Determine foreground color
+        let fg = defaultFg
+        if (cell.isFgPalette()) {
+          const idx = cell.getFgColor()
+          if (idx < 16) fg = ansiColors[idx]
+        } else if (cell.isFgRGB()) {
+          const c = cell.getFgColor()
+          fg = `#${((c >> 16) & 0xff).toString(16).padStart(2, '0')}${((c >> 8) & 0xff).toString(16).padStart(2, '0')}${(c & 0xff).toString(16).padStart(2, '0')}`
+        }
+
+        ctx.fillStyle = fg
+        ctx.fillText(ch, padding + col * charWidth, y)
+      }
+    }
+
+    try {
+      return canvas.toDataURL('image/png')
+    } catch {
+      return undefined
+    }
+  }, [])
+
   /** Detach xterm UI + IPC listeners without killing the PTY */
   const detachTerminal = useCallback(() => {
     // Save scrollback to config for app-restart persistence
@@ -291,6 +373,23 @@ export function TerminalDialog({
     [detachTerminal]
   )
 
+  /** Wrap onOpenChange to capture screenshot while canvas is still live */
+  const handleOpenChange = useCallback(
+    (nextOpen: boolean) => {
+      if (!nextOpen) {
+        // Capture screenshot while the terminal is still alive.
+        // Write into configRef so the subsequent detachTerminal scrollback
+        // save won't overwrite it with a stale config.
+        const screenshot = captureScreenshot()
+        if (screenshot) {
+          configRef.current = { ...configRef.current, lastScreenshot: screenshot }
+        }
+      }
+      onOpenChange(nextOpen)
+    },
+    [onOpenChange, captureScreenshot]
+  )
+
   // Dismiss context menu on click outside
   useEffect(() => {
     if (!termContextMenu) return
@@ -304,12 +403,12 @@ export function TerminalDialog({
     if (!open) return
     const handleEscape = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
-        onOpenChange(false)
+        handleOpenChange(false)
       }
     }
     window.addEventListener('keydown', handleEscape, true)
     return (): void => window.removeEventListener('keydown', handleEscape, true)
-  }, [open, onOpenChange])
+  }, [open, handleOpenChange])
 
   // Detach UI when dialog closes (PTY stays alive)
   useEffect(() => {
@@ -320,7 +419,7 @@ export function TerminalDialog({
   }, [open, detachTerminal])
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className="flex h-[80vh] max-w-[90vw] flex-row p-0 gap-0 overflow-hidden [&>button[class*='absolute']]:hidden"
         onPointerDown={(e) => e.stopPropagation()}
@@ -378,7 +477,7 @@ export function TerminalDialog({
                 variant="ghost"
                 size="sm"
                 className="h-7 w-7 p-0"
-                onClick={() => onOpenChange(false)}
+                onClick={() => handleOpenChange(false)}
                 title="Close"
               >
                 <X className="h-4 w-4" />
