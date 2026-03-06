@@ -1,7 +1,7 @@
 {
   "name": "@hoo/desktop",
   "productName": "Hoo",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "description": "Extracted Electron browser-automation app (tabs-as-nodes + settings/env + graph execution)",
   "main": "./out/main/index.js",
   "scripts": {
