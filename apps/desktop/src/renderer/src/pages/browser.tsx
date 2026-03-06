@@ -53,6 +53,7 @@ import { runAgentOnWebview } from '@/services/browser-agent-runner'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
 import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/lib/schedule-cron'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { DynamicIcon, IconPicker } from '@/components/ui/icon-picker'
 import { SettingsPage } from '@/pages/settings'
 import TurndownService from 'turndown'
 
@@ -317,6 +318,7 @@ function BrowserPageInner(): React.ReactElement {
   const pendingBoardRenameRef = useRef(false)
   const pendingFolderRenameRef = useRef(false)
   const boardTabsViewRef = useRef<import('@/components/browser/board-tabs-view').BoardTabsViewHandle | null>(null)
+  const [iconPickerTarget, setIconPickerTarget] = useState<{ type: 'folder' | 'board'; id: string; anchor: DOMRect } | null>(null)
   const reactFlowInstance = useReactFlow()
   const location = useLocation()
   const navigate = useNavigate()
@@ -363,6 +365,39 @@ function BrowserPageInner(): React.ReactElement {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [createMenuOpen])
+
+  // ─── Folder / Board icon & color meta ──────────────────────────────────────
+  const folderMeta = (getSetting('folderMeta') ?? {}) as Record<string, { icon?: string; color?: string }>
+  const boardMeta = (getSetting('boardMeta') ?? {}) as Record<string, { icon?: string; color?: string }>
+
+  const getFolderMeta = useCallback((id: string) => folderMeta[id] ?? {}, [folderMeta])
+  const getBoardMeta = useCallback((id: string) => boardMeta[id] ?? {}, [boardMeta])
+
+  const setFolderMeta = useCallback(
+    (id: string, meta: { icon?: string; color?: string }) => {
+      const next = { ...folderMeta }
+      if (!meta.icon && !meta.color) {
+        delete next[id]
+      } else {
+        next[id] = meta
+      }
+      void setSetting('folderMeta', next)
+    },
+    [folderMeta, setSetting]
+  )
+
+  const setBoardMeta = useCallback(
+    (id: string, meta: { icon?: string; color?: string }) => {
+      const next = { ...boardMeta }
+      if (!meta.icon && !meta.color) {
+        delete next[id]
+      } else {
+        next[id] = meta
+      }
+      void setSetting('boardMeta', next)
+    },
+    [boardMeta, setSetting]
+  )
 
   const boardsByFolderId = useMemo(() => {
     const map = new Map<string, WorkspaceBoard[]>()
@@ -2963,14 +2998,28 @@ function BrowserPageInner(): React.ReactElement {
                             event.stopPropagation()
                             startInlineFolderEdit(folder.id, folder.name)
                           }}
+                          onContextMenu={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            const rect = event.currentTarget.getBoundingClientRect()
+                            setIconPickerTarget({ type: 'folder', id: folder.id, anchor: rect })
+                          }}
                         >
                           <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-                            {expanded ? <FolderOpen className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" /> : <Folder className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" />}
-                            {expanded ? (
-                              <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
-                            ) : (
-                              <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
-                            )}
+                            {(() => {
+                              const fm = getFolderMeta(folder.id)
+                              const iconStyle = fm.color ? { color: fm.color } : undefined
+                              return (
+                                <>
+                                  <DynamicIcon name={fm.icon} fallback={expanded ? FolderOpen : Folder} className="h-3.5 w-3.5 text-muted-foreground group-hover/folder:hidden" style={iconStyle} />
+                                  {expanded ? (
+                                    <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
+                                  ) : (
+                                    <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/folder:block" />
+                                  )}
+                                </>
+                              )
+                            })()}
                           </span>
                           <span className="truncate text-[13px] font-medium">{folder.name}</span>
                           <span className="text-[10px] text-muted-foreground">{folderBoards.length}</span>
@@ -3041,6 +3090,12 @@ function BrowserPageInner(): React.ReactElement {
                                         event.stopPropagation()
                                         startInlineBoardEdit(board.id, board.name)
                                       }}
+                                      onContextMenu={(event) => {
+                                        event.preventDefault()
+                                        event.stopPropagation()
+                                        const rect = event.currentTarget.getBoundingClientRect()
+                                        setIconPickerTarget({ type: 'board', id: board.id, anchor: rect })
+                                      }}
                                     >
                                       <span
                                         className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
@@ -3050,12 +3105,19 @@ function BrowserPageInner(): React.ReactElement {
                                           toggleBoardCollapsed(board.id)
                                         }}
                                       >
-                                        <Workflow className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" />
-                                        {collapsed ? (
-                                          <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
-                                        ) : (
-                                          <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
-                                        )}
+                                        {(() => {
+                                          const bm = getBoardMeta(board.id)
+                                          return (
+                                            <>
+                                              <DynamicIcon name={bm.icon} fallback={Workflow} className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" style={bm.color ? { color: bm.color } : undefined} />
+                                              {collapsed ? (
+                                                <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                              ) : (
+                                                <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                              )}
+                                            </>
+                                          )
+                                        })()}
                                       </span>
                                       <span className="truncate">{board.name}</span>
                                     </button>
@@ -3202,6 +3264,12 @@ function BrowserPageInner(): React.ReactElement {
                             event.stopPropagation()
                             startInlineBoardEdit(board.id, board.name)
                           }}
+                          onContextMenu={(event) => {
+                            event.preventDefault()
+                            event.stopPropagation()
+                            const rect = event.currentTarget.getBoundingClientRect()
+                            setIconPickerTarget({ type: 'board', id: board.id, anchor: rect })
+                          }}
                         >
                           <span
                             className="flex h-3.5 w-3.5 shrink-0 items-center justify-center"
@@ -3211,12 +3279,19 @@ function BrowserPageInner(): React.ReactElement {
                               toggleBoardCollapsed(board.id)
                             }}
                           >
-                            <Workflow className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" />
-                            {collapsed ? (
-                              <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
-                            ) : (
-                              <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
-                            )}
+                            {(() => {
+                              const bm = getBoardMeta(board.id)
+                              return (
+                                <>
+                                  <DynamicIcon name={bm.icon} fallback={Workflow} className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" style={bm.color ? { color: bm.color } : undefined} />
+                                  {collapsed ? (
+                                    <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                  ) : (
+                                    <ChevronDown className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
+                                  )}
+                                </>
+                              )
+                            })()}
                           </span>
                           <span className="truncate">{board.name}</span>
                         </button>
@@ -4054,6 +4129,31 @@ function BrowserPageInner(): React.ReactElement {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Icon Picker */}
+      {iconPickerTarget && (
+        <IconPicker
+          currentIcon={
+            iconPickerTarget.type === 'folder'
+              ? getFolderMeta(iconPickerTarget.id).icon
+              : getBoardMeta(iconPickerTarget.id).icon
+          }
+          currentColor={
+            iconPickerTarget.type === 'folder'
+              ? getFolderMeta(iconPickerTarget.id).color
+              : getBoardMeta(iconPickerTarget.id).color
+          }
+          anchor={iconPickerTarget.anchor}
+          onSelect={(meta) => {
+            if (iconPickerTarget.type === 'folder') {
+              setFolderMeta(iconPickerTarget.id, meta)
+            } else {
+              setBoardMeta(iconPickerTarget.id, meta)
+            }
+          }}
+          onClose={() => setIconPickerTarget(null)}
+        />
+      )}
     </div>
   )
 }
