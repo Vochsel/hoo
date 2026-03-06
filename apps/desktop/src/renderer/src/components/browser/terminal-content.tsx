@@ -165,6 +165,10 @@ export function TerminalContent({
             window.api.terminal.write(sid, '\x1b[13;2u').catch(() => {})
             return false
           }
+          // Let Ctrl+Tab / Ctrl+Shift+Tab bubble up for tab cycling
+          if (event.ctrlKey && event.key === 'Tab') {
+            return false
+          }
           return true
         })
 

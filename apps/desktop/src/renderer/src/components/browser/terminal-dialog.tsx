@@ -270,6 +270,14 @@ export function TerminalDialog({
       termRef.current = term
       fitRef.current = fitAddon
 
+      // Let Ctrl+Tab / Ctrl+Shift+Tab bubble up for tab cycling
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.ctrlKey && event.key === 'Tab') {
+          return false
+        }
+        return true
+      })
+
       // Fit after the dialog animation settles
       const fitTimer = setTimeout(() => {
         try {
