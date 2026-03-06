@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer } from 'lucide-react'
+import { useEffect, useState, useCallback } from 'react'
+import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/use-settings'
@@ -29,6 +29,15 @@ export function SettingsPage(): React.ReactElement {
   const [workspaceRoot, setWorkspaceRoot] = useState('')
   const [saving, setSaving] = useState(false)
   const [savingWorkspace, setSavingWorkspace] = useState(false)
+  const [updateState, setUpdateState] = useState<
+    | { status: 'idle' }
+    | { status: 'checking' }
+    | { status: 'available'; version: string }
+    | { status: 'downloading'; percent: number }
+    | { status: 'ready' }
+    | { status: 'up-to-date' }
+    | { status: 'error'; message: string }
+  >({ status: 'idle' })
 
   const selectedModel = ((getSetting('browserAiModel') as string) ?? 'claude-sonnet-4-6').trim()
   const flowInteractionMode: FlowInteractionMode =
@@ -40,6 +49,33 @@ export function SettingsPage(): React.ReactElement {
     setOpenAiKey(((getSetting('openaiApiKey') as string) ?? '').trim())
     setAnthropicKey(((getSetting('anthropicApiKey') as string) ?? '').trim())
   }, [settings, getSetting])
+
+  // Listen for update events
+  useEffect(() => {
+    const unsub1 = window.api.updater.onUpdateAvailable((info) => {
+      setUpdateState({ status: 'available', version: info.version })
+    })
+    const unsub2 = window.api.updater.onDownloadProgress((progress) => {
+      setUpdateState({ status: 'downloading', percent: progress.percent })
+    })
+    const unsub3 = window.api.updater.onUpdateDownloaded(() => {
+      setUpdateState({ status: 'ready' })
+    })
+    return () => { unsub1(); unsub2(); unsub3() }
+  }, [])
+
+  const checkForUpdates = useCallback(async () => {
+    setUpdateState({ status: 'checking' })
+    try {
+      await window.api.updater.check()
+      // If update-available event hasn't changed state after check resolves, we're up to date
+      setTimeout(() => {
+        setUpdateState((prev) => prev.status === 'checking' ? { status: 'up-to-date' } : prev)
+      }, 2000)
+    } catch (err) {
+      setUpdateState({ status: 'error', message: err instanceof Error ? err.message : String(err) })
+    }
+  }, [])
 
   useEffect(() => {
     setWorkspaceRoot(workspace?.rootDir ?? '')
@@ -213,6 +249,56 @@ export function SettingsPage(): React.ReactElement {
               <Save className="h-3.5 w-3.5" />
               {savingWorkspace ? 'Saving...' : 'Save Workspace Root'}
             </Button>
+          </div>
+        </section>
+
+        <section className="rounded-lg border p-4 space-y-4">
+          <div>
+            <h2 className="text-base font-semibold">Updates</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Current version: <code className="text-xs">{__APP_VERSION__}</code>
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {(updateState.status === 'idle' || updateState.status === 'up-to-date' || updateState.status === 'error') && (
+              <Button size="sm" className="gap-1.5" onClick={checkForUpdates}>
+                <RefreshCw className="h-3.5 w-3.5" />
+                Check for updates
+              </Button>
+            )}
+            {updateState.status === 'checking' && (
+              <Button size="sm" disabled className="gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Checking…
+              </Button>
+            )}
+            {updateState.status === 'available' && (
+              <Button size="sm" className="gap-1.5" onClick={() => window.api.updater.download()}>
+                <Download className="h-3.5 w-3.5" />
+                Download v{updateState.version}
+              </Button>
+            )}
+            {updateState.status === 'downloading' && (
+              <Button size="sm" disabled className="gap-1.5">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Downloading… {Math.round(updateState.percent)}%
+              </Button>
+            )}
+            {updateState.status === 'ready' && (
+              <Button size="sm" className="gap-1.5" onClick={() => window.api.updater.install()}>
+                <RotateCcw className="h-3.5 w-3.5" />
+                Restart to update
+              </Button>
+            )}
+            {updateState.status === 'up-to-date' && (
+              <span className="flex items-center gap-1.5 text-sm text-green-600">
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Up to date
+              </span>
+            )}
+            {updateState.status === 'error' && (
+              <span className="text-sm text-destructive">{updateState.message}</span>
+            )}
           </div>
         </section>
 
