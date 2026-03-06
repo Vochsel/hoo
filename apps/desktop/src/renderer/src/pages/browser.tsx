@@ -502,8 +502,21 @@ function BrowserPageInner(): React.ReactElement {
     })
   }, [setSetting])
 
+  // Save last selected tab per board
+  const lastSelectedTabRef = useRef<string | null>(null)
+  const prevBoardIdRef = useRef<string | null>(activeBoardId)
+  const restoredForBoardRef = useRef<string | null>(null)
+
   useEffect(() => {
     if (pendingBoardRenameRef.current || pendingFolderRenameRef.current) return
+    // Persist last selected tab for the board we're leaving
+    if (prevBoardIdRef.current && lastSelectedTabRef.current) {
+      const prev = (getSetting('lastSelectedTabs') ?? {}) as Record<string, string>
+      void setSetting('lastSelectedTabs', { ...prev, [prevBoardIdRef.current]: lastSelectedTabRef.current })
+    }
+    prevBoardIdRef.current = activeBoardId
+    lastSelectedTabRef.current = null
+    restoredForBoardRef.current = null
     setRunningTabs(new Set())
     setPreviewingTabs(new Set())
     dialogWebviews.current.clear()
@@ -512,7 +525,27 @@ function BrowserPageInner(): React.ReactElement {
     setDialogOpen(false)
     setTerminalDialogNodeId(null)
     setContextMenu(null)
-  }, [activeBoardId])
+  }, [activeBoardId, getSetting, setSetting])
+
+  // Track the currently selected tab for persistence
+  useEffect(() => {
+    lastSelectedTabRef.current = selectedTab?.id ?? null
+  }, [selectedTab])
+
+  // Restore last selected tab when tabs finish loading for the active board
+  useEffect(() => {
+    if (!activeBoardId || tabs.length === 0) return
+    if (restoredForBoardRef.current === activeBoardId) return
+    restoredForBoardRef.current = activeBoardId
+    const saved = (getSetting('lastSelectedTabs') ?? {}) as Record<string, string>
+    const lastTabId = saved[activeBoardId]
+    if (lastTabId) {
+      const tab = tabs.find((t) => t.id === lastTabId)
+      if (tab) {
+        setSelectedTab(tab)
+      }
+    }
+  }, [activeBoardId, tabs, getSetting])
 
   useEffect(() => {
     if (!workspace) return
