@@ -502,17 +502,21 @@ function BrowserPageInner(): React.ReactElement {
     })
   }, [setSetting])
 
-  // Save last selected tab per board
+  // Save last selected tab per board — use refs to avoid re-firing on every settings change
   const lastSelectedTabRef = useRef<string | null>(null)
   const prevBoardIdRef = useRef<string | null>(activeBoardId)
   const restoredForBoardRef = useRef<string | null>(null)
+  const getSettingRef = useRef(getSetting)
+  getSettingRef.current = getSetting
+  const setSettingRef = useRef(setSetting)
+  setSettingRef.current = setSetting
 
   useEffect(() => {
     if (pendingBoardRenameRef.current || pendingFolderRenameRef.current) return
     // Persist last selected tab for the board we're leaving
     if (prevBoardIdRef.current && lastSelectedTabRef.current) {
-      const prev = (getSetting('lastSelectedTabs') ?? {}) as Record<string, string>
-      void setSetting('lastSelectedTabs', { ...prev, [prevBoardIdRef.current]: lastSelectedTabRef.current })
+      const prev = (getSettingRef.current('lastSelectedTabs') ?? {}) as Record<string, string>
+      void setSettingRef.current('lastSelectedTabs', { ...prev, [prevBoardIdRef.current]: lastSelectedTabRef.current })
     }
     prevBoardIdRef.current = activeBoardId
     lastSelectedTabRef.current = null
@@ -525,7 +529,7 @@ function BrowserPageInner(): React.ReactElement {
     setDialogOpen(false)
     setTerminalDialogNodeId(null)
     setContextMenu(null)
-  }, [activeBoardId, getSetting, setSetting])
+  }, [activeBoardId])
 
   // Track the currently selected tab for persistence
   useEffect(() => {
@@ -537,7 +541,7 @@ function BrowserPageInner(): React.ReactElement {
     if (!activeBoardId || tabs.length === 0) return
     if (restoredForBoardRef.current === activeBoardId) return
     restoredForBoardRef.current = activeBoardId
-    const saved = (getSetting('lastSelectedTabs') ?? {}) as Record<string, string>
+    const saved = (getSettingRef.current('lastSelectedTabs') ?? {}) as Record<string, string>
     const lastTabId = saved[activeBoardId]
     if (lastTabId) {
       const tab = tabs.find((t) => t.id === lastTabId)
@@ -545,7 +549,7 @@ function BrowserPageInner(): React.ReactElement {
         setSelectedTab(tab)
       }
     }
-  }, [activeBoardId, tabs, getSetting])
+  }, [activeBoardId, tabs])
 
   useEffect(() => {
     if (!workspace) return
