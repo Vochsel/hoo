@@ -23,6 +23,7 @@ import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft } from 'lucide-react'
 import { useAppActions } from '@/App'
+import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { BrowserTabNode, type BrowserTabNodeData } from '@/components/browser/browser-tab-node'
@@ -3429,6 +3430,7 @@ function BrowserPageInner(): React.ReactElement {
           </div>
 
           <div className="border-t border-border/40 px-3 py-2 space-y-0.5">
+            <UpdateBanner />
             <NavLink
               to="/settings"
               className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"

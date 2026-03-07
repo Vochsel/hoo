@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Download, RotateCcw } from 'lucide-react'
 
 type UpdateState =
   | { status: 'idle' }
@@ -25,31 +26,32 @@ export function UpdateBanner() {
   if (state.status === 'idle') return null
 
   return (
-    <div className="flex items-center gap-3 px-4 py-2 text-xs bg-blue-600 text-white">
+    <div className="px-2 py-1.5">
       {state.status === 'available' && (
-        <>
-          <span>Version {state.version} is available.</span>
-          <button
-            onClick={() => window.api.updater.download()}
-            className="underline font-medium hover:opacity-80"
-          >
-            Download
-          </button>
-        </>
+        <button
+          type="button"
+          onClick={() => window.api.updater.download()}
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-blue-400 hover:bg-accent hover:text-blue-300 transition-colors"
+        >
+          <Download className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">v{state.version} available</span>
+        </button>
       )}
       {state.status === 'downloading' && (
-        <span>Downloading update… {Math.round(state.percent)}%</span>
+        <div className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground">
+          <Download className="h-3.5 w-3.5 shrink-0 animate-pulse" />
+          <span className="truncate">Downloading… {Math.round(state.percent)}%</span>
+        </div>
       )}
       {state.status === 'ready' && (
-        <>
-          <span>Update ready.</span>
-          <button
-            onClick={() => window.api.updater.install()}
-            className="underline font-medium hover:opacity-80"
-          >
-            Restart now
-          </button>
-        </>
+        <button
+          type="button"
+          onClick={() => window.api.updater.install()}
+          className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-blue-400 hover:bg-accent hover:text-blue-300 transition-colors"
+        >
+          <RotateCcw className="h-3.5 w-3.5 shrink-0" />
+          <span className="truncate">Restart to update</span>
+        </button>
       )}
     </div>
   )
