@@ -46,7 +46,7 @@ const CHANGELOG_ENTRIES: ChangelogEntry[] = [
     date: 'March 4, 2026',
     points: [
       'Terminal scrollback increased to 10,000 lines and backend buffer to 500KB — reopening terminals no longer loses scroll history.',
-      'Shift+Enter in terminal now sends a distinct key sequence so interactive CLIs like Claude Code can treat it as newline.',
+      'Shift+Enter in terminal now sends Claude Code’s multiline escape so prompts can continue without submitting.',
       'AI chat sidebar in the browser dialog is now collapsed by default.',
       'Cmd+L / Ctrl+L now focuses the URL bar in both the dialog and the tabs view.',
       'Address bar auto-adds https:// for multi-part TLDs like .com.au and .co.uk.',

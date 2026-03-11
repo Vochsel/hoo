@@ -1,4 +1,4 @@
-import { useRef, useCallback, useState, useEffect } from 'react'
+import { useRef, useCallback, useState, useEffect, type DragEvent as ReactDragEvent } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Settings, ChevronLeft, ChevronRight, X, RotateCw } from 'lucide-react'
@@ -7,6 +7,11 @@ import { Dialog, DialogContent } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { TerminalNodeConfig } from './terminal-node'
+import {
+  canAcceptTerminalDrop,
+  installTerminalKeyBindings,
+  writeDroppedItemsToTerminal
+} from './terminal-interactions'
 
 interface TerminalDialogProps {
   open: boolean
@@ -270,13 +275,7 @@ export function TerminalDialog({
       termRef.current = term
       fitRef.current = fitAddon
 
-      // Let Ctrl+Tab / Ctrl+Shift+Tab bubble up for tab cycling
-      term.attachCustomKeyEventHandler((event) => {
-        if (event.ctrlKey && event.key === 'Tab') {
-          return false
-        }
-        return true
-      })
+      const removeKeyBindings = installTerminalKeyBindings(term, sid, el)
 
       // Fit after the dialog animation settles
       const fitTimer = setTimeout(() => {
@@ -361,6 +360,7 @@ export function TerminalDialog({
 
       cleanupListenersRef.current = () => {
         clearTimeout(fitTimer)
+        removeKeyBindings()
         disposable.dispose()
         removeDataListener()
         removeExitListener()
@@ -426,12 +426,29 @@ export function TerminalDialog({
     }
   }, [open, detachTerminal])
 
+  const handleDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!canAcceptTerminalDrop(event.dataTransfer)) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleDrop = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!canAcceptTerminalDrop(event.dataTransfer)) return
+    event.preventDefault()
+    event.stopPropagation()
+    void writeDroppedItemsToTerminal(sessionIdRef.current, event.dataTransfer)
+  }, [])
+
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
         className="flex h-[80vh] max-w-[90vw] flex-row p-0 gap-0 overflow-hidden [&>button[class*='absolute']]:hidden"
         onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}
+        onDragEnter={handleDragOver}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
       >
         {/* Terminal area */}
         <div className="flex flex-1 min-w-0 flex-col">

@@ -1,6 +1,9 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
-import { homedir } from 'os'
+import { randomUUID } from 'node:crypto'
+import { promises as fs } from 'node:fs'
+import { basename, extname, join } from 'node:path'
+import { homedir, tmpdir } from 'os'
 
 const sessions = new Map<string, pty.IPty>()
 const buffers = new Map<string, string>()
@@ -15,6 +18,12 @@ function defaultShell(): string {
   return process.platform === 'win32'
     ? 'powershell.exe'
     : process.env.SHELL || '/bin/zsh'
+}
+
+function sanitizeDroppedFileName(fileName: string): string {
+  const normalized = basename((fileName || 'dropped-file').trim() || 'dropped-file')
+  const safe = normalized.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '-')
+  return safe || 'dropped-file'
 }
 
 export function registerTerminalHandlers(): void {
@@ -179,6 +188,19 @@ export function registerTerminalHandlers(): void {
 
   ipcMain.handle('terminal:getBuffer', (_e: IpcMainInvokeEvent, sessionId: string) => {
     return buffers.get(sessionId) ?? ''
+  })
+
+  ipcMain.handle('terminal:materializeDroppedFile', async (_e: IpcMainInvokeEvent, fileName: string, bytes: Uint8Array) => {
+    const directory = join(tmpdir(), 'hoo-terminal-drops')
+    await fs.mkdir(directory, { recursive: true })
+
+    const safeName = sanitizeDroppedFileName(fileName)
+    const extension = extname(safeName)
+    const stem = extension ? safeName.slice(0, -extension.length) : safeName
+    const filePath = join(directory, `${stem}-${randomUUID()}${extension}`)
+
+    await fs.writeFile(filePath, bytes)
+    return filePath
   })
 }
 

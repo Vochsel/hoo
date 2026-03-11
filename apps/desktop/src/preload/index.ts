@@ -122,6 +122,8 @@ const api = {
       ipcRenderer.invoke('terminal:hasSession', sessionId) as Promise<boolean>,
     getBuffer: (sessionId: string) =>
       ipcRenderer.invoke('terminal:getBuffer', sessionId) as Promise<string>,
+    materializeDroppedFile: (fileName: string, bytes: Uint8Array) =>
+      ipcRenderer.invoke('terminal:materializeDroppedFile', fileName, bytes) as Promise<string>,
     onData: (callback: (sessionId: string, data: string) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, sessionId: string, data: string): void => {
         callback(sessionId, data)

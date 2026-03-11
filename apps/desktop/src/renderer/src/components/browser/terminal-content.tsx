@@ -1,9 +1,14 @@
-import { useRef, useCallback, useEffect, useState } from 'react'
+import { useRef, useCallback, useEffect, useState, type DragEvent as ReactDragEvent } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { RotateCw } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import type { TerminalNodeConfig } from './terminal-node'
+import {
+  canAcceptTerminalDrop,
+  installTerminalKeyBindings,
+  writeDroppedItemsToTerminal
+} from './terminal-interactions'
 
 interface TerminalContentProps {
   sessionId: string
@@ -118,6 +123,20 @@ export function TerminalContent({
     return () => { detachTerminal() }
   }, [detachTerminal])
 
+  const handleDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!canAcceptTerminalDrop(event.dataTransfer)) return
+    event.preventDefault()
+    event.stopPropagation()
+    event.dataTransfer.dropEffect = 'copy'
+  }, [])
+
+  const handleDrop = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (!canAcceptTerminalDrop(event.dataTransfer)) return
+    event.preventDefault()
+    event.stopPropagation()
+    void writeDroppedItemsToTerminal(sessionIdRef.current, event.dataTransfer)
+  }, [])
+
   const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const containerCallbackRef = useCallback(
@@ -158,19 +177,7 @@ export function TerminalContent({
         termRef.current = term
         fitRef.current = fitAddon
 
-        // Shift+Enter sends a distinct escape sequence so interactive CLIs
-        // (e.g. Claude Code) can treat it as "new line" rather than "submit".
-        term.attachCustomKeyEventHandler((event) => {
-          if (event.type === 'keydown' && event.key === 'Enter' && event.shiftKey) {
-            window.api.terminal.write(sid, '\x1b[13;2u').catch(() => {})
-            return false
-          }
-          // Let Ctrl+Tab / Ctrl+Shift+Tab bubble up for tab cycling
-          if (event.ctrlKey && event.key === 'Tab') {
-            return false
-          }
-          return true
-        })
+        const removeKeyBindings = installTerminalKeyBindings(term, sid, el)
 
         try { fitAddon.fit() } catch {}
 
@@ -240,6 +247,7 @@ export function TerminalContent({
         )
 
         cleanupListenersRef.current = () => {
+          removeKeyBindings()
           disposable.dispose()
           removeDataListener()
           removeExitListener()
@@ -261,7 +269,12 @@ export function TerminalContent({
   )
 
   return (
-    <div className="flex flex-1 flex-col min-h-0 overflow-hidden">
+    <div
+      className="flex flex-1 flex-col min-h-0 overflow-hidden"
+      onDragEnter={handleDragOver}
+      onDragOver={handleDragOver}
+      onDrop={handleDrop}
+    >
       <div className="flex items-center gap-2 border-b px-4 py-2">
         <span className="text-sm font-medium shrink-0">{label || 'Terminal'}</span>
         {config.command && (
