@@ -50,6 +50,7 @@ export interface BoardDocument {
   tabs: Array<Record<string, unknown>>
   graphNodes: Array<Record<string, unknown>>
   edges: Array<Record<string, unknown>>
+  tabViewOrder?: string[]
   documentHtml?: string
   activeView?: BoardViewMode
   rootDir?: string
@@ -133,7 +134,8 @@ function defaultBoardDocument(): BoardDocument {
     version: 1,
     tabs: [],
     graphNodes: [],
-    edges: []
+    edges: [],
+    tabViewOrder: []
   }
 }
 
@@ -274,6 +276,9 @@ function normalizeBoardDocument(raw: unknown): BoardDocument {
     tabs: Array.isArray(value.tabs) ? (value.tabs as Array<Record<string, unknown>>) : [],
     graphNodes: Array.isArray(value.graphNodes) ? (value.graphNodes as Array<Record<string, unknown>>) : [],
     edges: Array.isArray(value.edges) ? (value.edges as Array<Record<string, unknown>>) : []
+  }
+  if (Array.isArray(value.tabViewOrder)) {
+    doc.tabViewOrder = value.tabViewOrder.filter((entry): entry is string => typeof entry === 'string')
   }
   if (typeof value.documentHtml === 'string') {
     doc.documentHtml = value.documentHtml

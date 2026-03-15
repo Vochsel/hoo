@@ -64,8 +64,14 @@ export interface PageContext {
   includeScreenshot?: boolean
 }
 
-function sortTabsByCreatedAt(tabs: BrowserTab[]): BrowserTab[] {
-  return [...tabs].sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+function orderTabsByIds(tabs: BrowserTab[], orderedIds: string[]): BrowserTab[] {
+  if (orderedIds.length === 0) return tabs
+  const tabsById = new Map(tabs.map((tab) => [tab.id, tab]))
+  const orderedTabs = orderedIds
+    .map((id) => tabsById.get(id))
+    .filter((tab): tab is BrowserTab => tab != null)
+  const orderedIdSet = new Set(orderedTabs.map((tab) => tab.id))
+  return [...orderedTabs, ...tabs.filter((tab) => !orderedIdSet.has(tab.id))]
 }
 
 export function useBrowserTabs(boardId: string | null): {
@@ -75,6 +81,7 @@ export function useBrowserTabs(boardId: string | null): {
   createTab: (data?: { title?: string; url?: string; flowX?: number; flowY?: number }) => Promise<BrowserTab>
   updateTab: (id: string, data: Record<string, unknown>) => Promise<BrowserTab>
   deleteTab: (id: string) => Promise<void>
+  saveOrder: (orderedIds: string[]) => Promise<void>
   savePositions: (positions: Array<{ id: string; x: number; y: number }>) => Promise<void>
 } {
   const [tabs, setTabs] = useState<BrowserTab[]>([])
@@ -103,7 +110,7 @@ export function useBrowserTabs(boardId: string | null): {
       const result = await window.api.browserTabs.list(targetBoardId)
       if (refreshVersion !== refreshVersionRef.current) return
       if (boardIdRef.current !== targetBoardId) return
-      setTabs(sortTabsByCreatedAt(result))
+      setTabs(result)
     } finally {
       if (refreshVersion === refreshVersionRef.current && boardIdRef.current === targetBoardId) {
         setLoading(false)
@@ -123,7 +130,7 @@ export function useBrowserTabs(boardId: string | null): {
       }
       const tab = await window.api.browserTabs.create(data ?? {}, targetBoardId)
       if (boardIdRef.current === targetBoardId) {
-        setTabs((prev) => sortTabsByCreatedAt([...prev, tab]))
+        setTabs((prev) => [...prev, tab])
       }
       return tab
     },
@@ -140,7 +147,7 @@ export function useBrowserTabs(boardId: string | null): {
       if (!tab) {
         const latest = await window.api.browserTabs.list(targetBoardId)
         if (boardIdRef.current === targetBoardId) {
-          setTabs(sortTabsByCreatedAt(latest))
+          setTabs(latest)
         }
         const fallback = latest.find((entry) => entry.id === id)
         if (!fallback) {
@@ -149,7 +156,7 @@ export function useBrowserTabs(boardId: string | null): {
         return fallback
       }
       if (boardIdRef.current === targetBoardId) {
-        setTabs((prev) => sortTabsByCreatedAt(prev.map((entry) => (entry.id === id ? tab : entry))))
+        setTabs((prev) => prev.map((entry) => (entry.id === id ? tab : entry)))
       }
       return tab
     },
@@ -164,6 +171,18 @@ export function useBrowserTabs(boardId: string | null): {
       if (boardIdRef.current === targetBoardId) {
         setTabs((prev) => prev.filter((tab) => tab.id !== id))
       }
+    },
+    [boardId]
+  )
+
+  const saveOrder = useCallback(
+    async (orderedIds: string[]) => {
+      const targetBoardId = boardId
+      if (!targetBoardId) return
+      if (boardIdRef.current === targetBoardId) {
+        setTabs((prev) => orderTabsByIds(prev, orderedIds))
+      }
+      await window.api.browserTabs.saveOrder(orderedIds, targetBoardId)
     },
     [boardId]
   )
@@ -192,7 +211,7 @@ export function useBrowserTabs(boardId: string | null): {
     [boardId]
   )
 
-  return { tabs, loading, refresh, createTab, updateTab, deleteTab, savePositions }
+  return { tabs, loading, refresh, createTab, updateTab, deleteTab, saveOrder, savePositions }
 }
 
 export function useBrowserTabChat(tabId: string | null, boardId: string | null): {

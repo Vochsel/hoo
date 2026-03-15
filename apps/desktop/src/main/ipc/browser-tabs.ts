@@ -659,6 +659,31 @@ async function mutateBoardDocument<T>(
   }
 }
 
+function getBoardViewItemIds(board: BoardDocument): Set<string> {
+  return new Set([
+    ...board.tabs.map((tab) => String(tab.id ?? '')),
+    ...board.graphNodes.map((node) => String(node.id ?? ''))
+  ])
+}
+
+function normalizeBoardViewOrder(board: BoardDocument, orderedIds: string[]): string[] {
+  const validIds = getBoardViewItemIds(board)
+  const seen = new Set<string>()
+  const normalized: string[] = []
+  for (const rawId of orderedIds) {
+    const id = String(rawId ?? '')
+    if (!id || seen.has(id) || !validIds.has(id)) continue
+    seen.add(id)
+    normalized.push(id)
+  }
+  return normalized
+}
+
+function removeBoardViewOrderId(board: BoardDocument, removedId: string): void {
+  if (!Array.isArray(board.tabViewOrder) || board.tabViewOrder.length === 0) return
+  board.tabViewOrder = board.tabViewOrder.filter((id) => id !== removedId)
+}
+
 export function registerBrowserTabHandlers(): void {
   // ─── Tab CRUD ───────────────────────────────────────────────────────────────
 
@@ -666,11 +691,7 @@ export function registerBrowserTabHandlers(): void {
     await ensureWorkspaceInitialized()
     const resolvedBoardId = resolveBoardIdOrThrow(boardId)
     const board = await readBoardDocument(resolvedBoardId)
-    return [...board.tabs].sort((a, b) => {
-      const left = String(a.createdAt ?? '')
-      const right = String(b.createdAt ?? '')
-      return left.localeCompare(right)
-    })
+    return [...board.tabs]
   })
 
   ipcMain.handle('browserTabs:get', async (_e, id: string, boardId?: string) => {
@@ -747,10 +768,44 @@ export function registerBrowserTabHandlers(): void {
     await mutateBoardDocument(resolvedBoardId, (board) => {
       board.tabs = board.tabs.filter((tab) => tab.id !== id)
       board.edges = board.edges.filter((edge) => edge.sourceNodeId !== id && edge.targetNodeId !== id)
+      removeBoardViewOrderId(board, id)
     })
     const appDb = getAppDb()
     appDb.delete(browserTabs).where(eq(browserTabs.id, id)).run()
     appDb.delete(browserTabMessages).where(eq(browserTabMessages.tabId, id)).run()
+    return { success: true }
+  })
+
+  ipcMain.handle('browserTabs:saveOrder', async (_e, orderedIds: string[], boardId?: string) => {
+    await ensureWorkspaceInitialized()
+    const resolvedBoardId = resolveBoardIdOrThrow(boardId)
+    await mutateBoardDocument(resolvedBoardId, (board) => {
+      const tabsById = new Map(
+        board.tabs.map((tab) => [String(tab.id ?? ''), tab] as const)
+      )
+      const reorderedTabs = orderedIds
+        .map((id) => tabsById.get(id))
+        .filter((tab): tab is Record<string, unknown> => tab != null)
+      const orderedIdSet = new Set(reorderedTabs.map((tab) => String(tab.id ?? '')))
+      const remainingTabs = board.tabs.filter((tab) => !orderedIdSet.has(String(tab.id ?? '')))
+      board.tabs = [...reorderedTabs, ...remainingTabs]
+    })
+    return { success: true }
+  })
+
+  ipcMain.handle('browserTabs:getViewOrder', async (_e, boardId?: string) => {
+    await ensureWorkspaceInitialized()
+    const resolvedBoardId = resolveBoardIdOrThrow(boardId)
+    const board = await readBoardDocument(resolvedBoardId)
+    return normalizeBoardViewOrder(board, board.tabViewOrder ?? [])
+  })
+
+  ipcMain.handle('browserTabs:saveViewOrder', async (_e, orderedIds: string[], boardId?: string) => {
+    await ensureWorkspaceInitialized()
+    const resolvedBoardId = resolveBoardIdOrThrow(boardId)
+    await mutateBoardDocument(resolvedBoardId, (board) => {
+      board.tabViewOrder = normalizeBoardViewOrder(board, orderedIds)
+    })
     return { success: true }
   })
 
@@ -1165,11 +1220,7 @@ export function registerBrowserTabHandlers(): void {
     await ensureWorkspaceInitialized()
     const resolvedBoardId = resolveBoardIdOrThrow(boardId)
     const board = await readBoardDocument(resolvedBoardId)
-    return [...board.graphNodes].sort((a, b) => {
-      const left = String(a.createdAt ?? '')
-      const right = String(b.createdAt ?? '')
-      return left.localeCompare(right)
-    })
+    return [...board.graphNodes]
   })
 
   ipcMain.handle(
@@ -1224,6 +1275,24 @@ export function registerBrowserTabHandlers(): void {
     await mutateBoardDocument(resolvedBoardId, (board) => {
       board.graphNodes = board.graphNodes.filter((node) => node.id !== id)
       board.edges = board.edges.filter((edge) => edge.sourceNodeId !== id && edge.targetNodeId !== id)
+      removeBoardViewOrderId(board, id)
+    })
+    return { success: true }
+  })
+
+  ipcMain.handle('graphNodes:saveOrder', async (_e, orderedIds: string[], boardId?: string) => {
+    await ensureWorkspaceInitialized()
+    const resolvedBoardId = resolveBoardIdOrThrow(boardId)
+    await mutateBoardDocument(resolvedBoardId, (board) => {
+      const nodesById = new Map(
+        board.graphNodes.map((node) => [String(node.id ?? ''), node] as const)
+      )
+      const reorderedNodes = orderedIds
+        .map((id) => nodesById.get(id))
+        .filter((node): node is Record<string, unknown> => node != null)
+      const orderedIdSet = new Set(reorderedNodes.map((node) => String(node.id ?? '')))
+      const remainingNodes = board.graphNodes.filter((node) => !orderedIdSet.has(String(node.id ?? '')))
+      board.graphNodes = [...reorderedNodes, ...remainingNodes]
     })
     return { success: true }
   })

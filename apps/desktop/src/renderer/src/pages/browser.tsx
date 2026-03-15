@@ -42,7 +42,7 @@ import { TerminalNode, type TerminalNodeConfig } from '@/components/browser/term
 import { TerminalDialog } from '@/components/browser/terminal-dialog'
 import { BrowserTabDialog } from '@/components/browser/browser-tab-dialog'
 import { MonitorWebviews } from '@/components/browser/monitor-webviews'
-import { BoardTabsView } from '@/components/browser/board-tabs-view'
+import { BoardTabsView, type BoardTabsItemKind } from '@/components/browser/board-tabs-view'
 import { BoardDocumentView } from '@/components/browser/board-document-view'
 import { useBrowserTabs, type BrowserTab, type BrowserTabMonitor, type MonitorRule } from '@/hooks/use-browser-tabs'
 import { useSettings } from '@/hooks/use-settings'
@@ -239,6 +239,27 @@ interface ContextMenu {
   flowPosition?: { x: number; y: number }
 }
 
+type SidebarItemKind = BoardTabsItemKind
+
+interface BoardItemMenu {
+  x: number
+  y: number
+  itemId: string
+  kind: SidebarItemKind
+  boardId: string
+}
+
+interface RenameDialogState {
+  itemId: string
+  currentName: string
+  boardId: string | null
+  kind: 'browser' | 'graph' | SidebarItemKind
+}
+
+type SidebarBoardItem =
+  | { id: string; kind: 'browser'; tab: BrowserTab }
+  | { id: string; kind: 'terminal' | 'file'; node: GraphNode }
+
 
 function BrowserPageInner(): React.ReactElement {
   const {
@@ -260,13 +281,14 @@ function BrowserPageInner(): React.ReactElement {
     setBoardActiveView
   } = useWorkspace()
   const activeBoardId = workspace?.activeBoardId ?? null
-  const { tabs, refresh, createTab, updateTab, deleteTab, savePositions: saveTabPositions } = useBrowserTabs(activeBoardId)
+  const { tabs, refresh, createTab, updateTab, deleteTab, saveOrder: saveTabOrder, savePositions: saveTabPositions } = useBrowserTabs(activeBoardId)
   const { getSetting, setSetting, loading: settingsLoading } = useSettings()
   const {
     graphNodes: gNodes,
     createNode,
     updateNode,
     deleteNode,
+    saveOrder: saveNodeOrder,
     savePositions: saveGraphPositions
   } = useGraphNodes(activeBoardId)
   const { edges: savedEdges, saveEdges } = useBrowserEdges(activeBoardId)
@@ -285,6 +307,8 @@ function BrowserPageInner(): React.ReactElement {
   }, [])
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
+  const [boardItemMenu, setBoardItemMenu] = useState<BoardItemMenu | null>(null)
+  const [boardItemMenuPosition, setBoardItemMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [monitorInput, setMonitorInput] = useState('')
   const [monitorNodeId, setMonitorNodeId] = useState<string | null>(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState<string | null>(null)
@@ -296,13 +320,14 @@ function BrowserPageInner(): React.ReactElement {
   const [boardTabsMap, setBoardTabsMap] = useState<Map<string, BrowserTab[]>>(new Map())
   const [boardTerminalsMap, setBoardTerminalsMap] = useState<Map<string, GraphNode[]>>(new Map())
   const [boardFilesMap, setBoardFilesMap] = useState<Map<string, GraphNode[]>>(new Map())
+  const [boardItemOrderMap, setBoardItemOrderMap] = useState<Map<string, string[]>>(new Map())
   const [editingFolderId, setEditingFolderId] = useState<string | null>(null)
   const [editingFolderName, setEditingFolderName] = useState('')
   const [editingBoardId, setEditingBoardId] = useState<string | null>(null)
   const [editingBoardName, setEditingBoardName] = useState('')
   const [editingTerminalId, setEditingTerminalId] = useState<string | null>(null)
   const [editingTerminalName, setEditingTerminalName] = useState('')
-  const [renameDialog, setRenameDialog] = useState<{ nodeId: string; currentName: string; isTab: boolean } | null>(null)
+  const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null)
   const [renameDialogValue, setRenameDialogValue] = useState('')
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const [recentWorkspaces, setRecentWorkspaces] = useState<import('@/hooks/use-workspace').RecentWorkspace[]>([])
@@ -319,6 +344,7 @@ function BrowserPageInner(): React.ReactElement {
   const [settingsDialogBoardId, setSettingsDialogBoardId] = useState<string | null>(null)
   const [settingsDialogRootDir, setSettingsDialogRootDir] = useState('')
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
+  const boardItemMenuRef = useRef<HTMLDivElement | null>(null)
   const flowContainerRef = useRef<HTMLDivElement | null>(null)
   const lastMouseClientPositionRef = useRef<{ x: number; y: number } | null>(null)
   const triggerWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
@@ -437,16 +463,36 @@ function BrowserPageInner(): React.ReactElement {
     let cancelled = false
     const loadAllBoardTabs = async (): Promise<void> => {
       const next = new Map<string, BrowserTab[]>()
-      for (const board of workspace.boards) {
-        const boardTabs = await window.api.browserTabs.list(board.id)
-        if (cancelled) return
-        next.set(board.id, boardTabs)
+      const nextItemOrderMap = new Map<string, string[]>()
+      const boardEntries = await Promise.all(
+        workspace.boards.map(async (board) => {
+          const [boardTabs, itemOrder] = await Promise.all([
+            window.api.browserTabs.list(board.id),
+            window.api.browserTabs.getViewOrder(board.id)
+          ])
+          return { boardId: board.id, boardTabs, itemOrder }
+        })
+      )
+      if (cancelled) return
+      for (const { boardId, boardTabs, itemOrder } of boardEntries) {
+        next.set(boardId, boardTabs)
+        if (itemOrder.length > 0) {
+          nextItemOrderMap.set(boardId, itemOrder)
+        }
       }
       setBoardTabsMap(next)
+      setBoardItemOrderMap((prev) => {
+        const merged = new Map(nextItemOrderMap)
+        const activeOrder = activeBoardId ? prev.get(activeBoardId) : undefined
+        if (activeBoardId && activeOrder) {
+          merged.set(activeBoardId, activeOrder)
+        }
+        return merged
+      })
     }
     void loadAllBoardTabs()
     return () => { cancelled = true }
-  }, [workspace, tabs])
+  }, [workspace, tabs, activeBoardId])
 
   // Load terminal and file nodes for non-active boards (sidebar).
   // Mirrors the boardTabsMap pattern — only re-fetches when workspace changes.
@@ -550,6 +596,7 @@ function BrowserPageInner(): React.ReactElement {
     setDialogOpen(false)
     setTerminalDialogNodeId(null)
     setContextMenu(null)
+    setBoardItemMenu(null)
   }, [activeBoardId])
 
   // Track the currently selected tab for persistence
@@ -2445,6 +2492,7 @@ function BrowserPageInner(): React.ReactElement {
   const handlePaneContextMenu = useCallback(
     (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
       event.preventDefault()
+      setBoardItemMenu(null)
       const flowPosition = reactFlowInstance.screenToFlowPosition({
         x: event.clientX,
         y: event.clientY
@@ -2462,6 +2510,7 @@ function BrowserPageInner(): React.ReactElement {
   const handleNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
       event.preventDefault()
+      setBoardItemMenu(null)
       setContextMenu({
         x: event.clientX,
         y: event.clientY,
@@ -2475,6 +2524,10 @@ function BrowserPageInner(): React.ReactElement {
 
   const closeContextMenu = useCallback(() => {
     setContextMenu(null)
+  }, [])
+
+  const closeBoardItemMenu = useCallback(() => {
+    setBoardItemMenu(null)
   }, [])
 
   useLayoutEffect(() => {
@@ -2499,6 +2552,247 @@ function BrowserPageInner(): React.ReactElement {
     window.addEventListener('resize', clampToViewport)
     return (): void => window.removeEventListener('resize', clampToViewport)
   }, [contextMenu])
+
+  useLayoutEffect(() => {
+    if (!boardItemMenu) {
+      setBoardItemMenuPosition(null)
+      return
+    }
+
+    const clampToViewport = (): void => {
+      const menuEl = boardItemMenuRef.current
+      const menuWidth = menuEl?.offsetWidth ?? 180
+      const menuHeight = menuEl?.offsetHeight ?? 110
+      const pad = 8
+      const maxX = Math.max(pad, window.innerWidth - menuWidth - pad)
+      const maxY = Math.max(pad, window.innerHeight - menuHeight - pad)
+      const x = Math.min(Math.max(boardItemMenu.x, pad), maxX)
+      const y = Math.min(Math.max(boardItemMenu.y, pad), maxY)
+      setBoardItemMenuPosition({ x, y })
+    }
+
+    clampToViewport()
+    window.addEventListener('resize', clampToViewport)
+    return (): void => window.removeEventListener('resize', clampToViewport)
+  }, [boardItemMenu])
+
+  const handleBoardItemContextMenu = useCallback(
+    (event: React.MouseEvent, itemId: string, kind: SidebarItemKind, boardId: string) => {
+      event.preventDefault()
+      event.stopPropagation()
+      setContextMenu(null)
+      setBoardItemMenu({
+        x: event.clientX,
+        y: event.clientY,
+        itemId,
+        kind,
+        boardId
+      })
+    },
+    []
+  )
+
+  const updateBoardTabsSidebar = useCallback((boardId: string, updater: (tabs: BrowserTab[]) => BrowserTab[]) => {
+    setBoardTabsMap((prev) => {
+      const current = prev.get(boardId) ?? []
+      const nextTabs = updater(current)
+      if (current === nextTabs) return prev
+      const next = new Map(prev)
+      if (nextTabs.length > 0) next.set(boardId, nextTabs)
+      else next.delete(boardId)
+      return next
+    })
+  }, [])
+
+  const updateBoardNodeSidebar = useCallback(
+    (
+      boardId: string,
+      kind: 'terminal' | 'file',
+      updater: (nodes: GraphNode[]) => GraphNode[]
+    ) => {
+      const setMap = kind === 'terminal' ? setBoardTerminalsMap : setBoardFilesMap
+      setMap((prev) => {
+        const current = prev.get(boardId) ?? []
+        const nextNodes = updater(current)
+        if (current === nextNodes) return prev
+        const next = new Map(prev)
+        if (nextNodes.length > 0) next.set(boardId, nextNodes)
+        else next.delete(boardId)
+        return next
+      })
+    },
+    []
+  )
+
+  const updateBoardItemOrder = useCallback(
+    (boardId: string, updater: (orderedIds: string[]) => string[]) => {
+      setBoardItemOrderMap((prev) => {
+        const current = prev.get(boardId) ?? []
+        const nextOrder = Array.from(new Set(updater(current).filter((id) => id.length > 0)))
+        if (current.length === nextOrder.length && current.every((id, index) => id === nextOrder[index])) {
+          return prev
+        }
+        const next = new Map(prev)
+        if (nextOrder.length > 0) next.set(boardId, nextOrder)
+        else next.delete(boardId)
+        return next
+      })
+    },
+    []
+  )
+
+  const saveBoardItemOrder = useCallback(
+    async (boardId: string, orderedIds: string[]) => {
+      const normalizedIds = Array.from(new Set(orderedIds.filter((id) => id.length > 0)))
+      updateBoardItemOrder(boardId, () => normalizedIds)
+      await window.api.browserTabs.saveViewOrder(normalizedIds, boardId)
+    },
+    [updateBoardItemOrder]
+  )
+
+  const getOrderedSidebarBoardItems = useCallback(
+    (boardId: string): SidebarBoardItem[] => {
+      const boardTabs = boardId === activeBoardId ? tabs : (boardTabsMap.get(boardId) ?? [])
+      const boardTerminals = boardId === activeBoardId ? terminalNodes : (boardTerminalsMap.get(boardId) ?? [])
+      const boardFiles = boardId === activeBoardId ? fileNodes : (boardFilesMap.get(boardId) ?? [])
+      const itemsById = new Map<string, SidebarBoardItem>()
+      for (const tab of boardTabs) {
+        itemsById.set(tab.id, { id: tab.id, kind: 'browser', tab })
+      }
+      for (const node of boardTerminals) {
+        itemsById.set(node.id, { id: node.id, kind: 'terminal', node })
+      }
+      for (const node of boardFiles) {
+        itemsById.set(node.id, { id: node.id, kind: 'file', node })
+      }
+
+      const orderedItems: SidebarBoardItem[] = []
+      const seen = new Set<string>()
+      for (const id of boardItemOrderMap.get(boardId) ?? []) {
+        const item = itemsById.get(id)
+        if (!item || seen.has(id)) continue
+        seen.add(id)
+        orderedItems.push(item)
+      }
+      for (const tab of boardTabs) {
+        if (seen.has(tab.id)) continue
+        seen.add(tab.id)
+        orderedItems.push({ id: tab.id, kind: 'browser', tab })
+      }
+      for (const node of boardTerminals) {
+        if (seen.has(node.id)) continue
+        seen.add(node.id)
+        orderedItems.push({ id: node.id, kind: 'terminal', node })
+      }
+      for (const node of boardFiles) {
+        if (seen.has(node.id)) continue
+        seen.add(node.id)
+        orderedItems.push({ id: node.id, kind: 'file', node })
+      }
+      return orderedItems
+    },
+    [activeBoardId, boardFilesMap, boardItemOrderMap, boardTabsMap, boardTerminalsMap, fileNodes, tabs, terminalNodes]
+  )
+
+  const renderSidebarBoardItems = useCallback(
+    (boardId: string): React.ReactNode => {
+      const items = getOrderedSidebarBoardItems(boardId)
+      if (items.length === 0) return null
+      return (
+        <div className="ml-5 mt-0.5 space-y-px">
+          {items.map((item) => {
+            const isActive = activeItemId === item.id && boardId === activeBoardId
+            if (item.kind === 'browser') {
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleSidebarItemClick(item.id, boardId)}
+                  onContextMenu={(event) => handleBoardItemContextMenu(event, item.id, item.kind, boardId)}
+                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isActive ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+                >
+                  {item.tab.favicon ? (
+                    <img src={item.tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
+                  ) : (
+                    <Globe className="h-3.5 w-3.5" />
+                  )}
+                  <span className="truncate">{item.tab.title || item.tab.url || 'New Tab'}</span>
+                </button>
+              )
+            }
+
+            if (item.kind === 'terminal') {
+              return (
+                <div
+                  key={item.id}
+                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors cursor-pointer ${isActive ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+                  onClick={() => handleSidebarItemClick(item.id, boardId)}
+                  onContextMenu={(event) => handleBoardItemContextMenu(event, item.id, item.kind, boardId)}
+                >
+                  <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                  {editingTerminalId === item.id ? (
+                    <Input
+                      value={editingTerminalName}
+                      onChange={(event) => setEditingTerminalName(event.target.value)}
+                      onBlur={() => void saveInlineTerminalEdit()}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') {
+                          event.currentTarget.blur()
+                          return
+                        }
+                        if (event.key === 'Escape') {
+                          event.preventDefault()
+                          cancelInlineTerminalEdit()
+                        }
+                      }}
+                      className="h-5 flex-1 text-xs px-1 py-0"
+                      autoFocus
+                    />
+                  ) : (
+                    <span
+                      className="min-w-0 flex-1 truncate text-left"
+                      onDoubleClick={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        startInlineTerminalEdit(item.id, item.node.label || 'Terminal')
+                      }}
+                    >
+                      {item.node.label || 'Terminal'}
+                    </span>
+                  )}
+                </div>
+              )
+            }
+
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => handleSidebarItemClick(item.id, boardId)}
+                onContextMenu={(event) => handleBoardItemContextMenu(event, item.id, item.kind, boardId)}
+                className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isActive ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+              >
+                <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
+                <span className="truncate">{item.node.label || 'File'}</span>
+              </button>
+            )
+          })}
+        </div>
+      )
+    },
+    [
+      activeBoardId,
+      activeItemId,
+      cancelInlineTerminalEdit,
+      editingTerminalId,
+      editingTerminalName,
+      getOrderedSidebarBoardItems,
+      handleBoardItemContextMenu,
+      handleSidebarItemClick,
+      saveInlineTerminalEdit,
+      startInlineTerminalEdit
+    ]
+  )
 
   // Pane context menu actions
   const handleContextAddTab = useCallback(async () => {
@@ -2569,6 +2863,89 @@ function BrowserPageInner(): React.ReactElement {
     }
     setContextMenu(null)
   }, [contextMenu, tabs, createTab])
+
+  const deleteGraphItemFromActiveBoard = useCallback(
+    async (itemId: string, kind: 'graph' | 'terminal' | 'file') => {
+      if (kind === 'terminal') {
+        window.api.terminal.kill(`pty-${itemId}`).catch(() => {})
+        if (terminalDialogNodeId === itemId) {
+          setTerminalDialogNodeId(null)
+        }
+      }
+      await deleteNode(itemId)
+      const currentEdges = reactFlowInstance.getEdges()
+      const filteredEdges = currentEdges.filter((edge) => edge.source !== itemId && edge.target !== itemId)
+      setEdges(filteredEdges)
+      saveEdges(filteredEdges)
+    },
+    [deleteNode, reactFlowInstance, saveEdges, setEdges, terminalDialogNodeId]
+  )
+
+  const handleBoardItemRename = useCallback(() => {
+    if (!boardItemMenu) return
+    const { itemId, kind, boardId } = boardItemMenu
+    if (kind === 'browser') {
+      const sourceTabs = boardId === activeBoardId ? tabs : (boardTabsMap.get(boardId) ?? [])
+      const tab = sourceTabs.find((entry) => entry.id === itemId)
+      if (tab) {
+        const currentName = tab.title?.trim() || tab.url || 'New Tab'
+        setRenameDialog({ itemId, currentName, boardId, kind })
+        setRenameDialogValue(currentName)
+      }
+      setBoardItemMenu(null)
+      return
+    }
+
+    const sourceNodes = boardId === activeBoardId
+      ? (kind === 'terminal' ? terminalNodes : fileNodes)
+      : ((kind === 'terminal' ? boardTerminalsMap.get(boardId) : boardFilesMap.get(boardId)) ?? [])
+    const node = sourceNodes.find((entry) => entry.id === itemId)
+    if (node) {
+      const fallbackName = kind === 'terminal' ? 'Terminal' : 'File'
+      const currentName = node.label?.trim() || fallbackName
+      setRenameDialog({ itemId, currentName, boardId, kind })
+      setRenameDialogValue(currentName)
+    }
+    setBoardItemMenu(null)
+  }, [activeBoardId, boardItemMenu, boardTabsMap, boardTerminalsMap, boardFilesMap, tabs, terminalNodes, fileNodes])
+
+  const deleteBoardItem = useCallback(
+    async (itemId: string, kind: 'browser' | 'graph' | 'terminal' | 'file', boardId: string | null) => {
+      const isActiveBoardItem = !!boardId && boardId === activeBoardId
+
+      if (kind === 'browser') {
+        if (isActiveBoardItem) {
+          await deleteTab(itemId)
+        } else if (boardId) {
+          await window.api.browserTabs.delete(itemId, boardId)
+          updateBoardTabsSidebar(boardId, (prev) => prev.filter((tab) => tab.id !== itemId))
+        }
+        if (boardId) {
+          updateBoardItemOrder(boardId, (prev) => prev.filter((id) => id !== itemId))
+        }
+        return
+      }
+
+      if (isActiveBoardItem) {
+        await deleteGraphItemFromActiveBoard(itemId, kind)
+        if (boardId) {
+          updateBoardItemOrder(boardId, (prev) => prev.filter((id) => id !== itemId))
+        }
+        return
+      }
+
+      if (kind === 'terminal') {
+        window.api.terminal.kill(`pty-${itemId}`).catch(() => {})
+      }
+      if (!boardId) return
+      await window.api.graphNodes.delete(itemId, boardId)
+      if (kind === 'terminal' || kind === 'file') {
+        updateBoardNodeSidebar(boardId, kind, (prev) => prev.filter((node) => node.id !== itemId))
+      }
+      updateBoardItemOrder(boardId, (prev) => prev.filter((id) => id !== itemId))
+    },
+    [activeBoardId, deleteTab, deleteGraphItemFromActiveBoard, updateBoardItemOrder, updateBoardNodeSidebar, updateBoardTabsSidebar]
+  )
 
   const handleContextExecuteNode = useCallback(() => {
     const nodeId = contextMenu?.nodeId
@@ -2648,7 +3025,12 @@ function BrowserPageInner(): React.ReactElement {
         } as const
       )[node.nodeType] ?? 'Node'
       const currentName = node.label?.trim() || fallbackName
-      setRenameDialog({ nodeId, currentName, isTab: false })
+      setRenameDialog({
+        itemId: nodeId,
+        currentName,
+        boardId: activeBoardId,
+        kind: node.nodeType === 'terminal' ? 'terminal' : node.nodeType === 'file' ? 'file' : 'graph'
+      })
       setRenameDialogValue(currentName)
       setContextMenu(null)
       return
@@ -2660,10 +3042,10 @@ function BrowserPageInner(): React.ReactElement {
       return
     }
     const currentTitle = tab.title?.trim() || 'New Tab'
-    setRenameDialog({ nodeId, currentName: currentTitle, isTab: true })
+    setRenameDialog({ itemId: nodeId, currentName: currentTitle, boardId: activeBoardId, kind: 'browser' })
     setRenameDialogValue(currentTitle)
     setContextMenu(null)
-  }, [contextMenu, gNodes, tabs])
+  }, [activeBoardId, contextMenu, gNodes, tabs])
 
   const handleRenameDialogSubmit = useCallback(async () => {
     if (!renameDialog) return
@@ -2673,16 +3055,34 @@ function BrowserPageInner(): React.ReactElement {
       return
     }
     try {
-      if (renameDialog.isTab) {
-        await updateTab(renameDialog.nodeId, { title: trimmed })
+      const { itemId, boardId, kind } = renameDialog
+      const isActiveBoardItem = !!boardId && boardId === activeBoardId
+      if (kind === 'browser') {
+        if (isActiveBoardItem || !boardId) {
+          await updateTab(itemId, { title: trimmed })
+        } else {
+          await window.api.browserTabs.update(itemId, { title: trimmed }, boardId)
+          updateBoardTabsSidebar(boardId, (prev) =>
+            prev.map((tab) => (tab.id === itemId ? { ...tab, title: trimmed } : tab))
+          )
+        }
       } else {
-        await updateNode(renameDialog.nodeId, { label: trimmed })
+        if (isActiveBoardItem || !boardId || kind === 'graph') {
+          await updateNode(itemId, { label: trimmed })
+        } else {
+          await window.api.graphNodes.update(itemId, { label: trimmed }, boardId)
+          if (kind === 'terminal' || kind === 'file') {
+            updateBoardNodeSidebar(boardId, kind, (prev) =>
+              prev.map((node) => (node.id === itemId ? { ...node, label: trimmed } : node))
+            )
+          }
+        }
       }
     } catch (error) {
-      console.error(`${FLOW_TAG} failed to rename node id=${renameDialog.nodeId}:`, error)
+      console.error(`${FLOW_TAG} failed to rename node id=${renameDialog.itemId}:`, error)
     }
     setRenameDialog(null)
-  }, [renameDialog, renameDialogValue, updateTab, updateNode])
+  }, [activeBoardId, renameDialog, renameDialogValue, updateBoardNodeSidebar, updateBoardTabsSidebar, updateTab, updateNode])
 
   const handleContextDeleteNode = useCallback(async () => {
     if (!contextMenu?.nodeId) {
@@ -2690,27 +3090,21 @@ function BrowserPageInner(): React.ReactElement {
       return
     }
     if (contextMenu.nodeId.startsWith('gn-')) {
-      // Kill orphaned PTY if this is a terminal node
       const gn = gNodes.find((n) => n.id === contextMenu.nodeId)
-      if (gn?.nodeType === 'terminal') {
-        window.api.terminal.kill(`pty-${contextMenu.nodeId}`).catch(() => {})
-        if (terminalDialogNodeId === contextMenu.nodeId) {
-          setTerminalDialogNodeId(null)
-        }
-      }
-      await deleteNode(contextMenu.nodeId)
-      // Also remove edges connected to this node
-      const currentEdges = reactFlowInstance.getEdges()
-      const filteredEdges = currentEdges.filter(
-        (e) => e.source !== contextMenu.nodeId && e.target !== contextMenu.nodeId
-      )
-      setEdges(filteredEdges)
-      saveEdges(filteredEdges)
+      const kind =
+        gn?.nodeType === 'terminal' ? 'terminal' : gn?.nodeType === 'file' ? 'file' : 'graph'
+      await deleteBoardItem(contextMenu.nodeId, kind, activeBoardId)
     } else {
-      await deleteTab(contextMenu.nodeId)
+      await deleteBoardItem(contextMenu.nodeId, 'browser', activeBoardId)
     }
     setContextMenu(null)
-  }, [contextMenu, deleteTab, deleteNode, reactFlowInstance, setEdges, saveEdges, gNodes, terminalDialogNodeId])
+  }, [activeBoardId, contextMenu, deleteBoardItem, gNodes])
+
+  const handleBoardItemDelete = useCallback(async () => {
+    if (!boardItemMenu) return
+    await deleteBoardItem(boardItemMenu.itemId, boardItemMenu.kind, boardItemMenu.boardId)
+    setBoardItemMenu(null)
+  }, [boardItemMenu, deleteBoardItem])
 
   // ─── Monitor Dialog ─────────────────────────────────────────────────────────
 
@@ -3043,7 +3437,7 @@ function BrowserPageInner(): React.ReactElement {
   }, [workspace, moveBoard])
 
   return (
-    <div className="flex h-full min-h-0" onClick={closeContextMenu}>
+    <div className="flex h-full min-h-0" onClick={() => { closeContextMenu(); closeBoardItemMenu() }}>
       {!sidebarCollapsed && (
         <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border/40 sidebar-vibrancy flex flex-col min-h-0">
           <div className="sidebar-traffic-row shrink-0 flex items-center justify-end">
@@ -3252,11 +3646,11 @@ function BrowserPageInner(): React.ReactElement {
                         {folderBoards.length === 0 ? (
                           <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
                         ) : (
-                          <>
-                            {folderBoards.map((board) => {
-                              const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
-                              const collapsed = collapsedBoards.has(board.id)
-                              return (
+	                          <>
+	                            {folderBoards.map((board) => {
+	                              const boardItems = getOrderedSidebarBoardItems(board.id)
+	                              const collapsed = collapsedBoards.has(board.id)
+	                              return (
                               <div
                                 key={board.id}
                                 draggable={editingBoardId !== board.id}
@@ -3352,74 +3746,10 @@ function BrowserPageInner(): React.ReactElement {
                                     <Trash2 className="h-3 w-3" />
                                   </button>
                                 </div>
-                                {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0 || (boardFilesMap.get(board.id) ?? []).length > 0) && (
-                                  <div className="ml-5 mt-0.5 space-y-px">
-                                    {bTabs.map((tab) => (
-                                      <button
-                                        key={tab.id}
-                                        type="button"
-                                        onClick={() => handleSidebarItemClick(tab.id, board.id)}
-                                        className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${activeItemId === tab.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
-                                      >
-                                        {tab.favicon ? (
-                                          <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
-                                        ) : (
-                                          <Globe className="h-3.5 w-3.5" />
-                                        )}
-                                        <span className="truncate">{tab.title || tab.url || 'New Tab'}</span>
-                                      </button>
-                                    ))}
-                                    {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
-                                      <div key={tn.id} className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors cursor-pointer ${activeItemId === tn.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`} onClick={() => handleSidebarItemClick(tn.id, board.id)}>
-                                        <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
-                                        {editingTerminalId === tn.id ? (
-                                          <Input
-                                            value={editingTerminalName}
-                                            onChange={(event) => setEditingTerminalName(event.target.value)}
-                                            onBlur={() => void saveInlineTerminalEdit()}
-                                            onKeyDown={(event) => {
-                                              if (event.key === 'Enter') {
-                                                event.currentTarget.blur()
-                                                return
-                                              }
-                                              if (event.key === 'Escape') {
-                                                event.preventDefault()
-                                                cancelInlineTerminalEdit()
-                                              }
-                                            }}
-                                            className="h-5 flex-1 text-xs px-1 py-0"
-                                            autoFocus
-                                          />
-                                        ) : (
-                                          <span
-                                            className="min-w-0 flex-1 truncate text-left"
-                                            onDoubleClick={(event) => {
-                                              event.preventDefault()
-                                              event.stopPropagation()
-                                              startInlineTerminalEdit(tn.id, tn.label || 'Terminal')
-                                            }}
-                                          >
-                                            {tn.label || 'Terminal'}
-                                          </span>
-                                        )}
-                                      </div>
-                                    ))}
-                                    {(boardFilesMap.get(board.id) ?? []).map((fn) => (
-                                      <button
-                                        key={fn.id}
-                                        type="button"
-                                        onClick={() => handleSidebarItemClick(fn.id, board.id)}
-                                        className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${activeItemId === fn.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
-                                      >
-                                        <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
-                                        <span className="truncate">{fn.label || 'File'}</span>
-                                      </button>
-                                    ))}
-                                  </div>
-                                )}
-                              </div>
-                              )
-                            })}
+	                                {!collapsed && boardItems.length > 0 && renderSidebarBoardItems(board.id)}
+	                              </div>
+	                              )
+	                            })}
                           </>
                         )}
                       </div>
@@ -3436,11 +3766,11 @@ function BrowserPageInner(): React.ReactElement {
                 onDragOver={handleUngroupedDragOver}
                 onDragLeave={handleDragLeave}
                 onDrop={(e) => void handleUngroupedDrop(e)}
-              >
-              {ungroupedBoards.map((board) => {
-                const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
-                const collapsed = collapsedBoards.has(board.id)
-                return (
+	              >
+	              {ungroupedBoards.map((board) => {
+	                const boardItems = getOrderedSidebarBoardItems(board.id)
+	                const collapsed = collapsedBoards.has(board.id)
+	                return (
                   <div
                     key={board.id}
                     draggable={editingBoardId !== board.id}
@@ -3536,74 +3866,10 @@ function BrowserPageInner(): React.ReactElement {
                         <Trash2 className="h-3 w-3" />
                       </button>
                     </div>
-                    {!collapsed && (bTabs.length > 0 || (boardTerminalsMap.get(board.id) ?? []).length > 0 || (boardFilesMap.get(board.id) ?? []).length > 0) && (
-                      <div className="ml-5 mt-0.5 space-y-px">
-                        {bTabs.map((tab) => (
-                          <button
-                            key={tab.id}
-                            type="button"
-                            onClick={() => handleSidebarItemClick(tab.id, board.id)}
-                            className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${activeItemId === tab.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
-                          >
-                            {tab.favicon ? (
-                              <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
-                            ) : (
-                              <Globe className="h-3.5 w-3.5" />
-                            )}
-                            <span className="truncate">{tab.title || tab.url || 'New Tab'}</span>
-                          </button>
-                        ))}
-                        {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
-                          <div key={tn.id} className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors cursor-pointer ${activeItemId === tn.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`} onClick={() => handleSidebarItemClick(tn.id, board.id)}>
-                            <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
-                            {editingTerminalId === tn.id ? (
-                              <Input
-                                value={editingTerminalName}
-                                onChange={(event) => setEditingTerminalName(event.target.value)}
-                                onBlur={() => void saveInlineTerminalEdit()}
-                                onKeyDown={(event) => {
-                                  if (event.key === 'Enter') {
-                                    event.currentTarget.blur()
-                                    return
-                                  }
-                                  if (event.key === 'Escape') {
-                                    event.preventDefault()
-                                    cancelInlineTerminalEdit()
-                                  }
-                                }}
-                                className="h-5 flex-1 text-xs px-1 py-0"
-                                autoFocus
-                              />
-                            ) : (
-                              <span
-                                className="min-w-0 flex-1 truncate text-left"
-                                onDoubleClick={(event) => {
-                                  event.preventDefault()
-                                  event.stopPropagation()
-                                  startInlineTerminalEdit(tn.id, tn.label || 'Terminal')
-                                }}
-                              >
-                                {tn.label || 'Terminal'}
-                              </span>
-                            )}
-                          </div>
-                        ))}
-                        {(boardFilesMap.get(board.id) ?? []).map((fn) => (
-                          <button
-                            key={fn.id}
-                            type="button"
-                            onClick={() => handleSidebarItemClick(fn.id, board.id)}
-                            className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${activeItemId === fn.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
-                          >
-                            <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
-                            <span className="truncate">{fn.label || 'File'}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                )
-              })}
+	                    {!collapsed && boardItems.length > 0 && renderSidebarBoardItems(board.id)}
+	                  </div>
+	                )
+	              })}
               </div>
             </div>
           </div>
@@ -3763,15 +4029,22 @@ function BrowserPageInner(): React.ReactElement {
           </FlowDirectionContext.Provider>
           )}
           {!isSettingsRoute && boardView === 'tabs' && (
-            <BoardTabsView
-              key={activeBoardId}
-              tabs={tabs}
-              terminalNodes={terminalNodes}
-              fileNodes={fileNodes}
-              activeBoardId={activeBoardId}
-              pendingSelectId={pendingTabSelect?.itemId ?? null}
-              pendingSelectNonce={pendingTabSelect?.nonce ?? 0}
-              onTabUpdate={updateTab}
+	            <BoardTabsView
+	              key={activeBoardId}
+	              tabs={tabs}
+	              terminalNodes={terminalNodes}
+	              fileNodes={fileNodes}
+	              activeBoardId={activeBoardId}
+	              preferredOrderIds={activeBoardId ? (boardItemOrderMap.get(activeBoardId) ?? []) : []}
+	              pendingSelectId={pendingTabSelect?.itemId ?? null}
+	              pendingSelectNonce={pendingTabSelect?.nonce ?? 0}
+	              onTabUpdate={updateTab}
+	              onSaveViewOrder={async (orderedIds) => {
+	                if (!activeBoardId) return
+	                await saveBoardItemOrder(activeBoardId, orderedIds)
+	              }}
+	              onSaveTabOrder={saveTabOrder}
+	              onSaveNodeOrder={saveNodeOrder}
               onCreateTab={() => handleAddTab()}
               onCreateAgent={async () => {
                 if (!activeBoardId) return
@@ -3809,6 +4082,10 @@ function BrowserPageInner(): React.ReactElement {
               onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
               onUpdateNode={updateNode}
+              onItemContextMenu={(event, item) => {
+                if (!activeBoardId) return
+                handleBoardItemContextMenu(event, item.id, item.kind, activeBoardId)
+              }}
               workspaceRootDir={workspace?.rootDir}
               boardRootDir={boardRootDir}
               onActiveItemChange={setActiveItemId}
@@ -4068,6 +4345,34 @@ function BrowserPageInner(): React.ReactElement {
               </button>
             </>
           )}
+        </div>
+      )}
+
+      {boardItemMenu && (
+        <div
+          ref={boardItemMenuRef}
+          className="fixed z-50 min-w-[180px] rounded-md border border-border/40 bg-popover p-1 shadow-sm animate-in fade-in-0 zoom-in-95"
+          style={{
+            left: boardItemMenuPosition?.x ?? boardItemMenu.x,
+            top: boardItemMenuPosition?.y ?? boardItemMenu.y
+          }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+            onClick={() => void handleBoardItemRename()}
+          >
+            <NotebookPen className="h-4 w-4" />
+            Rename
+          </button>
+          <button
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
+            onClick={() => void handleBoardItemDelete()}
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </button>
         </div>
       )}
 

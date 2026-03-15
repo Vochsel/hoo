@@ -8,17 +8,25 @@ import type { GraphNode } from '@/hooks/use-graph-nodes'
 import type { TerminalNodeConfig } from './terminal-node'
 import type { FileNodeConfig } from './file-node'
 
+const MAX_CACHED_BROWSER_TABS = 5
+
 type TabItem =
   | { kind: 'browser'; tab: BrowserTab }
   | { kind: 'terminal'; node: GraphNode }
   | { kind: 'file'; node: GraphNode }
+
+export type BoardTabsItemKind = TabItem['kind']
 
 interface BoardTabsViewProps {
   tabs: BrowserTab[]
   terminalNodes: GraphNode[]
   fileNodes: GraphNode[]
   activeBoardId: string | null
+  preferredOrderIds?: string[]
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
+  onSaveViewOrder: (orderedIds: string[]) => Promise<void>
+  onSaveTabOrder: (orderedIds: string[]) => Promise<void>
+  onSaveNodeOrder: (orderedIds: string[]) => Promise<void>
   onCreateTab: () => Promise<BrowserTab | void>
   onCreateTerminal: () => Promise<string | void>
   onCreateAgent: () => Promise<string | void>
@@ -26,6 +34,7 @@ interface BoardTabsViewProps {
   onOpenTab: (tab: BrowserTab) => void
   onOpenTerminal: (nodeId: string) => void
   onUpdateNode: (id: string, data: Record<string, unknown>) => Promise<unknown>
+  onItemContextMenu?: (event: React.MouseEvent, item: { id: string; kind: BoardTabsItemKind }) => void
   workspaceRootDir?: string
   boardRootDir?: string | null
   pendingSelectId?: string | null
@@ -42,12 +51,67 @@ function parseNodeConfig(rawConfig: string): Record<string, unknown> {
   }
 }
 
+function areStringArraysEqual(left: string[], right: string[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index])
+}
+
+function reorderIds(ids: string[], dragId: string, dropTargetId: string, dropAfter: boolean): string[] {
+  const fromIndex = ids.indexOf(dragId)
+  if (fromIndex === -1) return ids
+  const next = ids.filter((id) => id !== dragId)
+  let targetIndex = next.indexOf(dropTargetId)
+  if (targetIndex === -1) return ids
+  if (dropAfter) targetIndex += 1
+  next.splice(targetIndex, 0, dragId)
+  return next
+}
+
+function buildOrderedIds(
+  preferredOrderIds: string[],
+  tabs: BrowserTab[],
+  terminalNodes: GraphNode[],
+  fileNodes: GraphNode[],
+  availableItemIds: Set<string>
+): string[] {
+  const next: string[] = []
+  const seen = new Set<string>()
+
+  for (const rawId of preferredOrderIds) {
+    const id = String(rawId ?? '')
+    if (!id || seen.has(id) || !availableItemIds.has(id)) continue
+    seen.add(id)
+    next.push(id)
+  }
+
+  for (const tab of tabs) {
+    if (seen.has(tab.id)) continue
+    seen.add(tab.id)
+    next.push(tab.id)
+  }
+  for (const node of terminalNodes) {
+    if (seen.has(node.id)) continue
+    seen.add(node.id)
+    next.push(node.id)
+  }
+  for (const node of fileNodes) {
+    if (seen.has(node.id)) continue
+    seen.add(node.id)
+    next.push(node.id)
+  }
+
+  return next
+}
+
 export function BoardTabsView({
   tabs,
   terminalNodes,
   fileNodes,
   activeBoardId,
+  preferredOrderIds = [],
   onTabUpdate,
+  onSaveViewOrder,
+  onSaveTabOrder,
+  onSaveNodeOrder,
   onCreateTab,
   onCreateTerminal,
   onCreateAgent,
@@ -55,6 +119,7 @@ export function BoardTabsView({
   onOpenTab,
   onOpenTerminal,
   onUpdateNode,
+  onItemContextMenu,
   workspaceRootDir,
   boardRootDir,
   pendingSelectId,
@@ -95,34 +160,23 @@ export function BoardTabsView({
 
   // Maintain a custom ordering of tab IDs that persists across renders
   const [orderedIds, setOrderedIds] = useState<string[]>([])
+  const [cachedBrowserTabIds, setCachedBrowserTabIds] = useState<string[]>([])
+  const [mountedBrowserTabIds, setMountedBrowserTabIds] = useState<string[]>([])
 
-  // Sync orderedIds when the set of items changes (adds/removes)
+  // Sync orderedIds from the saved mixed order, then append any new items.
   useEffect(() => {
-    const currentIds = new Set(itemsById.keys())
-    // Keep existing ordered IDs that still exist, then append any new ones
-    const kept = orderedIds.filter((id) => currentIds.has(id))
-    const keptSet = new Set(kept)
-    const added: string[] = []
-    // Preserve default order for new items: browsers, terminals, files
-    for (const tab of tabs) {
-      if (!keptSet.has(tab.id)) added.push(tab.id)
-    }
-    for (const node of terminalNodes) {
-      if (!keptSet.has(node.id)) added.push(node.id)
-    }
-    for (const node of fileNodes) {
-      if (!keptSet.has(node.id)) added.push(node.id)
-    }
-    const next = [...kept, ...added]
-    // Only update state if something actually changed
-    if (next.length !== orderedIds.length || next.some((id, i) => id !== orderedIds[i])) {
-      setOrderedIds(next)
-    }
-  }, [itemsById, tabs, terminalNodes, fileNodes]) // eslint-disable-line react-hooks/exhaustive-deps
+    const next = buildOrderedIds(preferredOrderIds, tabs, terminalNodes, fileNodes, new Set(itemsById.keys()))
+    setOrderedIds((prev) => (areStringArraysEqual(prev, next) ? prev : next))
+  }, [itemsById, preferredOrderIds, tabs, terminalNodes, fileNodes])
 
   const allItems: TabItem[] = useMemo(
     () => orderedIds.map((id) => itemsById.get(id)).filter((item): item is TabItem => item != null),
     [orderedIds, itemsById]
+  )
+  const browserTabIdSet = useMemo(() => new Set(tabs.map((tab) => tab.id)), [tabs])
+  const graphItemIdSet = useMemo(
+    () => new Set([...terminalNodes.map((node) => node.id), ...fileNodes.map((node) => node.id)]),
+    [terminalNodes, fileNodes]
   )
 
   // Drag state
@@ -151,6 +205,48 @@ export function BoardTabsView({
     if (item.kind === 'browser') return item.tab.id === selectedId
     return item.node.id === selectedId
   }) ?? null
+  const selectedBrowserTab = selectedItem?.kind === 'browser' ? selectedItem.tab : null
+
+  useEffect(() => {
+    if (!selectedBrowserTab) return
+    setCachedBrowserTabIds((prev) => {
+      const next = [selectedBrowserTab.id, ...prev.filter((id) => id !== selectedBrowserTab.id)]
+        .slice(0, MAX_CACHED_BROWSER_TABS)
+      return areStringArraysEqual(prev, next) ? prev : next
+    })
+    setMountedBrowserTabIds((prev) => {
+      // Keep mounted webviews in a stable DOM order; moving Electron webviews is crash-prone.
+      const withSelected = prev.includes(selectedBrowserTab.id) ? prev : [...prev, selectedBrowserTab.id]
+      const nextCachedIds = [selectedBrowserTab.id, ...cachedBrowserTabIds.filter((id) => id !== selectedBrowserTab.id)]
+        .slice(0, MAX_CACHED_BROWSER_TABS)
+      const next = withSelected.filter((id) => nextCachedIds.includes(id))
+      return areStringArraysEqual(prev, next) ? prev : next
+    })
+  }, [selectedBrowserTab, cachedBrowserTabIds])
+
+  useEffect(() => {
+    const activeBrowserIds = new Set(tabs.map((tab) => tab.id))
+    setCachedBrowserTabIds((prev) => {
+      const next = prev.filter((id) => activeBrowserIds.has(id))
+      return areStringArraysEqual(prev, next) ? prev : next
+    })
+    setMountedBrowserTabIds((prev) => {
+      const next = prev.filter((id) => activeBrowserIds.has(id))
+      return areStringArraysEqual(prev, next) ? prev : next
+    })
+  }, [tabs])
+
+  const browserTabsById = useMemo(() => {
+    const map = new Map<string, BrowserTab>()
+    for (const tab of tabs) map.set(tab.id, tab)
+    return map
+  }, [tabs])
+
+  const mountedBrowserTabs = useMemo(() => {
+    return mountedBrowserTabIds
+      .map((tabId) => browserTabsById.get(tabId))
+      .filter((tab): tab is BrowserTab => tab != null)
+  }, [mountedBrowserTabIds, browserTabsById])
 
   // Auto-select first tab if current selection disappears —
   // but skip when selectedId matches pendingSelectId (item may still be loading after board switch)
@@ -243,26 +339,23 @@ export function BoardTabsView({
     setDraggingId(null)
     dragIdRef.current = null
     if (!dragId || dragId === dropTargetId) return
+    const rect = e.currentTarget.getBoundingClientRect()
+    const midX = rect.left + rect.width / 2
+    const dropAfter = e.clientX >= midX
+    const nextOrderedIds = reorderIds(orderedIds, dragId, dropTargetId, dropAfter)
+    if (areStringArraysEqual(nextOrderedIds, orderedIds)) return
+    setOrderedIds(nextOrderedIds)
+    void onSaveViewOrder(nextOrderedIds)
 
-    setOrderedIds((prev) => {
-      const fromIndex = prev.indexOf(dragId)
-      if (fromIndex === -1) return prev
-
-      // Determine drop side
-      const rect = e.currentTarget.getBoundingClientRect()
-      const midX = rect.left + rect.width / 2
-      const dropAfter = e.clientX >= midX
-
-      // Remove the dragged item
-      const next = prev.filter((id) => id !== dragId)
-      // Find the target index in the new array (after removal)
-      let targetIndex = next.indexOf(dropTargetId)
-      if (targetIndex === -1) return prev
-      if (dropAfter) targetIndex += 1
-      next.splice(targetIndex, 0, dragId)
-      return next
-    })
-  }, [])
+    const nextBrowserTabIds = nextOrderedIds.filter((id) => browserTabIdSet.has(id))
+    if (nextBrowserTabIds.length > 0) {
+      void onSaveTabOrder(nextBrowserTabIds)
+    }
+    const nextGraphNodeIds = nextOrderedIds.filter((id) => graphItemIdSet.has(id))
+    if (nextGraphNodeIds.length > 0) {
+      void onSaveNodeOrder(nextGraphNodeIds)
+    }
+  }, [orderedIds, browserTabIdSet, graphItemIdSet, onSaveViewOrder, onSaveTabOrder, onSaveNodeOrder])
 
   const handleDragEnd = useCallback(() => {
     dragIdRef.current = null
@@ -314,6 +407,9 @@ export function BoardTabsView({
               onDrop={(e) => handleDrop(e, id)}
               onDragEnd={handleDragEnd}
               onDragLeave={() => setDropIndicator(null)}
+              onContextMenu={(event) => {
+                onItemContextMenu?.(event, { id, kind: item.kind })
+              }}
               className={`group relative flex max-w-[200px] items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs transition-colors ${
                 isSelected
                   ? 'bg-background border border-border/60 border-b-background -mb-px z-10 font-medium'
@@ -417,39 +513,53 @@ export function BoardTabsView({
       </div>
 
       {/* Content */}
-      <div className="flex flex-1 min-h-0">
-        {selectedItem?.kind === 'browser' && (
-          <BrowserTabContent
-            key={selectedItem.tab.id}
-            tab={selectedItem.tab}
-            boardId={activeBoardId}
-            onTabUpdate={onTabUpdate}
-          />
-        )}
+      <div className="relative flex flex-1 min-h-0">
+        {mountedBrowserTabs.map((tab) => {
+          const isActive = selectedItem?.kind === 'browser' && selectedItem.tab.id === tab.id
+          return (
+            <div
+              key={tab.id}
+              className={`absolute inset-0 flex min-h-0 ${isActive ? 'z-10' : 'pointer-events-none'}`}
+              style={{ visibility: isActive ? 'visible' : 'hidden' }}
+              aria-hidden={!isActive}
+            >
+              <BrowserTabContent
+                tab={tab}
+                boardId={activeBoardId}
+                onTabUpdate={onTabUpdate}
+                active={isActive}
+              />
+            </div>
+          )
+        })}
         {selectedItem?.kind === 'terminal' && (
-          <TerminalContent
-            key={selectedItem.node.id}
-            sessionId={`pty-${selectedItem.node.id}`}
-            label={selectedItem.node.label}
-            config={parseNodeConfig(selectedItem.node.config) as TerminalNodeConfig}
-            onUpdateConfig={(nextCfg) => {
-              void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
-            }}
-            workspaceRootDir={boardRootDir || workspaceRootDir}
-          />
+          <div className="absolute inset-0 flex min-h-0 z-10">
+            <TerminalContent
+              key={selectedItem.node.id}
+              sessionId={`pty-${selectedItem.node.id}`}
+              label={selectedItem.node.label}
+              config={parseNodeConfig(selectedItem.node.config) as TerminalNodeConfig}
+              onUpdateConfig={(nextCfg) => {
+                void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
+              }}
+              workspaceRootDir={boardRootDir || workspaceRootDir}
+            />
+          </div>
         )}
         {selectedItem?.kind === 'file' && (
-          <FileContent
-            key={selectedItem.node.id}
-            nodeId={selectedItem.node.id}
-            config={parseNodeConfig(selectedItem.node.config) as FileNodeConfig}
-            onUpdateConfig={(nextCfg) => {
-              void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
-            }}
-          />
+          <div className="absolute inset-0 flex min-h-0 z-10">
+            <FileContent
+              key={selectedItem.node.id}
+              nodeId={selectedItem.node.id}
+              config={parseNodeConfig(selectedItem.node.config) as FileNodeConfig}
+              onUpdateConfig={(nextCfg) => {
+                void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
+              }}
+            />
+          </div>
         )}
         {!selectedItem && (
-          <div className="flex flex-1 items-center justify-center text-sm text-muted-foreground">
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
             Select a tab to view
           </div>
         )}

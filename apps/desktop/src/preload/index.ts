@@ -15,6 +15,11 @@ const api = {
     update: (id: string, data: Record<string, unknown>, boardId?: string) =>
       ipcRenderer.invoke('browserTabs:update', id, data, boardId),
     delete: (id: string, boardId?: string) => ipcRenderer.invoke('browserTabs:delete', id, boardId),
+    saveOrder: (orderedIds: string[], boardId?: string) =>
+      ipcRenderer.invoke('browserTabs:saveOrder', orderedIds, boardId),
+    getViewOrder: (boardId?: string) => ipcRenderer.invoke('browserTabs:getViewOrder', boardId),
+    saveViewOrder: (orderedIds: string[], boardId?: string) =>
+      ipcRenderer.invoke('browserTabs:saveViewOrder', orderedIds, boardId),
     savePositions: (positions: Array<{ id: string; x: number; y: number }>, boardId?: string) =>
       ipcRenderer.invoke('browserTabs:savePositions', positions, boardId),
     listMessages: (tabId: string, boardId?: string) => ipcRenderer.invoke('browserTabs:listMessages', tabId, boardId),
@@ -53,6 +58,8 @@ const api = {
     update: (id: string, data: Record<string, unknown>, boardId?: string) =>
       ipcRenderer.invoke('graphNodes:update', id, data, boardId),
     delete: (id: string, boardId?: string) => ipcRenderer.invoke('graphNodes:delete', id, boardId),
+    saveOrder: (orderedIds: string[], boardId?: string) =>
+      ipcRenderer.invoke('graphNodes:saveOrder', orderedIds, boardId),
     savePositions: (positions: Array<{ id: string; x: number; y: number }>, boardId?: string) =>
       ipcRenderer.invoke('graphNodes:savePositions', positions, boardId),
     pickFile: (options?: { mode?: 'open' | 'save'; defaultPath?: string }) =>

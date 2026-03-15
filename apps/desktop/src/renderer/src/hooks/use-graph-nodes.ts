@@ -11,6 +11,16 @@ export interface GraphNode {
   updatedAt: string
 }
 
+function orderNodesByIds(graphNodes: GraphNode[], orderedIds: string[]): GraphNode[] {
+  if (orderedIds.length === 0) return graphNodes
+  const nodesById = new Map(graphNodes.map((node) => [node.id, node]))
+  const orderedNodes = orderedIds
+    .map((id) => nodesById.get(id))
+    .filter((node): node is GraphNode => node != null)
+  const orderedIdSet = new Set(orderedNodes.map((node) => node.id))
+  return [...orderedNodes, ...graphNodes.filter((node) => !orderedIdSet.has(node.id))]
+}
+
 export function useGraphNodes(boardId: string | null): {
   graphNodes: GraphNode[]
   loading: boolean
@@ -24,6 +34,7 @@ export function useGraphNodes(boardId: string | null): {
   }) => Promise<GraphNode>
   updateNode: (id: string, data: Record<string, unknown>) => Promise<GraphNode>
   deleteNode: (id: string) => Promise<void>
+  saveOrder: (orderedIds: string[]) => Promise<void>
   savePositions: (positions: Array<{ id: string; x: number; y: number }>) => Promise<void>
 } {
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([])
@@ -123,6 +134,18 @@ export function useGraphNodes(boardId: string | null): {
     [boardId]
   )
 
+  const saveOrder = useCallback(
+    async (orderedIds: string[]) => {
+      const targetBoardId = boardId
+      if (!targetBoardId) return
+      if (boardIdRef.current === targetBoardId) {
+        setGraphNodes((prev) => orderNodesByIds(prev, orderedIds))
+      }
+      await window.api.graphNodes.saveOrder(orderedIds, targetBoardId)
+    },
+    [boardId]
+  )
+
   const savePositions = useCallback(
     async (positions: Array<{ id: string; x: number; y: number }>) => {
       const targetBoardId = boardId
@@ -147,5 +170,5 @@ export function useGraphNodes(boardId: string | null): {
     [boardId]
   )
 
-  return { graphNodes, loading, refresh, createNode, updateNode, deleteNode, savePositions }
+  return { graphNodes, loading, refresh, createNode, updateNode, deleteNode, saveOrder, savePositions }
 }

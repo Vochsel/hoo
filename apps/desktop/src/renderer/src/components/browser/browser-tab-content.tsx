@@ -7,6 +7,7 @@ interface BrowserTabContentProps {
   tab: BrowserTab
   boardId?: string | null
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
+  active?: boolean
 }
 
 const TAG = '[browser-tab-content]'
@@ -14,8 +15,8 @@ const WEBVIEW_USER_AGENT = getWebviewUserAgent()
 
 export function BrowserTabContent({
   tab,
-  boardId,
-  onTabUpdate
+  onTabUpdate,
+  active = true
 }: BrowserTabContentProps): React.ReactElement {
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
   const addressBarRef = useRef<AddressBarHandle>(null)
@@ -38,17 +39,18 @@ export function BrowserTabContent({
   useEffect(() => {
     const nextUrl = tab.url || 'about:blank'
     setCurrentUrl(nextUrl)
-  }, [tab.id])
+  }, [tab.id, tab.url])
 
   // Auto-focus address bar on new empty tabs
   useEffect(() => {
-    if (!tab.url || tab.url === 'about:blank') {
-      setTimeout(() => addressBarRef.current?.focus(), 50)
-    }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    if (!active || (tab.url && tab.url !== 'about:blank')) return
+    const timeoutId = window.setTimeout(() => addressBarRef.current?.focus(), 50)
+    return () => window.clearTimeout(timeoutId)
+  }, [active, tab.id, tab.url])
 
   // Cmd+L / Ctrl+L focuses the address bar
   useEffect(() => {
+    if (!active) return
     const handleKeyDown = (e: globalThis.KeyboardEvent): void => {
       if ((e.metaKey || e.ctrlKey) && e.key === 'l') {
         e.preventDefault()
@@ -57,7 +59,7 @@ export function BrowserTabContent({
     }
     window.addEventListener('keydown', handleKeyDown)
     return (): void => window.removeEventListener('keydown', handleKeyDown)
-  }, [])
+  }, [active])
 
   const publishLiveWebContents = useCallback((webContentsId?: number | null): void => {
     const tabId = tabIdRef.current
