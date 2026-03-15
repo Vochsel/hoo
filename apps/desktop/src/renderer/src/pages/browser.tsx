@@ -2699,7 +2699,7 @@ function BrowserPageInner(): React.ReactElement {
       const items = getOrderedSidebarBoardItems(boardId)
       if (items.length === 0) return null
       return (
-        <div className="ml-5 mt-0.5 space-y-px">
+        <div className="ml-[7px] mt-0.5 space-y-0.5 border-l border-border/60 pl-[13px] py-0.5">
           {items.map((item) => {
             const isActive = activeItemId === item.id && boardId === activeBoardId
             if (item.kind === 'browser') {
@@ -3642,7 +3642,7 @@ function BrowserPageInner(): React.ReactElement {
                       </button>
                     </div>
                     {expanded && (
-                      <div className="ml-3 space-y-0.5 border-l border-border/60 pl-2 py-0.5">
+                      <div className="ml-[15px] space-y-0.5 border-l border-border/60 pl-[5px] py-0.5">
                         {folderBoards.length === 0 ? (
                           <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
                         ) : (

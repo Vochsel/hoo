@@ -7,7 +7,7 @@
     },
     "apps/desktop": {
       "name": "@hoo/desktop",
-      "version": "0.1.12",
+      "version": "0.1.13",
       "dependencies": {
         "@ai-sdk/anthropic": "^3.0.46",
         "@ai-sdk/openai": "^3.0.30",
