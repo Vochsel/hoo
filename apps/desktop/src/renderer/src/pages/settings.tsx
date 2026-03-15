@@ -1,10 +1,25 @@
 import { useEffect, useState, useCallback } from 'react'
-import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2 } from 'lucide-react'
+import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/use-settings'
 import { useWorkspace } from '@/hooks/use-workspace'
 import { useThemeContext } from '@/App'
+
+export const CLI_AGENTS = [
+  { id: 'claude', label: 'Claude Code', command: 'claude' },
+  { id: 'codex', label: 'Codex', command: 'codex' },
+  { id: 'opencode', label: 'OpenCode', command: 'opencode' },
+  { id: 'amp', label: 'Amp', command: 'amp' },
+  { id: 'gemini', label: 'Gemini CLI', command: 'gemini' }
+] as const
+
+export type AgentId = (typeof CLI_AGENTS)[number]['id']
+
+export function getAgentCommand(agentId: string | unknown): string {
+  const agent = CLI_AGENTS.find((a) => a.id === agentId)
+  return agent?.command ?? 'claude'
+}
 
 const BROWSER_MODELS = [
   { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
@@ -21,7 +36,7 @@ type NodeOpenClick = 'single' | 'double'
 
 export function SettingsPage(): React.ReactElement {
   const { settings, getSetting, setSetting } = useSettings()
-  const { workspace, setRootDir } = useWorkspace()
+  const { workspace, setRootDir, resetWorkspace, getRecentWorkspaces } = useWorkspace()
   const { theme, setTheme } = useThemeContext()
 
   const [openAiKey, setOpenAiKey] = useState('')
@@ -29,6 +44,9 @@ export function SettingsPage(): React.ReactElement {
   const [workspaceRoot, setWorkspaceRoot] = useState('')
   const [saving, setSaving] = useState(false)
   const [savingWorkspace, setSavingWorkspace] = useState(false)
+  const [resettingWorkspace, setResettingWorkspace] = useState(false)
+  const [recentWorkspaces, setRecentWorkspaces] = useState<Array<{ path: string; name: string }>>([])
+  const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [updateState, setUpdateState] = useState<
     | { status: 'idle' }
     | { status: 'checking' }
@@ -40,6 +58,8 @@ export function SettingsPage(): React.ReactElement {
   >({ status: 'idle' })
 
   const selectedModel = ((getSetting('browserAiModel') as string) ?? 'claude-sonnet-4-6').trim()
+  const defaultAgent: AgentId =
+    (CLI_AGENTS.find((a) => a.id === getSetting('defaultAgent'))?.id) ?? 'claude'
   const flowInteractionMode: FlowInteractionMode =
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const nodeOpenClick: NodeOpenClick =
@@ -79,7 +99,8 @@ export function SettingsPage(): React.ReactElement {
 
   useEffect(() => {
     setWorkspaceRoot(workspace?.rootDir ?? '')
-  }, [workspace?.rootDir])
+    getRecentWorkspaces().then(setRecentWorkspaces).catch(() => {})
+  }, [workspace?.rootDir, getRecentWorkspaces])
 
   const saveKeys = async (): Promise<void> => {
     setSaving(true)
@@ -111,6 +132,26 @@ export function SettingsPage(): React.ReactElement {
       await setRootDir(selected)
     } finally {
       setSavingWorkspace(false)
+    }
+  }
+
+  const switchToRecentWorkspace = async (path: string): Promise<void> => {
+    setWorkspaceRoot(path)
+    setSavingWorkspace(true)
+    try {
+      await setRootDir(path)
+    } finally {
+      setSavingWorkspace(false)
+    }
+  }
+
+  const handleResetWorkspace = async (): Promise<void> => {
+    setShowResetConfirm(false)
+    setResettingWorkspace(true)
+    try {
+      await resetWorkspace()
+    } finally {
+      setResettingWorkspace(false)
     }
   }
 
@@ -164,6 +205,24 @@ export function SettingsPage(): React.ReactElement {
             {BROWSER_MODELS.map((model) => (
               <option key={model.id} value={model.id}>
                 {model.label}
+              </option>
+            ))}
+          </select>
+        </section>
+
+        <section className="rounded-lg border p-4">
+          <h2 className="text-base font-semibold">Default Agent</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            CLI agent launched when creating a new terminal from the sidebar.
+          </p>
+          <select
+            className="mt-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+            value={defaultAgent}
+            onChange={(e) => setSetting('defaultAgent', e.target.value)}
+          >
+            {CLI_AGENTS.map((agent) => (
+              <option key={agent.id} value={agent.id}>
+                {agent.label}
               </option>
             ))}
           </select>
@@ -231,6 +290,26 @@ export function SettingsPage(): React.ReactElement {
             </p>
           </div>
 
+          {recentWorkspaces.length > 0 && (
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Recent Workspaces</label>
+              <select
+                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
+                value={workspace?.rootDir ?? ''}
+                onChange={(e) => {
+                  if (e.target.value) switchToRecentWorkspace(e.target.value)
+                }}
+                disabled={savingWorkspace}
+              >
+                {recentWorkspaces.map((w) => (
+                  <option key={w.path} value={w.path}>
+                    {w.name} — {w.path}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
           <div className="space-y-2">
             <label className="text-sm font-medium">Workspace Root Directory</label>
             <Input
@@ -249,6 +328,46 @@ export function SettingsPage(): React.ReactElement {
               <Save className="h-3.5 w-3.5" />
               {savingWorkspace ? 'Saving...' : 'Save Workspace Root'}
             </Button>
+          </div>
+
+          <div className="border-t pt-4 space-y-2">
+            <label className="text-sm font-medium">Reset Workspace</label>
+            <p className="text-sm text-muted-foreground">
+              Delete all boards and folders in the current workspace and restore default content.
+            </p>
+            {showResetConfirm ? (
+              <div className="flex gap-2 items-center">
+                <span className="text-sm text-destructive">Are you sure? This cannot be undone.</span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="gap-1.5"
+                  onClick={handleResetWorkspace}
+                  disabled={resettingWorkspace}
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                  {resettingWorkspace ? 'Resetting...' : 'Confirm Reset'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowResetConfirm(false)}
+                  disabled={resettingWorkspace}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                className="gap-1.5"
+                onClick={() => setShowResetConfirm(true)}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Reset Workspace
+              </Button>
+            )}
           </div>
         </section>
 

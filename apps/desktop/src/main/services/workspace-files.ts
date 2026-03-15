@@ -9,8 +9,15 @@ import { settings } from '../db/schema'
 
 const WORKSPACE_ROOT_SETTING_KEY = 'workspaceRootDir'
 const WORKSPACE_ACTIVE_BOARD_KEY = 'activeBoardId'
+const RECENT_WORKSPACES_KEY = 'recentWorkspaces'
 const DEFAULT_WORKSPACE_DIRNAME = 'Hoo Workspace'
 const BOARD_FILE_SUFFIX = '.board.json'
+const MAX_RECENT_WORKSPACES = 10
+
+export interface RecentWorkspace {
+  path: string
+  name: string
+}
 
 export interface WorkspaceFolderSnapshot {
   id: string
@@ -481,7 +488,37 @@ export function setWorkspaceRootDir(rootDir: string): string {
   const trimmed = rootDir.trim()
   const nextRoot = resolve(trimmed.length > 0 ? trimmed : join(app.getPath('documents'), DEFAULT_WORKSPACE_DIRNAME))
   upsertAppSetting(WORKSPACE_ROOT_SETTING_KEY, nextRoot)
+  addRecentWorkspace(nextRoot)
   return nextRoot
+}
+
+export function getRecentWorkspaces(): RecentWorkspace[] {
+  const db = getDb()
+  const row = db.select().from(settings).where(eq(settings.key, RECENT_WORKSPACES_KEY)).get()
+  if (!row?.value) return []
+  try {
+    const parsed = JSON.parse(row.value) as unknown
+    if (Array.isArray(parsed)) {
+      return parsed.filter(
+        (item): item is RecentWorkspace =>
+          typeof item === 'object' &&
+          item !== null &&
+          typeof (item as Record<string, unknown>).path === 'string' &&
+          typeof (item as Record<string, unknown>).name === 'string'
+      )
+    }
+  } catch {
+    // ignore malformed data
+  }
+  return []
+}
+
+function addRecentWorkspace(rootDir: string): void {
+  const name = basename(rootDir)
+  const recents = getRecentWorkspaces().filter((w) => w.path !== rootDir)
+  recents.unshift({ path: rootDir, name })
+  const trimmed = recents.slice(0, MAX_RECENT_WORKSPACES)
+  upsertAppSetting(RECENT_WORKSPACES_KEY, trimmed)
 }
 
 export function getWorkspaceActiveBoardId(): string | null {
@@ -813,4 +850,34 @@ export function boardFileNameFromName(name: string): string {
 
 export function boardFileExtname(boardFilePath: string): string {
   return extname(boardFilePath)
+}
+
+export async function resetWorkspace(): Promise<WorkspaceSnapshot> {
+  const rootDir = await ensureWorkspaceRootExists()
+
+  // Delete all *.board.json files
+  const boardFiles = await listWorkspaceBoardFiles(rootDir)
+  for (const boardPath of boardFiles) {
+    await fs.rm(boardPath, { force: true })
+  }
+
+  // Remove empty subdirectories (one level deep, matching workspace structure)
+  const entries = await fs.readdir(rootDir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    const folderPath = join(rootDir, entry.name)
+    const remaining = await fs.readdir(folderPath)
+    if (remaining.length === 0) {
+      await fs.rm(folderPath, { recursive: true, force: true })
+    }
+  }
+
+  // Clear active board since all boards were deleted
+  clearWorkspaceActiveBoardId()
+
+  // Re-seed with defaults
+  await seedDefaultWorkspace(rootDir)
+
+  // Return fresh snapshot (this also sets active board)
+  return getWorkspaceSnapshot()
 }

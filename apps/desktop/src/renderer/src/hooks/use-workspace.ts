@@ -24,12 +24,19 @@ export interface WorkspaceState {
   boards: WorkspaceBoard[]
 }
 
+export interface RecentWorkspace {
+  path: string
+  name: string
+}
+
 export function useWorkspace(): {
   workspace: WorkspaceState | null
   loading: boolean
   activeBoard: WorkspaceBoard | null
   refresh: () => Promise<void>
   setRootDir: (rootDir: string) => Promise<void>
+  resetWorkspace: () => Promise<void>
+  getRecentWorkspaces: () => Promise<RecentWorkspace[]>
   createFolder: (name?: string) => Promise<void>
   renameFolder: (folderId: string, name: string) => Promise<string>
   deleteFolder: (folderId: string) => Promise<void>
@@ -78,6 +85,17 @@ export function useWorkspace(): {
     },
     [applyWorkspaceMutation]
   )
+
+  const resetWorkspace = useCallback(
+    async () => {
+      await applyWorkspaceMutation(() => window.api.workspace.reset())
+    },
+    [applyWorkspaceMutation]
+  )
+
+  const getRecentWorkspaces = useCallback(async (): Promise<RecentWorkspace[]> => {
+    return window.api.workspace.getRecentWorkspaces()
+  }, [])
 
   const createFolder = useCallback(
     async (name?: string) => {
@@ -170,6 +188,8 @@ export function useWorkspace(): {
     activeBoard,
     refresh,
     setRootDir,
+    resetWorkspace,
+    getRecentWorkspaces,
     createFolder,
     renameFolder,
     deleteFolder,

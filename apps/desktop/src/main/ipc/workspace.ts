@@ -15,6 +15,8 @@ import {
   boardExists,
   readBoardDocument,
   writeBoardDocument,
+  getRecentWorkspaces,
+  resetWorkspace,
   type BoardViewMode
 } from '../services/workspace-files'
 
@@ -47,6 +49,15 @@ export function registerWorkspaceHandlers(): void {
     console.log(`${WORKSPACE_TAG} root set to ${resolved}`)
     await ensureWorkspaceInitialized()
     return getWorkspaceSnapshot()
+  })
+
+  ipcMain.handle('workspace:getRecentWorkspaces', async () => {
+    return getRecentWorkspaces()
+  })
+
+  ipcMain.handle('workspace:reset', async () => {
+    console.log(`${WORKSPACE_TAG} resetting workspace`)
+    return resetWorkspace()
   })
 
   ipcMain.handle('workspace:createFolder', async (_event, name?: string) => {

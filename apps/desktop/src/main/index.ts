@@ -44,7 +44,14 @@ function createWindow(iconPath: string | null): void {
     minHeight: 640,
     show: false,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
-    ...(isMac ? { trafficLightPosition: { x: 15, y: 10 } } : {}),
+    ...(isMac
+      ? {
+          trafficLightPosition: { x: 15, y: 18 },
+          vibrancy: 'sidebar',
+          visualEffectState: 'active',
+          transparent: true
+        }
+      : {}),
     ...(!isMac && iconPath ? { icon: iconPath } : {}),
     autoHideMenuBar: true,
     webPreferences: {

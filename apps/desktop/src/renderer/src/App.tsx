@@ -112,9 +112,7 @@ function AppShell(): React.ReactElement {
 
   return (
     <AppActionsContext.Provider value={appActions}>
-      <div className="flex h-screen flex-col bg-background">
-        <div className="drag-region h-9 shrink-0 border-b border-border/40" />
-
+      <div className="flex h-screen flex-col">
         <main className="min-h-0 flex-1">
           <Routes>
             <Route path="/" element={<BrowserPage />} />

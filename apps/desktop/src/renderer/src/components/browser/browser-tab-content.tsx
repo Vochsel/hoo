@@ -40,6 +40,13 @@ export function BrowserTabContent({
     setCurrentUrl(nextUrl)
   }, [tab.id])
 
+  // Auto-focus address bar on new empty tabs
+  useEffect(() => {
+    if (!tab.url || tab.url === 'about:blank') {
+      setTimeout(() => addressBarRef.current?.focus(), 50)
+    }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Cmd+L / Ctrl+L focuses the address bar
   useEffect(() => {
     const handleKeyDown = (e: globalThis.KeyboardEvent): void => {

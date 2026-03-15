@@ -66,11 +66,40 @@
   html.platform-linux body {
     @apply bg-background;
   }
+}
 
-  html.platform-win32 .drag-region,
-  html.platform-linux .drag-region {
-    @apply h-0;
-  }
+/* macOS: sidebar and content drag regions */
+.sidebar-traffic-row {
+  padding-top: 14px;
+  height: 44px;
+}
+
+.sidebar-drag-region {
+  height: 44px;
+}
+
+.content-drag-region {
+  height: 12px;
+}
+
+html.platform-win32 .sidebar-traffic-row,
+html.platform-linux .sidebar-traffic-row,
+html.platform-win32 .sidebar-drag-region,
+html.platform-linux .sidebar-drag-region,
+html.platform-win32 .content-drag-region,
+html.platform-linux .content-drag-region {
+  height: 0;
+  padding-top: 0;
+}
+
+/* macOS native vibrancy sidebar */
+.sidebar-vibrancy {
+  background: transparent;
+}
+
+html.platform-win32 .sidebar-vibrancy,
+html.platform-linux .sidebar-vibrancy {
+  background: hsl(var(--muted) / 0.3);
 }
 
 .drag-region {
@@ -79,6 +108,13 @@
 
 .no-drag {
   -webkit-app-region: no-drag;
+}
+
+.scrollbar-hidden {
+  scrollbar-width: none;
+}
+.scrollbar-hidden::-webkit-scrollbar {
+  display: none;
 }
 
 

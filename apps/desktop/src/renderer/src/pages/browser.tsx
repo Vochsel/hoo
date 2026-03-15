@@ -55,7 +55,7 @@ import { getWebviewUserAgent } from '@/lib/webview-user-agent'
 import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/lib/schedule-cron'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { DynamicIcon, IconPicker } from '@/components/ui/icon-picker'
-import { SettingsPage } from '@/pages/settings'
+import { SettingsPage, getAgentCommand } from '@/pages/settings'
 import TurndownService from 'turndown'
 
 const MONITOR_TAG = '[browser-monitor]'
@@ -249,6 +249,7 @@ function BrowserPageInner(): React.ReactElement {
     deleteFolder,
     createBoard,
     renameBoard,
+    moveBoard,
     deleteBoard,
     setActiveBoard,
     getBoardDocumentHtml,
@@ -270,8 +271,14 @@ function BrowserPageInner(): React.ReactElement {
   const [selectedTab, setSelectedTab] = useState<BrowserTab | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [terminalDialogNodeId, setTerminalDialogNodeId] = useState<string | null>(null)
-  const [pendingSidebarTabOpen, setPendingSidebarTabOpen] = useState<{ tabId: string; boardId: string } | null>(null)
-  const [pendingSidebarTerminalOpen, setPendingSidebarTerminalOpen] = useState<{ nodeId: string; boardId: string } | null>(null)
+  const pendingSelectNonceRef = useRef(0)
+  const [pendingTabSelect, setPendingTabSelect] = useState<{ itemId: string; nonce: number } | null>(null)
+  const pendingTabSelectRef = useRef(pendingTabSelect)
+  pendingTabSelectRef.current = pendingTabSelect
+  const requestTabSelect = useCallback((itemId: string) => {
+    pendingSelectNonceRef.current += 1
+    setPendingTabSelect({ itemId, nonce: pendingSelectNonceRef.current })
+  }, [])
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [monitorInput, setMonitorInput] = useState('')
@@ -318,7 +325,9 @@ function BrowserPageInner(): React.ReactElement {
   const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
   const pendingBoardRenameRef = useRef(false)
   const pendingFolderRenameRef = useRef(false)
-  const boardTabsViewRef = useRef<import('@/components/browser/board-tabs-view').BoardTabsViewHandle | null>(null)
+  // -- Drag-and-drop state for sidebar boards/folders --
+  const dragItemRef = useRef<{ type: 'board' | 'folder'; id: string } | null>(null)
+  const [dropTarget, setDropTarget] = useState<{ type: 'folder' | 'ungrouped'; id?: string } | null>(null)
   const [iconPickerTarget, setIconPickerTarget] = useState<{ type: 'folder' | 'board'; id: string; anchor: DOMRect } | null>(null)
   const reactFlowInstance = useReactFlow()
   const location = useLocation()
@@ -575,6 +584,12 @@ function BrowserPageInner(): React.ReactElement {
   useEffect(() => {
     if (!activeBoardId) {
       setBoardView('whiteboard')
+      return
+    }
+    // Pending tab selection → force tabs view, skip loading saved view
+    if (pendingTabSelectRef.current) {
+      setBoardView('tabs')
+      setTerminalDialogNodeId(null)
       return
     }
     let cancelled = false
@@ -2181,7 +2196,7 @@ function BrowserPageInner(): React.ReactElement {
       // Open file preview in tabs view
       if (node.type === 'file') {
         setBoardView('tabs')
-        setTimeout(() => boardTabsViewRef.current?.selectTab(node.id), 0)
+        requestTabSelect(node.id)
       }
     },
     [tabs]
@@ -2199,72 +2214,19 @@ function BrowserPageInner(): React.ReactElement {
     [createTab, activeBoardId]
   )
 
-  const handleSidebarTabClick = useCallback(
-    (tabId: string, boardId: string) => {
-      if (boardId !== activeBoardId) {
-        setPendingSidebarTabOpen({ tabId, boardId })
-        void setActiveBoard(boardId)
-        return
-      }
-      const tab = tabs.find((t) => t.id === tabId)
-      if (!tab) return
-      setPendingSidebarTabOpen(null)
-      if (boardView === 'tabs') {
-        boardTabsViewRef.current?.selectTab(tabId)
-      } else {
-        setSelectedTab(tab)
-        setDialogOpen(true)
-      }
-    },
-    [tabs, activeBoardId, setActiveBoard, boardView]
-  )
-
-  const handleSidebarTerminalClick = useCallback(
-    (nodeId: string, boardId: string) => {
-      if (boardId !== activeBoardId) {
-        setPendingSidebarTerminalOpen({ nodeId, boardId })
-        void setActiveBoard(boardId)
-        return
-      }
-      setPendingSidebarTerminalOpen(null)
-      if (boardView === 'tabs') {
-        boardTabsViewRef.current?.selectTab(nodeId)
-      } else {
-        setTerminalDialogNodeId(nodeId)
-      }
-    },
-    [activeBoardId, setActiveBoard, boardView]
-  )
-
-  const handleSidebarFileClick = useCallback(
-    (nodeId: string, boardId: string) => {
+  const handleSidebarItemClick = useCallback(
+    (itemId: string, boardId: string) => {
       if (boardId !== activeBoardId) {
         void setActiveBoard(boardId)
+        void setBoardActiveView(boardId, 'tabs').catch(() => {})
       }
       setBoardView('tabs')
-      setTimeout(() => boardTabsViewRef.current?.selectTab(nodeId), 0)
+      setTerminalDialogNodeId(null)
+      requestTabSelect(itemId)
     },
-    [activeBoardId, setActiveBoard]
+    [activeBoardId, setActiveBoard, setBoardActiveView, requestTabSelect]
   )
 
-  useEffect(() => {
-    if (!pendingSidebarTabOpen) return
-    if (!activeBoardId || activeBoardId !== pendingSidebarTabOpen.boardId) return
-    const tab = tabs.find((entry) => entry.id === pendingSidebarTabOpen.tabId)
-    if (!tab) return
-    setSelectedTab(tab)
-    setDialogOpen(true)
-    setPendingSidebarTabOpen(null)
-  }, [pendingSidebarTabOpen, activeBoardId, tabs])
-
-  useEffect(() => {
-    if (!pendingSidebarTerminalOpen) return
-    if (!activeBoardId || activeBoardId !== pendingSidebarTerminalOpen.boardId) return
-    const node = gNodes.find((entry) => entry.id === pendingSidebarTerminalOpen.nodeId && entry.nodeType === 'terminal')
-    if (!node) return
-    setTerminalDialogNodeId(node.id)
-    setPendingSidebarTerminalOpen(null)
-  }, [pendingSidebarTerminalOpen, activeBoardId, gNodes])
 
   const startInlineTerminalEdit = useCallback((nodeId: string, name: string) => {
     setEditingFolderId(null)
@@ -2390,7 +2352,7 @@ function BrowserPageInner(): React.ReactElement {
       } else {
         void handleAddTab().then((tab) => {
           if (tab && boardView === 'tabs') {
-            boardTabsViewRef.current?.selectTab(tab.id)
+            requestTabSelect(tab.id)
           }
         })
       }
@@ -2805,7 +2767,7 @@ function BrowserPageInner(): React.ReactElement {
   const handleContextShowFileAsTab = useCallback(() => {
     if (!contextFileNode) return
     setBoardView('tabs')
-    setTimeout(() => boardTabsViewRef.current?.selectTab(contextFileNode.id), 0)
+    requestTabSelect(contextFileNode.id)
     setContextMenu(null)
   }, [contextFileNode])
   const handleFlowContainerMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
@@ -2912,6 +2874,25 @@ function BrowserPageInner(): React.ReactElement {
     [createBoard]
   )
 
+  const handleCreateTerminal = useCallback(async () => {
+    if (!activeBoardId) return
+    try {
+      const command = getAgentCommand(getSetting('defaultAgent'))
+      const node = await createNode({
+        nodeType: 'terminal',
+        label: 'Terminal',
+        config: JSON.stringify({ command }),
+        flowX: 0,
+        flowY: 0
+      })
+      setTerminalDialogNodeId(node.id)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to create terminal:`, error)
+      window.alert(`Failed to create terminal: ${message}`)
+    }
+  }, [activeBoardId, createNode, getSetting])
+
   const startInlineBoardEdit = useCallback((boardId: string, name: string) => {
     setEditingFolderId(null)
     setEditingFolderName('')
@@ -2960,10 +2941,111 @@ function BrowserPageInner(): React.ReactElement {
     [setActiveBoard]
   )
 
+  // -- Drag-and-drop handlers for sidebar boards/folders --
+  const handleDragStart = useCallback((e: React.DragEvent, type: 'board' | 'folder', id: string) => {
+    dragItemRef.current = { type, id }
+    e.dataTransfer.effectAllowed = 'move'
+    e.dataTransfer.setData('text/plain', `${type}:${id}`)
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = '0.5'
+    }
+  }, [])
+
+  const handleDragEnd = useCallback((e: React.DragEvent) => {
+    dragItemRef.current = null
+    setDropTarget(null)
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = ''
+    }
+  }, [])
+
+  const handleFolderDragOver = useCallback((e: React.DragEvent, folderId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const dragging = dragItemRef.current
+    if (!dragging) return
+    // Don't allow dropping a folder onto itself
+    if (dragging.type === 'folder' && dragging.id === folderId) return
+    // Only boards can be dropped into folders
+    if (dragging.type !== 'board') return
+    // Don't allow dropping a board that's already in this folder
+    const board = workspace?.boards.find((b) => b.id === dragging.id)
+    if (board?.folderId === folderId) return
+    e.dataTransfer.dropEffect = 'move'
+    setDropTarget({ type: 'folder', id: folderId })
+  }, [workspace])
+
+  const handleUngroupedDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    const dragging = dragItemRef.current
+    if (!dragging) return
+    // Only boards can be moved to ungrouped
+    if (dragging.type !== 'board') return
+    // Don't highlight if already ungrouped
+    const board = workspace?.boards.find((b) => b.id === dragging.id)
+    if (!board?.folderId) return
+    e.dataTransfer.dropEffect = 'move'
+    setDropTarget({ type: 'ungrouped' })
+  }, [workspace])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    const relatedTarget = e.relatedTarget as HTMLElement | null
+    if (relatedTarget && e.currentTarget.contains(relatedTarget)) return
+    setDropTarget(null)
+  }, [])
+
+  const handleFolderDrop = useCallback(async (e: React.DragEvent, folderId: string) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTarget(null)
+    const dragging = dragItemRef.current
+    dragItemRef.current = null
+    if (!dragging) return
+    if (dragging.type === 'board') {
+      const board = workspace?.boards.find((b) => b.id === dragging.id)
+      if (board?.folderId === folderId) return
+      try {
+        await moveBoard(dragging.id, folderId)
+      } catch (error) {
+        console.error(`${FLOW_TAG} failed to move board to folder:`, error)
+      }
+    }
+  }, [workspace, moveBoard])
+
+  const handleUngroupedDrop = useCallback(async (e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setDropTarget(null)
+    const dragging = dragItemRef.current
+    dragItemRef.current = null
+    if (!dragging) return
+    if (dragging.type === 'board') {
+      const board = workspace?.boards.find((b) => b.id === dragging.id)
+      if (!board?.folderId) return
+      try {
+        await moveBoard(dragging.id, null)
+      } catch (error) {
+        console.error(`${FLOW_TAG} failed to move board to ungrouped:`, error)
+      }
+    }
+  }, [workspace, moveBoard])
+
   return (
     <div className="flex h-full min-h-0" onClick={closeContextMenu}>
       {!sidebarCollapsed && (
-        <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border/40 bg-muted/30 flex flex-col min-h-0">
+        <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border/40 sidebar-vibrancy flex flex-col min-h-0">
+          <div className="sidebar-traffic-row shrink-0 flex items-center justify-end">
+            <div className="drag-region flex-1 h-full" />
+            <button
+              type="button"
+              className="no-drag shrink-0 rounded p-1 mr-2 text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+              onClick={() => setSidebarCollapsed(true)}
+              title="Collapse sidebar"
+            >
+              <PanelLeftClose className="h-4 w-4" />
+            </button>
+          </div>
           <div className="flex items-center justify-between px-3 py-2.5">
             <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace</h2>
             <div className="flex items-center gap-0.5">
@@ -2980,7 +3062,7 @@ function BrowserPageInner(): React.ReactElement {
                 <div className="absolute left-0 top-full z-50 mt-1 w-36 rounded-md border border-border/40 bg-popover p-1 shadow-sm">
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
                     onClick={() => { setCreateMenuOpen(false); void handleCreateFolder() }}
                   >
                     <Folder className="h-3.5 w-3.5" />
@@ -2988,26 +3070,51 @@ function BrowserPageInner(): React.ReactElement {
                   </button>
                   <button
                     type="button"
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs hover:bg-accent"
+                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
                     onClick={() => { setCreateMenuOpen(false); void handleCreateBoard(null) }}
                   >
                     <Workflow className="h-3.5 w-3.5" />
                     Board
                   </button>
+                  {activeBoardId && (
+                    <button
+                      type="button"
+                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
+                      onClick={() => { setCreateMenuOpen(false); void handleCreateTerminal() }}
+                    >
+                      <Terminal className="h-3.5 w-3.5" />
+                      Terminal
+                    </button>
+                  )}
                 </div>
               )}
             </div>
             </div>
           </div>
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-1.5 py-1">
+          <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hidden px-1.5 py-1">
             <div className="space-y-0.5">
               {workspace?.folders.map((folder) => {
                 const folderBoards = boardsByFolderId.get(folder.id) ?? []
                 const expanded = expandedFolders.has(folder.id)
                 return (
-                  <section key={folder.id}>
-                    <div className="group/folderItem flex items-center gap-1 rounded-sm px-2 py-1 hover:bg-accent/60 transition-colors">
+                  <section
+                    key={folder.id}
+                    onDragOver={(e) => handleFolderDragOver(e, folder.id)}
+                    onDragLeave={handleDragLeave}
+                    onDrop={(e) => void handleFolderDrop(e, folder.id)}
+                  >
+                    <div
+                      className={[
+                        'group/folderItem flex items-center gap-1 rounded-lg px-2 py-1 transition-colors',
+                        dropTarget?.type === 'folder' && dropTarget.id === folder.id
+                          ? 'bg-accent ring-1 ring-primary/50'
+                          : 'hover:bg-accent/60'
+                      ].join(' ')}
+                      draggable={editingFolderId !== folder.id}
+                      onDragStart={(e) => handleDragStart(e, 'folder', folder.id)}
+                      onDragEnd={handleDragEnd}
+                    >
                       {editingFolderId === folder.id ? (
                         <Input
                           value={editingFolderName}
@@ -3092,10 +3199,13 @@ function BrowserPageInner(): React.ReactElement {
                               return (
                               <div
                                 key={board.id}
+                                draggable={editingBoardId !== board.id}
+                                onDragStart={(e) => handleDragStart(e, 'board', board.id)}
+                                onDragEnd={handleDragEnd}
                                 className={[
-                                  'group/boardItem rounded-sm px-2 py-1 transition-colors',
+                                  'group/boardItem rounded-lg px-2 py-1 transition-colors',
                                   board.id === activeBoardId
-                                    ? 'bg-accent'
+                                    ? ''
                                     : 'hover:bg-accent/50'
                                 ].join(' ')}
                               >
@@ -3188,8 +3298,8 @@ function BrowserPageInner(): React.ReactElement {
                                       <button
                                         key={tab.id}
                                         type="button"
-                                        onClick={() => handleSidebarTabClick(tab.id, board.id)}
-                                        className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                                        onClick={() => handleSidebarItemClick(tab.id, board.id)}
+                                        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
                                       >
                                         {tab.favicon ? (
                                           <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
@@ -3200,7 +3310,7 @@ function BrowserPageInner(): React.ReactElement {
                                       </button>
                                     ))}
                                     {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
-                                      <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors">
+                                      <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer" onClick={() => handleSidebarItemClick(tn.id, board.id)}>
                                         <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
                                         {editingTerminalId === tn.id ? (
                                           <Input
@@ -3221,10 +3331,8 @@ function BrowserPageInner(): React.ReactElement {
                                             autoFocus
                                           />
                                         ) : (
-                                          <button
-                                            type="button"
+                                          <span
                                             className="min-w-0 flex-1 truncate text-left"
-                                            onClick={() => handleSidebarTerminalClick(tn.id, board.id)}
                                             onDoubleClick={(event) => {
                                               event.preventDefault()
                                               event.stopPropagation()
@@ -3232,7 +3340,7 @@ function BrowserPageInner(): React.ReactElement {
                                             }}
                                           >
                                             {tn.label || 'Terminal'}
-                                          </button>
+                                          </span>
                                         )}
                                       </div>
                                     ))}
@@ -3240,8 +3348,8 @@ function BrowserPageInner(): React.ReactElement {
                                       <button
                                         key={fn.id}
                                         type="button"
-                                        onClick={() => handleSidebarFileClick(fn.id, board.id)}
-                                        className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                                        onClick={() => handleSidebarItemClick(fn.id, board.id)}
+                                        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
                                       >
                                         <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
                                         <span className="truncate">{fn.label || 'File'}</span>
@@ -3260,14 +3368,26 @@ function BrowserPageInner(): React.ReactElement {
                 )
               })}
 
+              <div
+                className={[
+                  'rounded-lg transition-colors min-h-[8px]',
+                  dropTarget?.type === 'ungrouped' ? 'ring-1 ring-primary/50 bg-accent/30' : ''
+                ].join(' ')}
+                onDragOver={handleUngroupedDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => void handleUngroupedDrop(e)}
+              >
               {ungroupedBoards.map((board) => {
                 const bTabs = board.id === activeBoardId ? tabs : (boardTabsMap.get(board.id) ?? [])
                 const collapsed = collapsedBoards.has(board.id)
                 return (
                   <div
                     key={board.id}
+                    draggable={editingBoardId !== board.id}
+                    onDragStart={(e) => handleDragStart(e, 'board', board.id)}
+                    onDragEnd={handleDragEnd}
                     className={[
-                      'group/boardItem rounded-sm px-2 py-1 transition-colors',
+                      'group/boardItem rounded-lg px-2 py-1 transition-colors',
                       board.id === activeBoardId
                         ? 'bg-accent'
                         : 'hover:bg-accent/50'
@@ -3362,8 +3482,8 @@ function BrowserPageInner(): React.ReactElement {
                           <button
                             key={tab.id}
                             type="button"
-                            onClick={() => handleSidebarTabClick(tab.id, board.id)}
-                            className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                            onClick={() => handleSidebarItemClick(tab.id, board.id)}
+                            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
                           >
                             {tab.favicon ? (
                               <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
@@ -3374,7 +3494,7 @@ function BrowserPageInner(): React.ReactElement {
                           </button>
                         ))}
                         {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
-                          <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors">
+                          <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer" onClick={() => handleSidebarItemClick(tn.id, board.id)}>
                             <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
                             {editingTerminalId === tn.id ? (
                               <Input
@@ -3395,10 +3515,8 @@ function BrowserPageInner(): React.ReactElement {
                                 autoFocus
                               />
                             ) : (
-                              <button
-                                type="button"
+                              <span
                                 className="min-w-0 flex-1 truncate text-left"
-                                onClick={() => handleSidebarTerminalClick(tn.id, board.id)}
                                 onDoubleClick={(event) => {
                                   event.preventDefault()
                                   event.stopPropagation()
@@ -3406,7 +3524,7 @@ function BrowserPageInner(): React.ReactElement {
                                 }}
                               >
                                 {tn.label || 'Terminal'}
-                              </button>
+                              </span>
                             )}
                           </div>
                         ))}
@@ -3414,8 +3532,8 @@ function BrowserPageInner(): React.ReactElement {
                           <button
                             key={fn.id}
                             type="button"
-                            onClick={() => handleSidebarFileClick(fn.id, board.id)}
-                            className="flex w-full items-center gap-1.5 rounded-sm px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                            onClick={() => handleSidebarItemClick(fn.id, board.id)}
+                            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
                           >
                             <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
                             <span className="truncate">{fn.label || 'File'}</span>
@@ -3426,6 +3544,7 @@ function BrowserPageInner(): React.ReactElement {
                   </div>
                 )
               })}
+              </div>
             </div>
           </div>
 
@@ -3433,7 +3552,7 @@ function BrowserPageInner(): React.ReactElement {
             <UpdateBanner />
             <NavLink
               to="/settings"
-              className="flex items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+              className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
             >
               <Settings className="h-3.5 w-3.5" />
               Settings
@@ -3441,7 +3560,7 @@ function BrowserPageInner(): React.ReactElement {
             <button
               type="button"
               onClick={openChangelog}
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
             >
               <ScrollText className="h-3.5 w-3.5" />
               Changelog
@@ -3456,17 +3575,20 @@ function BrowserPageInner(): React.ReactElement {
         />
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex min-h-0 flex-1 flex-col bg-background">
+          <div className={`drag-region shrink-0 ${sidebarCollapsed ? 'sidebar-drag-region' : 'content-drag-region'}`} />
           <div className="flex items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
             <div className="flex items-center gap-2 min-w-0">
-              <button
-                type="button"
-                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                onClick={() => setSidebarCollapsed((v) => !v)}
-                title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-              >
-                {sidebarCollapsed ? <PanelLeftOpen className="h-4 w-4" /> : <PanelLeftClose className="h-4 w-4" />}
-              </button>
+              {sidebarCollapsed && (
+                <button
+                  type="button"
+                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  onClick={() => setSidebarCollapsed(false)}
+                  title="Expand sidebar"
+                >
+                  <PanelLeftOpen className="h-4 w-4" />
+                </button>
+              )}
               {isSettingsRoute && (
                 <button
                   type="button"
@@ -3582,13 +3704,47 @@ function BrowserPageInner(): React.ReactElement {
           )}
           {!isSettingsRoute && boardView === 'tabs' && (
             <BoardTabsView
-              ref={boardTabsViewRef}
+              key={activeBoardId}
               tabs={tabs}
               terminalNodes={terminalNodes}
               fileNodes={fileNodes}
               activeBoardId={activeBoardId}
+              pendingSelectId={pendingTabSelect?.itemId ?? null}
+              pendingSelectNonce={pendingTabSelect?.nonce ?? 0}
               onTabUpdate={updateTab}
               onCreateTab={() => handleAddTab()}
+              onCreateAgent={async () => {
+                if (!activeBoardId) return
+                try {
+                  const command = getAgentCommand(getSetting('defaultAgent'))
+                  const node = await createNode({
+                    nodeType: 'terminal',
+                    label: 'Agent',
+                    config: JSON.stringify({ command }),
+                    flowX: 0,
+                    flowY: 0
+                  })
+                  return node.id
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error)
+                  console.error(`[browser] failed to create agent terminal:`, message)
+                }
+              }}
+              onCreateTerminal={async () => {
+                if (!activeBoardId) return
+                try {
+                  const node = await createNode({
+                    nodeType: 'terminal',
+                    label: 'Terminal',
+                    flowX: 0,
+                    flowY: 0
+                  })
+                  return node.id
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error)
+                  console.error(`[browser] failed to create terminal:`, message)
+                }
+              }}
               onDeleteTab={(id) => void deleteTab(id)}
               onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
@@ -3625,15 +3781,19 @@ function BrowserPageInner(): React.ReactElement {
         >
           {contextMenu.type === 'pane' && (
             <>
-              <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Tabs
-              </div>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={handleContextAddTab}
               >
-                <Plus className="h-4 w-4" />
-                Add new tab
+                <Globe className="h-4 w-4" />
+                Add Website
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => handleContextAddGraphNode('terminal', 'Agent', { command: getAgentCommand(getSetting('defaultAgent')) })}
+              >
+                <Sparkles className="h-4 w-4" />
+                Add Agent
               </button>
 
               <div className="my-1 h-px bg-border" />
@@ -3712,7 +3872,6 @@ function BrowserPageInner(): React.ReactElement {
                 <Terminal className="h-4 w-4" />
                 Add Terminal
               </button>
-
               <div className="my-1 h-px bg-border" />
 
               <div className="px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
