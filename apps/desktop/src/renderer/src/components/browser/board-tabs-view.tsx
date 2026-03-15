@@ -30,6 +30,7 @@ interface BoardTabsViewProps {
   boardRootDir?: string | null
   pendingSelectId?: string | null
   pendingSelectNonce?: number
+  onActiveItemChange?: (id: string | null) => void
 }
 
 function parseNodeConfig(rawConfig: string): Record<string, unknown> {
@@ -57,7 +58,8 @@ export function BoardTabsView({
   workspaceRootDir,
   boardRootDir,
   pendingSelectId,
-  pendingSelectNonce
+  pendingSelectNonce,
+  onActiveItemChange
 }: BoardTabsViewProps): React.ReactElement {
   const [selectedId, setSelectedId] = useState<string | null>(() => {
     if (pendingSelectId) return pendingSelectId
@@ -76,6 +78,11 @@ export function BoardTabsView({
       lastProcessedNonce.current = pendingSelectNonce
     }
   }, [pendingSelectId, pendingSelectNonce])
+
+  // Notify parent of active item changes
+  useEffect(() => {
+    onActiveItemChange?.(selectedId)
+  }, [selectedId, onActiveItemChange])
 
   // Build an unordered map of all tab items keyed by id
   const itemsById = useMemo(() => {

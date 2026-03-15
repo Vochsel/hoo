@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft } from 'lucide-react'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
@@ -54,6 +54,7 @@ import { runAgentOnWebview } from '@/services/browser-agent-runner'
 import { getWebviewUserAgent } from '@/lib/webview-user-agent'
 import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/lib/schedule-cron'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
+import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu'
 import { DynamicIcon, IconPicker } from '@/components/ui/icon-picker'
 import { SettingsPage, getAgentCommand } from '@/pages/settings'
 import TurndownService from 'turndown'
@@ -244,6 +245,8 @@ function BrowserPageInner(): React.ReactElement {
     workspace,
     loading: workspaceLoading,
     activeBoard,
+    setRootDir,
+    getRecentWorkspaces,
     createFolder,
     renameFolder,
     deleteFolder,
@@ -269,6 +272,7 @@ function BrowserPageInner(): React.ReactElement {
   const { edges: savedEdges, saveEdges } = useBrowserEdges(activeBoardId)
 
   const [selectedTab, setSelectedTab] = useState<BrowserTab | null>(null)
+  const [activeItemId, setActiveItemId] = useState<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [terminalDialogNodeId, setTerminalDialogNodeId] = useState<string | null>(null)
   const pendingSelectNonceRef = useRef(0)
@@ -301,6 +305,8 @@ function BrowserPageInner(): React.ReactElement {
   const [renameDialog, setRenameDialog] = useState<{ nodeId: string; currentName: string; isTab: boolean } | null>(null)
   const [renameDialogValue, setRenameDialogValue] = useState('')
   const [createMenuOpen, setCreateMenuOpen] = useState(false)
+  const [recentWorkspaces, setRecentWorkspaces] = useState<import('@/hooks/use-workspace').RecentWorkspace[]>([])
+  const [newWorkspaceDialogOpen, setNewWorkspaceDialogOpen] = useState(false)
   const createMenuRef = useRef<HTMLDivElement | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -375,6 +381,11 @@ function BrowserPageInner(): React.ReactElement {
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [createMenuOpen])
+
+  // Fetch recent workspaces whenever the root dir changes (so the list is ready when dropdown opens)
+  useEffect(() => {
+    getRecentWorkspaces().then(setRecentWorkspaces).catch(() => {})
+  }, [workspace?.rootDir, getRecentWorkspaces])
 
   // ─── Folder / Board icon & color meta ──────────────────────────────────────
   const folderMeta = (getSetting('folderMeta') ?? {}) as Record<string, { icon?: string; color?: string }>
@@ -3047,7 +3058,56 @@ function BrowserPageInner(): React.ReactElement {
             </button>
           </div>
           <div className="flex items-center justify-between px-3 py-2.5">
-            <h2 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Workspace</h2>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <button
+                  type="button"
+                  className="flex items-center gap-1 rounded px-1 -ml-1 text-xs font-semibold tracking-wide text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors outline-none"
+                >
+                  {workspace?.rootDir.split('/').pop() || 'Workspace'}
+                  <ChevronDown className="h-3 w-3" />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="start" className="w-56 rounded-2xl">
+                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Recent workspaces</DropdownMenuLabel>
+                {recentWorkspaces.map((rw) => (
+                  <DropdownMenuItem
+                    key={rw.path}
+                    className="gap-2 text-xs"
+                    onClick={() => {
+                      if (rw.path !== workspace?.rootDir) {
+                        void setRootDir(rw.path)
+                      }
+                    }}
+                  >
+                    {rw.path === workspace?.rootDir ? (
+                      <Check className="h-3.5 w-3.5 shrink-0" />
+                    ) : (
+                      <span className="h-3.5 w-3.5 shrink-0" />
+                    )}
+                    <span className="truncate">{rw.name}</span>
+                  </DropdownMenuItem>
+                ))}
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  className="gap-2 text-xs"
+                  onClick={() => setNewWorkspaceDialogOpen(true)}
+                >
+                  <FolderPlus className="h-3.5 w-3.5 shrink-0" />
+                  New workspace...
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  className="gap-2 text-xs"
+                  onClick={async () => {
+                    const selected = await window.api.workspace.pickRootDir(workspace?.rootDir)
+                    if (selected) void setRootDir(selected)
+                  }}
+                >
+                  <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                  Open folder...
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <div className="flex items-center gap-0.5">
             <div className="relative" ref={createMenuRef}>
               <button
@@ -3299,7 +3359,7 @@ function BrowserPageInner(): React.ReactElement {
                                         key={tab.id}
                                         type="button"
                                         onClick={() => handleSidebarItemClick(tab.id, board.id)}
-                                        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                                        className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${activeItemId === tab.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
                                       >
                                         {tab.favicon ? (
                                           <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
@@ -3310,7 +3370,7 @@ function BrowserPageInner(): React.ReactElement {
                                       </button>
                                     ))}
                                     {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
-                                      <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer" onClick={() => handleSidebarItemClick(tn.id, board.id)}>
+                                      <div key={tn.id} className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors cursor-pointer ${activeItemId === tn.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`} onClick={() => handleSidebarItemClick(tn.id, board.id)}>
                                         <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
                                         {editingTerminalId === tn.id ? (
                                           <Input
@@ -3349,7 +3409,7 @@ function BrowserPageInner(): React.ReactElement {
                                         key={fn.id}
                                         type="button"
                                         onClick={() => handleSidebarItemClick(fn.id, board.id)}
-                                        className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                                        className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${activeItemId === fn.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
                                       >
                                         <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
                                         <span className="truncate">{fn.label || 'File'}</span>
@@ -3389,7 +3449,7 @@ function BrowserPageInner(): React.ReactElement {
                     className={[
                       'group/boardItem rounded-lg px-2 py-1 transition-colors',
                       board.id === activeBoardId
-                        ? 'bg-accent'
+                        ? ''
                         : 'hover:bg-accent/50'
                     ].join(' ')}
                   >
@@ -3483,7 +3543,7 @@ function BrowserPageInner(): React.ReactElement {
                             key={tab.id}
                             type="button"
                             onClick={() => handleSidebarItemClick(tab.id, board.id)}
-                            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                            className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${activeItemId === tab.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
                           >
                             {tab.favicon ? (
                               <img src={tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
@@ -3494,7 +3554,7 @@ function BrowserPageInner(): React.ReactElement {
                           </button>
                         ))}
                         {(boardTerminalsMap.get(board.id) ?? []).map((tn) => (
-                          <div key={tn.id} className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors cursor-pointer" onClick={() => handleSidebarItemClick(tn.id, board.id)}>
+                          <div key={tn.id} className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors cursor-pointer ${activeItemId === tn.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`} onClick={() => handleSidebarItemClick(tn.id, board.id)}>
                             <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
                             {editingTerminalId === tn.id ? (
                               <Input
@@ -3533,7 +3593,7 @@ function BrowserPageInner(): React.ReactElement {
                             key={fn.id}
                             type="button"
                             onClick={() => handleSidebarItemClick(fn.id, board.id)}
-                            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-0.5 text-left text-xs text-muted-foreground hover:bg-accent/50 hover:text-foreground transition-colors"
+                            className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${activeItemId === fn.id && board.id === activeBoardId ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
                           >
                             <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
                             <span className="truncate">{fn.label || 'File'}</span>
@@ -3751,6 +3811,7 @@ function BrowserPageInner(): React.ReactElement {
               onUpdateNode={updateNode}
               workspaceRootDir={workspace?.rootDir}
               boardRootDir={boardRootDir}
+              onActiveItemChange={setActiveItemId}
             />
           )}
           {!isSettingsRoute && boardView === 'document' && (
@@ -4324,6 +4385,26 @@ function BrowserPageInner(): React.ReactElement {
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenameDialog(null)}>Cancel</Button>
             <Button onClick={() => void handleRenameDialogSubmit()}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* New Workspace Dialog */}
+      <Dialog open={newWorkspaceDialogOpen} onOpenChange={(o) => { if (!o) setNewWorkspaceDialogOpen(false) }}>
+        <DialogContent className="sm:max-w-[360px]">
+          <DialogHeader>
+            <DialogTitle>New Workspace</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">Choose a folder to use as the workspace root. Boards and settings will be stored inside it.</p>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNewWorkspaceDialogOpen(false)}>Cancel</Button>
+            <Button onClick={async () => {
+              setNewWorkspaceDialogOpen(false)
+              const selected = await window.api.workspace.pickRootDir(workspace?.rootDir)
+              if (selected) void setRootDir(selected)
+            }}>
+              Choose Folder
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -64,6 +64,7 @@
     "@electron-toolkit/tsconfig": "^1.0.1",
     "@electron/notarize": "^3.1.1",
     "@electron/rebuild": "^3.7.2",
+    "@radix-ui/react-dropdown-menu": "^2.1.16",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.14",

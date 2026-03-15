@@ -47,7 +47,7 @@ function createWindow(iconPath: string | null): void {
     ...(isMac
       ? {
           trafficLightPosition: { x: 15, y: 18 },
-          vibrancy: 'sidebar',
+          vibrancy: 'under-window',
           visualEffectState: 'active',
           transparent: true
         }
