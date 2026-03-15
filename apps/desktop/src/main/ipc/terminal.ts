@@ -1,13 +1,17 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import * as pty from 'node-pty'
+import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { promises as fs } from 'node:fs'
 import { basename, extname, join } from 'node:path'
 import { homedir, tmpdir } from 'os'
+import { promisify } from 'node:util'
 
 const sessions = new Map<string, pty.IPty>()
 const buffers = new Map<string, string>()
 const MAX_BUFFER_SIZE = 500_000 // ~500KB per session
+const execFileAsync = promisify(execFile)
+const shellEnvCache = new Map<string, Promise<Record<string, string>>>()
 
 function stripAnsi(str: string): string {
   // eslint-disable-next-line no-control-regex
@@ -18,6 +22,56 @@ function defaultShell(): string {
   return process.platform === 'win32'
     ? 'powershell.exe'
     : process.env.SHELL || '/bin/zsh'
+}
+
+function currentProcessEnv(): Record<string, string> {
+  const entries = Object.entries(process.env).filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+  return Object.fromEntries(entries)
+}
+
+function parseEnvOutput(stdout: string): Record<string, string> {
+  const parsed: Record<string, string> = {}
+  for (const rawLine of stdout.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (!line) continue
+    const separatorIndex = line.indexOf('=')
+    if (separatorIndex <= 0) continue
+    parsed[line.slice(0, separatorIndex)] = line.slice(separatorIndex + 1)
+  }
+  return parsed
+}
+
+async function resolveShellEnv(shellPath: string): Promise<Record<string, string>> {
+  if (process.platform === 'win32') return currentProcessEnv()
+
+  const cached = shellEnvCache.get(shellPath)
+  if (cached) return cached
+
+  const baseEnv = currentProcessEnv()
+  const loadPromise = (async () => {
+    try {
+      const { stdout } = await execFileAsync(
+        shellPath,
+        ['-ilc', 'command env'],
+        {
+          cwd: homedir(),
+          env: baseEnv,
+          timeout: 5_000,
+          maxBuffer: 1024 * 1024
+        }
+      )
+
+      return {
+        ...baseEnv,
+        ...parseEnvOutput(stdout)
+      }
+    } catch {
+      return baseEnv
+    }
+  })()
+
+  shellEnvCache.set(shellPath, loadPromise)
+  return loadPromise
 }
 
 function sanitizeDroppedFileName(fileName: string): string {
@@ -40,6 +94,7 @@ export function registerTerminalHandlers(): void {
       const timeoutMs = (timeout ?? 30) * 1000
       const resolvedShell = shell || defaultShell()
       const resolvedCwd = cwd || homedir()
+      const env = await resolveShellEnv(resolvedShell)
 
       return new Promise((resolve) => {
         let stdout = ''
@@ -64,7 +119,7 @@ export function registerTerminalHandlers(): void {
             cols: 200,
             rows: 50,
             cwd: resolvedCwd,
-            env: process.env as Record<string, string>
+            env
           })
         } catch (err) {
           settle({
@@ -109,7 +164,7 @@ export function registerTerminalHandlers(): void {
   // Interactive PTY sessions
   ipcMain.handle(
     'terminal:spawn',
-    (
+    async (
       e: IpcMainInvokeEvent,
       sessionId: string,
       opts?: { shell?: string; cwd?: string; cols?: number; rows?: number }
@@ -119,12 +174,15 @@ export function registerTerminalHandlers(): void {
       }
 
       try {
-        const proc = pty.spawn(opts?.shell || defaultShell(), [], {
+        const resolvedShell = opts?.shell || defaultShell()
+        const env = await resolveShellEnv(resolvedShell)
+
+        const proc = pty.spawn(resolvedShell, [], {
           name: 'xterm-256color',
           cols: opts?.cols ?? 80,
           rows: opts?.rows ?? 24,
           cwd: opts?.cwd || homedir(),
-          env: process.env as Record<string, string>
+          env
         })
 
         sessions.set(sessionId, proc)

@@ -329,10 +329,8 @@ function BrowserPageInner(): React.ReactElement {
   const [editingTerminalName, setEditingTerminalName] = useState('')
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null)
   const [renameDialogValue, setRenameDialogValue] = useState('')
-  const [createMenuOpen, setCreateMenuOpen] = useState(false)
   const [recentWorkspaces, setRecentWorkspaces] = useState<import('@/hooks/use-workspace').RecentWorkspace[]>([])
   const [newWorkspaceDialogOpen, setNewWorkspaceDialogOpen] = useState(false)
-  const createMenuRef = useRef<HTMLDivElement | null>(null)
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
@@ -396,17 +394,6 @@ function BrowserPageInner(): React.ReactElement {
       setCollapsedBoards(new Set(savedBoards as string[]))
     }
   }, [settingsLoading, workspace?.folders, getSetting])
-
-  useEffect(() => {
-    if (!createMenuOpen) return
-    const handleClickOutside = (e: MouseEvent): void => {
-      if (createMenuRef.current && !createMenuRef.current.contains(e.target as Node)) {
-        setCreateMenuOpen(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [createMenuOpen])
 
   // Fetch recent workspaces whenever the root dir changes (so the list is ready when dropdown opens)
   useEffect(() => {
@@ -3437,112 +3424,96 @@ function BrowserPageInner(): React.ReactElement {
   }, [workspace, moveBoard])
 
   return (
-    <div className="flex h-full min-h-0" onClick={() => { closeContextMenu(); closeBoardItemMenu() }}>
+    <div className="flex h-full min-h-0 bg-transparent" onClick={() => { closeContextMenu(); closeBoardItemMenu() }}>
       {!sidebarCollapsed && (
-        <aside style={{ width: sidebarWidth }} className="shrink-0 border-r border-border/40 sidebar-vibrancy flex flex-col min-h-0">
-          <div className="sidebar-traffic-row shrink-0 flex items-center justify-end">
+        <aside style={{ width: sidebarWidth }} className="shrink-0 sidebar-vibrancy flex flex-col min-h-0">
+          <div className="sidebar-traffic-row shrink-0 flex items-center justify-end pr-3">
             <div className="drag-region flex-1 h-full" />
             <button
               type="button"
-              className="no-drag shrink-0 rounded p-1 mr-2 text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+              className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
               onClick={() => setSidebarCollapsed(true)}
               title="Collapse sidebar"
             >
               <PanelLeftClose className="h-4 w-4" />
             </button>
           </div>
-          <div className="flex items-center justify-between px-3 py-2.5">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded px-1 -ml-1 text-xs font-semibold tracking-wide text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors outline-none"
-                >
-                  {workspace?.rootDir.split('/').pop() || 'Workspace'}
-                  <ChevronDown className="h-3 w-3" />
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56 rounded-2xl">
-                <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Recent workspaces</DropdownMenuLabel>
-                {recentWorkspaces.map((rw) => (
+          <div className="drag-region px-3 py-2.5">
+            <div className="no-drag">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+	                  <button
+	                    type="button"
+	                    className="flex h-8 w-full items-center justify-between gap-3 rounded-xl px-3 text-sm font-semibold text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors outline-none"
+	                  >
+                    <span className="truncate text-left">{workspace?.rootDir.split('/').pop() || 'Workspace'}</span>
+                    <ChevronDown className="h-4 w-4 shrink-0" />
+                  </button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="w-56 rounded-2xl">
+                  <DropdownMenuLabel className="text-xs text-muted-foreground font-normal">Recent workspaces</DropdownMenuLabel>
+                  {recentWorkspaces.map((rw) => (
+                    <DropdownMenuItem
+                      key={rw.path}
+                      className="gap-2 text-xs"
+                      onClick={() => {
+                        if (rw.path !== workspace?.rootDir) {
+                          void setRootDir(rw.path)
+                        }
+                      }}
+                    >
+                      {rw.path === workspace?.rootDir ? (
+                        <Check className="h-3.5 w-3.5 shrink-0" />
+                      ) : (
+                        <span className="h-3.5 w-3.5 shrink-0" />
+                      )}
+                      <span className="truncate">{rw.name}</span>
+                    </DropdownMenuItem>
+                  ))}
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem
-                    key={rw.path}
                     className="gap-2 text-xs"
-                    onClick={() => {
-                      if (rw.path !== workspace?.rootDir) {
-                        void setRootDir(rw.path)
-                      }
+                    onClick={() => void handleCreateFolder()}
+                  >
+                    <Folder className="h-3.5 w-3.5 shrink-0" />
+                    New folder
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2 text-xs"
+                    onClick={() => void handleCreateBoard(null)}
+                  >
+                    <Workflow className="h-3.5 w-3.5 shrink-0" />
+                    New board
+                  </DropdownMenuItem>
+                  {activeBoardId && (
+                    <DropdownMenuItem
+                      className="gap-2 text-xs"
+                      onClick={() => void handleCreateTerminal()}
+                    >
+                      <Terminal className="h-3.5 w-3.5 shrink-0" />
+                      New terminal
+                    </DropdownMenuItem>
+                  )}
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    className="gap-2 text-xs"
+                    onClick={() => setNewWorkspaceDialogOpen(true)}
+                  >
+                    <FolderPlus className="h-3.5 w-3.5 shrink-0" />
+                    New workspace...
+                  </DropdownMenuItem>
+                  <DropdownMenuItem
+                    className="gap-2 text-xs"
+                    onClick={async () => {
+                      const selected = await window.api.workspace.pickRootDir(workspace?.rootDir)
+                      if (selected) void setRootDir(selected)
                     }}
                   >
-                    {rw.path === workspace?.rootDir ? (
-                      <Check className="h-3.5 w-3.5 shrink-0" />
-                    ) : (
-                      <span className="h-3.5 w-3.5 shrink-0" />
-                    )}
-                    <span className="truncate">{rw.name}</span>
+                    <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+                    Open folder...
                   </DropdownMenuItem>
-                ))}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem
-                  className="gap-2 text-xs"
-                  onClick={() => setNewWorkspaceDialogOpen(true)}
-                >
-                  <FolderPlus className="h-3.5 w-3.5 shrink-0" />
-                  New workspace...
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="gap-2 text-xs"
-                  onClick={async () => {
-                    const selected = await window.api.workspace.pickRootDir(workspace?.rootDir)
-                    if (selected) void setRootDir(selected)
-                  }}
-                >
-                  <FolderOpen className="h-3.5 w-3.5 shrink-0" />
-                  Open folder...
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <div className="flex items-center gap-0.5">
-            <div className="relative" ref={createMenuRef}>
-              <button
-                type="button"
-                className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                onClick={() => setCreateMenuOpen((v) => !v)}
-                title="Create new item"
-              >
-                <Plus className="h-4 w-4" />
-              </button>
-              {createMenuOpen && (
-                <div className="absolute left-0 top-full z-50 mt-1 w-36 rounded-md border border-border/40 bg-popover p-1 shadow-sm">
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                    onClick={() => { setCreateMenuOpen(false); void handleCreateFolder() }}
-                  >
-                    <Folder className="h-3.5 w-3.5" />
-                    Folder
-                  </button>
-                  <button
-                    type="button"
-                    className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                    onClick={() => { setCreateMenuOpen(false); void handleCreateBoard(null) }}
-                  >
-                    <Workflow className="h-3.5 w-3.5" />
-                    Board
-                  </button>
-                  {activeBoardId && (
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                      onClick={() => { setCreateMenuOpen(false); void handleCreateTerminal() }}
-                    >
-                      <Terminal className="h-3.5 w-3.5" />
-                      Terminal
-                    </button>
-                  )}
-                </div>
-              )}
-            </div>
+                </DropdownMenuContent>
+              </DropdownMenu>
             </div>
           </div>
 
@@ -3896,19 +3867,26 @@ function BrowserPageInner(): React.ReactElement {
       )}
       {!sidebarCollapsed && (
         <div
-          className="w-0 shrink-0 relative cursor-col-resize before:absolute before:-left-1 before:top-0 before:bottom-0 before:w-2 before:z-10 hover:before:bg-border/60 active:before:bg-border before:transition-colors"
+          className="relative z-20 mr-3 w-0 shrink-0 cursor-col-resize before:absolute before:-left-1 before:top-0 before:bottom-0 before:w-2 before:z-10 hover:before:bg-border/60 active:before:bg-border before:transition-colors"
           onMouseDown={startResize}
         />
       )}
 
-      <div className="flex min-h-0 flex-1 flex-col bg-background">
+      <div
+        className={[
+          'relative z-10 flex min-h-0 flex-1 flex-col overflow-hidden bg-background/95 backdrop-blur-xl',
+          sidebarCollapsed
+            ? 'bg-background'
+            : '-ml-3 rounded-l-2xl border border-border/50 shadow-[8px_18px_28px_rgba(15,23,42,0.08)]'
+        ].join(' ')}
+      >
           <div className={`drag-region shrink-0 ${sidebarCollapsed ? 'sidebar-drag-region' : 'content-drag-region'}`} />
-          <div className="flex items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
+          <div className="drag-region flex items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
             <div className="flex items-center gap-2 min-w-0">
               {sidebarCollapsed && (
                 <button
                   type="button"
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                   onClick={() => setSidebarCollapsed(false)}
                   title="Expand sidebar"
                 >
@@ -3918,7 +3896,7 @@ function BrowserPageInner(): React.ReactElement {
               {isSettingsRoute && (
                 <button
                   type="button"
-                  className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
                   onClick={() => navigate('/')}
                   title="Back"
                 >
@@ -3930,7 +3908,7 @@ function BrowserPageInner(): React.ReactElement {
               </p>
             </div>
             {!isSettingsRoute && activeBoardId && (
-              <div className="flex shrink-0 items-center gap-2">
+              <div className="no-drag flex shrink-0 items-center gap-2">
                 <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
                   <button
                     type="button"
@@ -4045,39 +4023,41 @@ function BrowserPageInner(): React.ReactElement {
 	              }}
 	              onSaveTabOrder={saveTabOrder}
 	              onSaveNodeOrder={saveNodeOrder}
-              onCreateTab={() => handleAddTab()}
-              onCreateAgent={async () => {
-                if (!activeBoardId) return
-                try {
-                  const command = getAgentCommand(getSetting('defaultAgent'))
-                  const node = await createNode({
-                    nodeType: 'terminal',
-                    label: 'Agent',
-                    config: JSON.stringify({ command }),
-                    flowX: 0,
-                    flowY: 0
-                  })
-                  return node.id
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : String(error)
-                  console.error(`[browser] failed to create agent terminal:`, message)
-                }
-              }}
-              onCreateTerminal={async () => {
-                if (!activeBoardId) return
-                try {
-                  const node = await createNode({
-                    nodeType: 'terminal',
-                    label: 'Terminal',
-                    flowX: 0,
-                    flowY: 0
-                  })
-                  return node.id
-                } catch (error) {
-                  const message = error instanceof Error ? error.message : String(error)
-                  console.error(`[browser] failed to create terminal:`, message)
-                }
-              }}
+	              onCreateTab={() => handleAddTab()}
+	              onCreateAgent={async () => {
+	                if (!activeBoardId) return undefined
+	                try {
+	                  const command = getAgentCommand(getSetting('defaultAgent'))
+	                  const node = await createNode({
+	                    nodeType: 'terminal',
+	                    label: 'Agent',
+	                    config: JSON.stringify({ command }),
+	                    flowX: 0,
+	                    flowY: 0
+	                  })
+	                  return node.id
+	                } catch (error) {
+	                  const message = error instanceof Error ? error.message : String(error)
+	                  console.error(`[browser] failed to create agent terminal:`, message)
+	                  return undefined
+	                }
+	              }}
+	              onCreateTerminal={async () => {
+	                if (!activeBoardId) return undefined
+	                try {
+	                  const node = await createNode({
+	                    nodeType: 'terminal',
+	                    label: 'Terminal',
+	                    flowX: 0,
+	                    flowY: 0
+	                  })
+	                  return node.id
+	                } catch (error) {
+	                  const message = error instanceof Error ? error.message : String(error)
+	                  console.error(`[browser] failed to create terminal:`, message)
+	                  return undefined
+	                }
+	              }}
               onDeleteTab={(id) => void deleteTab(id)}
               onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
