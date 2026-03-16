@@ -150,7 +150,8 @@ const api = {
   },
 
   app: {
-    restart: () => ipcRenderer.invoke('app:restart')
+    restart: () => ipcRenderer.invoke('app:restart'),
+    setBadgeCount: (count: number) => ipcRenderer.invoke('app:setBadgeCount', count)
   },
 
   updater: {

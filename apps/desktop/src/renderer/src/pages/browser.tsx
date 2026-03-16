@@ -56,7 +56,7 @@ import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/li
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu'
 import { DynamicIcon, IconPicker } from '@/components/ui/icon-picker'
-import { SettingsPage, getAgentCommand } from '@/pages/settings'
+import { SettingsPage, getAgentCommand, CLI_AGENTS } from '@/pages/settings'
 import TurndownService from 'turndown'
 
 const MONITOR_TAG = '[browser-monitor]'
@@ -295,6 +295,7 @@ function BrowserPageInner(): React.ReactElement {
 
   const [selectedTab, setSelectedTab] = useState<BrowserTab | null>(null)
   const [activeItemId, setActiveItemId] = useState<string | null>(null)
+  const activeItemIdRef = useRef<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
   const [terminalDialogNodeId, setTerminalDialogNodeId] = useState<string | null>(null)
   const pendingSelectNonceRef = useRef(0)
@@ -331,6 +332,7 @@ function BrowserPageInner(): React.ReactElement {
   const [renameDialogValue, setRenameDialogValue] = useState('')
   const [recentWorkspaces, setRecentWorkspaces] = useState<import('@/hooks/use-workspace').RecentWorkspace[]>([])
   const [newWorkspaceDialogOpen, setNewWorkspaceDialogOpen] = useState(false)
+  const [notifiedItemIds, setNotifiedItemIds] = useState<Set<string>>(new Set())
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
@@ -373,6 +375,65 @@ function BrowserPageInner(): React.ReactElement {
   const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
   const fileNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'file'), [gNodes])
   const outputNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'output'), [gNodes])
+
+  // -- Notification tracking --
+  // Keep activeItemIdRef in sync
+  useEffect(() => { activeItemIdRef.current = activeItemId }, [activeItemId])
+
+  // Clear notification when an item becomes active
+  useEffect(() => {
+    if (!activeItemId) return
+    setNotifiedItemIds((prev) => {
+      if (!prev.has(activeItemId)) return prev
+      const next = new Set(prev)
+      next.delete(activeItemId)
+      return next
+    })
+  }, [activeItemId])
+
+  // Listen for terminal data on non-active terminals and mark as notified
+  useEffect(() => {
+    const removeListener = window.api.terminal.onData((sessionId: string) => {
+      // sessionId is 'pty-<nodeId>'
+      if (!sessionId.startsWith('pty-')) return
+      const nodeId = sessionId.slice(4)
+      if (nodeId === activeItemIdRef.current) return
+      setNotifiedItemIds((prev) => {
+        if (prev.has(nodeId)) return prev
+        const next = new Set(prev)
+        next.add(nodeId)
+        return next
+      })
+    })
+    return removeListener
+  }, [])
+
+  // Track browser tab title changes for non-active tabs
+  const prevTabTitlesRef = useRef<Map<string, string>>(new Map())
+  useEffect(() => {
+    const prevTitles = prevTabTitlesRef.current
+    for (const tab of tabs) {
+      const prev = prevTitles.get(tab.id)
+      if (prev !== undefined && prev !== (tab.title ?? '') && tab.id !== activeItemIdRef.current) {
+        setNotifiedItemIds((s) => {
+          if (s.has(tab.id)) return s
+          const next = new Set(s)
+          next.add(tab.id)
+          return next
+        })
+      }
+      prevTitles.set(tab.id, tab.title ?? '')
+    }
+    // Clean up removed tabs
+    for (const id of prevTitles.keys()) {
+      if (!tabs.some((t) => t.id === id)) prevTitles.delete(id)
+    }
+  }, [tabs])
+
+  // Update Electron app badge count
+  useEffect(() => {
+    window.api.app.setBadgeCount(notifiedItemIds.size).catch(() => {})
+  }, [notifiedItemIds])
 
   // Hydrate folder/board collapse state once settings have loaded
   useEffect(() => {
@@ -1917,6 +1978,7 @@ function BrowserPageInner(): React.ReactElement {
         screenshot: tab.screenshot,
         monitors: parseMonitors(tab),
         isRunning: runningTabs.has(tab.id) || previewingTabs.has(tab.id),
+        hasNotification: notifiedItemIds.has(tab.id),
         onClose: handleClose
       } satisfies BrowserTabNodeData
     }))
@@ -2030,7 +2092,8 @@ function BrowserPageInner(): React.ReactElement {
           ...base,
           data: {
             label: gn.label || 'Terminal',
-            config
+            config,
+            hasNotification: notifiedItemIds.has(gn.id)
           }
         }
       }
@@ -2051,7 +2114,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} duplicate node ids detected: ${Array.from(duplicateIds).join(', ')}`)
     }
     return mergedNodes
-  }, [tabs, gNodes, runningTabs, previewingTabs, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
+  }, [tabs, gNodes, runningTabs, previewingTabs, notifiedItemIds, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
@@ -2696,7 +2759,7 @@ function BrowserPageInner(): React.ReactElement {
                   type="button"
                   onClick={() => handleSidebarItemClick(item.id, boardId)}
                   onContextMenu={(event) => handleBoardItemContextMenu(event, item.id, item.kind, boardId)}
-                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isActive ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isActive ? 'bg-accent/60 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
                 >
                   {item.tab.favicon ? (
                     <img src={item.tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
@@ -2704,6 +2767,9 @@ function BrowserPageInner(): React.ReactElement {
                     <Globe className="h-3.5 w-3.5" />
                   )}
                   <span className="truncate">{item.tab.title || item.tab.url || 'New Tab'}</span>
+                  {!isActive && notifiedItemIds.has(item.id) && (
+                    <span className="ml-auto shrink-0 h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  )}
                 </button>
               )
             }
@@ -2712,7 +2778,7 @@ function BrowserPageInner(): React.ReactElement {
               return (
                 <div
                   key={item.id}
-                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors cursor-pointer ${isActive ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors cursor-pointer ${isActive ? 'bg-accent/60 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
                   onClick={() => handleSidebarItemClick(item.id, boardId)}
                   onContextMenu={(event) => handleBoardItemContextMenu(event, item.id, item.kind, boardId)}
                 >
@@ -2747,6 +2813,9 @@ function BrowserPageInner(): React.ReactElement {
                       {item.node.label || 'Terminal'}
                     </span>
                   )}
+                  {!isActive && notifiedItemIds.has(item.id) && (
+                    <span className="ml-auto shrink-0 h-1.5 w-1.5 rounded-full bg-blue-500" />
+                  )}
                 </div>
               )
             }
@@ -2757,10 +2826,13 @@ function BrowserPageInner(): React.ReactElement {
                 type="button"
                 onClick={() => handleSidebarItemClick(item.id, boardId)}
                 onContextMenu={(event) => handleBoardItemContextMenu(event, item.id, item.kind, boardId)}
-                className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isActive ? 'bg-accent/30 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+                className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isActive ? 'bg-accent/60 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
               >
                 <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
                 <span className="truncate">{item.node.label || 'File'}</span>
+                {!isActive && notifiedItemIds.has(item.id) && (
+                  <span className="ml-auto shrink-0 h-1.5 w-1.5 rounded-full bg-blue-500" />
+                )}
               </button>
             )
           })}
@@ -2770,6 +2842,7 @@ function BrowserPageInner(): React.ReactElement {
     [
       activeBoardId,
       activeItemId,
+      notifiedItemIds,
       cancelInlineTerminalEdit,
       editingTerminalId,
       editingTerminalName,
@@ -3693,6 +3766,12 @@ function BrowserPageInner(): React.ReactElement {
                                         })()}
                                       </span>
                                       <span className="truncate">{board.name}</span>
+                                      {(() => {
+                                        const notifCount = boardItems.filter((bi) => notifiedItemIds.has(bi.id)).length
+                                        return notifCount > 0 ? (
+                                          <span className="ml-auto shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">{notifCount}</span>
+                                        ) : null
+                                      })()}
                                     </button>
                                   )}
                                   <button
@@ -3813,6 +3892,12 @@ function BrowserPageInner(): React.ReactElement {
                             })()}
                           </span>
                           <span className="truncate">{board.name}</span>
+                          {(() => {
+                            const notifCount = boardItems.filter((bi) => notifiedItemIds.has(bi.id)).length
+                            return notifCount > 0 ? (
+                              <span className="ml-auto shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">{notifCount}</span>
+                            ) : null
+                          })()}
                         </button>
                       )}
                       <button
@@ -4027,10 +4112,12 @@ function BrowserPageInner(): React.ReactElement {
 	              onCreateAgent={async () => {
 	                if (!activeBoardId) return undefined
 	                try {
-	                  const command = getAgentCommand(getSetting('defaultAgent'))
+	                  const agentId = getSetting('defaultAgent')
+	                  const command = getAgentCommand(agentId)
+	                  const agentLabel = CLI_AGENTS.find((a) => a.id === agentId)?.label ?? 'Agent'
 	                  const node = await createNode({
 	                    nodeType: 'terminal',
-	                    label: 'Agent',
+	                    label: agentLabel,
 	                    config: JSON.stringify({ command }),
 	                    flowX: 0,
 	                    flowY: 0
@@ -4059,9 +4146,15 @@ function BrowserPageInner(): React.ReactElement {
 	                }
 	              }}
               onDeleteTab={(id) => void deleteTab(id)}
+              onDeleteNode={(id) => {
+                const gn = gNodes.find((n) => n.id === id)
+                const kind = gn?.nodeType === 'terminal' ? 'terminal' : gn?.nodeType === 'file' ? 'file' : 'graph'
+                void deleteBoardItem(id, kind, activeBoardId)
+              }}
               onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
               onUpdateNode={updateNode}
+              notifiedIds={notifiedItemIds}
               onItemContextMenu={(event, item) => {
                 if (!activeBoardId) return
                 handleBoardItemContextMenu(event, item.id, item.kind, activeBoardId)

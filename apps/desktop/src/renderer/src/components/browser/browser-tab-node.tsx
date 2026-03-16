@@ -14,13 +14,14 @@ export interface BrowserTabNodeData {
   screenshot: string | null
   monitors: BrowserTabMonitor[]
   isRunning?: boolean
+  hasNotification?: boolean
   runtimeStatus?: string
   onClose: (id: string) => void
   [key: string]: unknown
 }
 
 function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { title, favicon, screenshot, monitors, isRunning, runtimeStatus, runtimeOutput, onClose } = data as unknown as BrowserTabNodeData
+  const { title, favicon, screenshot, monitors, isRunning, hasNotification, runtimeStatus, runtimeOutput, onClose } = data as unknown as BrowserTabNodeData
   const enabledMonitors = monitors?.filter((m) => m.enabled) ?? []
   const hasMonitors = enabledMonitors.length > 0
   const direction = useFlowDirection()
@@ -61,6 +62,11 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
             <Radio className="h-2.5 w-2.5 text-white" />
             <span className="text-[9px] font-medium text-white">{enabledMonitors.length}</span>
           </div>
+        )}
+
+        {/* Notification badge */}
+        {hasNotification && !isRunning && (
+          <div className="absolute right-1.5 bottom-1.5 h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-card" />
         )}
 
         {/* Running indicator overlay */}

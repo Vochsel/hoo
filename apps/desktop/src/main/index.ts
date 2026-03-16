@@ -111,6 +111,10 @@ function setupAutoUpdater(): void {
     console.warn('[updater] Error checking for updates:', error.message)
   })
 
+  ipcMain.handle('app:setBadgeCount', (_e: Electron.IpcMainInvokeEvent, count: number) => {
+    app.setBadgeCount(count)
+  })
+
   ipcMain.handle('updater:check', () => autoUpdater.checkForUpdates())
   ipcMain.handle('updater:download', () => autoUpdater.downloadUpdate())
   ipcMain.handle('updater:install', () => autoUpdater.quitAndInstall())

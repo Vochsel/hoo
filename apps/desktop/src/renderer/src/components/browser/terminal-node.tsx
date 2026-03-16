@@ -24,12 +24,13 @@ export interface TerminalNodeData {
   label: string
   config: TerminalNodeConfig
   isRunning?: boolean
+  hasNotification?: boolean
   runtimeStatus?: string
   [key: string]: unknown
 }
 
 function TerminalNodeInner({ data, selected }: NodeProps): React.ReactElement {
-  const { label, config, isRunning, runtimeStatus } = data as unknown as TerminalNodeData
+  const { label, config, isRunning, hasNotification, runtimeStatus } = data as unknown as TerminalNodeData
   const direction = useFlowDirection()
   const sourcePos = getSourcePosition(direction)
   const targetPos = getTargetPosition(direction)
@@ -42,17 +43,22 @@ function TerminalNodeInner({ data, selected }: NodeProps): React.ReactElement {
       )}
     >
       {/* Terminal screenshot / placeholder */}
-      {config?.lastScreenshot ? (
-        <img
-          src={config.lastScreenshot}
-          alt="Terminal screenshot"
-          className="w-full rounded-t-lg"
-        />
-      ) : (
-        <div className="flex w-full h-[100px] items-center justify-center rounded-t-lg" style={{ background: '#1a1a2e' }}>
-          <Terminal className="h-8 w-8 text-muted-foreground/30" />
-        </div>
-      )}
+      <div className="relative">
+        {config?.lastScreenshot ? (
+          <img
+            src={config.lastScreenshot}
+            alt="Terminal screenshot"
+            className="w-full rounded-t-lg"
+          />
+        ) : (
+          <div className="flex w-full h-[100px] items-center justify-center rounded-t-lg" style={{ background: '#1a1a2e' }}>
+            <Terminal className="h-8 w-8 text-muted-foreground/30" />
+          </div>
+        )}
+        {hasNotification && (
+          <div className="absolute right-1.5 bottom-1.5 h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-card" />
+        )}
+      </div>
 
       {/* Info */}
       <div className="px-2.5 py-2">

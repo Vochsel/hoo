@@ -214,3 +214,55 @@ html.platform-linux .sidebar-vibrancy {
 .board-doc-task-due {
   @apply h-8 rounded-md bg-transparent px-2 text-xs text-muted-foreground outline-none focus:bg-background focus:ring-1 focus:ring-ring;
 }
+
+/* ─── File Editor ──────────────────────────────────────────── */
+
+.file-editor-content {
+  @apply w-full text-sm leading-relaxed outline-none;
+  min-height: 40vh;
+}
+
+.file-editor-content p {
+  @apply mb-1;
+}
+
+.file-editor-content p.is-editor-empty:first-child::before {
+  @apply pointer-events-none float-left h-0 text-muted-foreground/50;
+  content: 'Start editing...';
+}
+
+.file-editor-content h1 {
+  @apply mt-8 mb-3 text-3xl font-bold;
+}
+
+.file-editor-content h2 {
+  @apply mt-6 mb-2 text-2xl font-bold;
+}
+
+.file-editor-content h3 {
+  @apply mt-4 mb-1 text-xl font-semibold;
+}
+
+.file-editor-content ul {
+  @apply mb-2 list-disc pl-5;
+}
+
+.file-editor-content ul[data-type="taskList"] {
+  @apply list-none pl-0 space-y-1;
+}
+
+.file-editor-content ul[data-type="taskList"] li {
+  @apply flex items-center gap-2;
+}
+
+.file-editor-content ul[data-type="taskList"] li label {
+  @apply flex items-center;
+}
+
+.file-editor-content ul[data-type="taskList"] li label input[type="checkbox"] {
+  @apply h-4 w-4 rounded border-muted-foreground/40 accent-primary cursor-pointer;
+}
+
+.file-editor-content ul[data-type="taskList"] li div {
+  @apply flex-1;
+}

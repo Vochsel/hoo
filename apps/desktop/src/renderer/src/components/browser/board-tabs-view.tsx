@@ -31,10 +31,12 @@ interface BoardTabsViewProps {
   onCreateTerminal: () => Promise<string | void>
   onCreateAgent: () => Promise<string | void>
   onDeleteTab: (id: string) => void
+  onDeleteNode: (id: string) => void
   onOpenTab: (tab: BrowserTab) => void
   onOpenTerminal: (nodeId: string) => void
   onUpdateNode: (id: string, data: Record<string, unknown>) => Promise<unknown>
   onItemContextMenu?: (event: React.MouseEvent, item: { id: string; kind: BoardTabsItemKind }) => void
+  notifiedIds?: Set<string>
   workspaceRootDir?: string
   boardRootDir?: string | null
   pendingSelectId?: string | null
@@ -116,10 +118,12 @@ export function BoardTabsView({
   onCreateTerminal,
   onCreateAgent,
   onDeleteTab,
+  onDeleteNode,
   onOpenTab,
   onOpenTerminal,
   onUpdateNode,
   onItemContextMenu,
+  notifiedIds,
   workspaceRootDir,
   boardRootDir,
   pendingSelectId,
@@ -297,6 +301,8 @@ export function BoardTabsView({
     e.stopPropagation()
     if (kind === 'browser') {
       onDeleteTab(id)
+    } else {
+      onDeleteNode(id)
     }
     if (selectedId === id) {
       const remaining = allItems.filter((item) => {
@@ -308,7 +314,7 @@ export function BoardTabsView({
         : null
       )
     }
-  }, [selectedId, allItems, onDeleteTab])
+  }, [selectedId, allItems, onDeleteTab, onDeleteNode])
 
   // --- Drag-and-drop handlers ---
   const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
@@ -441,15 +447,16 @@ export function BoardTabsView({
                 <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
               )}
               <span className="truncate">{title}</span>
-              {item.kind === 'browser' && (
-                <span
-                  role="button"
-                  className="ml-1 shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
-                  onClick={(e) => handleCloseTab(e, id, item.kind)}
-                >
-                  <X className="h-3 w-3" />
-                </span>
+              {!isSelected && notifiedIds?.has(id) && (
+                <span className="ml-0.5 shrink-0 h-1.5 w-1.5 rounded-full bg-blue-500" />
               )}
+              <span
+                role="button"
+                className="ml-1 shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
+                onClick={(e) => handleCloseTab(e, id, item.kind)}
+              >
+                <X className="h-3 w-3" />
+              </span>
             </button>
           )
         })}
