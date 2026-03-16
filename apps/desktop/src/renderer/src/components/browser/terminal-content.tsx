@@ -14,6 +14,7 @@ interface TerminalContentProps {
   sessionId: string
   label?: string
   config: TerminalNodeConfig
+  onRequestClose?: () => void
   onUpdateConfig: (config: TerminalNodeConfig) => void
   workspaceRootDir?: string
 }
@@ -22,6 +23,7 @@ export function TerminalContent({
   sessionId,
   label,
   config,
+  onRequestClose,
   onUpdateConfig,
   workspaceRootDir
 }: TerminalContentProps): React.ReactElement {
@@ -37,6 +39,8 @@ export function TerminalContent({
   configRef.current = config
   const sessionIdRef = useRef(sessionId)
   sessionIdRef.current = sessionId
+  const onRequestCloseRef = useRef(onRequestClose)
+  onRequestCloseRef.current = onRequestClose
   const onUpdateConfigRef = useRef(onUpdateConfig)
   onUpdateConfigRef.current = onUpdateConfig
 
@@ -53,6 +57,12 @@ export function TerminalContent({
       lines.pop()
     }
     return lines.join('\n')
+  }, [])
+
+  const focusTerminal = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      termRef.current?.focus()
+    })
   }, [])
 
   const detachTerminal = useCallback(() => {
@@ -176,8 +186,11 @@ export function TerminalContent({
 
         termRef.current = term
         fitRef.current = fitAddon
+        focusTerminal()
 
-        const removeKeyBindings = installTerminalKeyBindings(term, sid, el)
+        const removeKeyBindings = installTerminalKeyBindings(term, sid, el, () => {
+          onRequestCloseRef.current?.()
+        })
 
         try { fitAddon.fit() } catch {}
 
@@ -196,6 +209,7 @@ export function TerminalContent({
                 fitAddon.fit()
                 window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
               } catch {}
+              focusTerminal()
             } else {
               if (cfg.lastScrollback) {
                 term.write('\x1b[2m')
@@ -221,6 +235,7 @@ export function TerminalContent({
                 fitAddon.fit()
                 window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
               } catch {}
+              focusTerminal()
             }
           })
           .catch((err: unknown) => {
@@ -265,7 +280,7 @@ export function TerminalContent({
         observerRef.current = observer
       }, 0)
     },
-    [detachTerminal]
+    [detachTerminal, focusTerminal]
   )
 
   return (

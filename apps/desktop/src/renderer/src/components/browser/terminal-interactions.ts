@@ -152,6 +152,15 @@ function isPlainShiftEnter(event: KeyboardEvent): boolean {
   )
 }
 
+function isCloseTabShortcut(event: KeyboardEvent): boolean {
+  return (
+    event.key.toLowerCase() === 'w' &&
+    (event.metaKey || event.ctrlKey) &&
+    !event.altKey &&
+    !event.shiftKey
+  )
+}
+
 function sendShiftEnterLineBreak(term: Terminal, sessionId: string): void {
   if (term.modes.bracketedPasteMode) {
     // Avoid xterm's paste path so apps don't show a "pasting text" banner.
@@ -163,11 +172,23 @@ function sendShiftEnterLineBreak(term: Terminal, sessionId: string): void {
   window.api.terminal.write(sessionId, '\x1b\r').catch(() => {})
 }
 
-export function installTerminalKeyBindings(term: Terminal, sessionId: string, host: HTMLElement): () => void {
+export function installTerminalKeyBindings(
+  term: Terminal,
+  sessionId: string,
+  host: HTMLElement,
+  onRequestClose?: () => void
+): () => void {
   let suppressNextInputEvent = false
 
   const handleKeydownCapture = (event: Event): void => {
     if (!(event instanceof KeyboardEvent)) return
+    if (isCloseTabShortcut(event)) {
+      event.preventDefault()
+      event.stopPropagation()
+      event.stopImmediatePropagation()
+      onRequestClose?.()
+      return
+    }
     if (!isPlainShiftEnter(event)) return
 
     suppressNextInputEvent = true
@@ -198,6 +219,10 @@ export function installTerminalKeyBindings(term: Terminal, sessionId: string, ho
   host.addEventListener('keyup', resetSuppression, true)
 
   term.attachCustomKeyEventHandler((event) => {
+    if (event.type === 'keydown' && isCloseTabShortcut(event)) {
+      return false
+    }
+
     if (event.type === 'keydown' && isPlainShiftEnter(event)) {
       return false
     }

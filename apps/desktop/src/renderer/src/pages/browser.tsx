@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Workflow, Terminal, LayoutGrid, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus } from 'lucide-react'
+import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
@@ -493,6 +493,11 @@ function BrowserPageInner(): React.ReactElement {
     },
     [boardMeta, setSetting]
   )
+
+  const openBoardIconPicker = useCallback((boardId: string, anchorEl: HTMLElement) => {
+    const rect = anchorEl.getBoundingClientRect()
+    setIconPickerTarget({ type: 'board', id: boardId, anchor: rect })
+  }, [])
 
   const boardsByFolderId = useMemo(() => {
     const map = new Map<string, WorkspaceBoard[]>()
@@ -3555,7 +3560,7 @@ function BrowserPageInner(): React.ReactElement {
                     className="gap-2 text-xs"
                     onClick={() => void handleCreateBoard(null)}
                   >
-                    <Workflow className="h-3.5 w-3.5 shrink-0" />
+                    <NotebookPen className="h-3.5 w-3.5 shrink-0" />
                     New board
                   </DropdownMenuItem>
                   {activeBoardId && (
@@ -3674,7 +3679,7 @@ function BrowserPageInner(): React.ReactElement {
                         onClick={() => void handleCreateBoard(folder.id)}
                         title="New board in folder"
                       >
-                        <Workflow className="h-3.5 w-3.5" />
+                        <NotebookPen className="h-3.5 w-3.5" />
                       </button>
                       <button
                         type="button"
@@ -3739,8 +3744,7 @@ function BrowserPageInner(): React.ReactElement {
                                       onContextMenu={(event) => {
                                         event.preventDefault()
                                         event.stopPropagation()
-                                        const rect = event.currentTarget.getBoundingClientRect()
-                                        setIconPickerTarget({ type: 'board', id: board.id, anchor: rect })
+                                        openBoardIconPicker(board.id, event.currentTarget)
                                       }}
                                     >
                                       <span
@@ -3755,7 +3759,7 @@ function BrowserPageInner(): React.ReactElement {
                                           const bm = getBoardMeta(board.id)
                                           return (
                                             <>
-                                              <DynamicIcon name={bm.icon} fallback={Workflow} className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" style={bm.color ? { color: bm.color } : undefined} />
+                                              <DynamicIcon name={bm.icon} fallback={NotebookPen} className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" style={bm.color ? { color: bm.color } : undefined} />
                                               {collapsed ? (
                                                 <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
                                               ) : (
@@ -3774,6 +3778,18 @@ function BrowserPageInner(): React.ReactElement {
                                       })()}
                                     </button>
                                   )}
+                                  <button
+                                    type="button"
+                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
+                                    onClick={(event) => {
+                                      event.preventDefault()
+                                      event.stopPropagation()
+                                      openBoardIconPicker(board.id, event.currentTarget)
+                                    }}
+                                    title="Customize board icon"
+                                  >
+                                    <NotebookPen className="h-3 w-3" />
+                                  </button>
                                   <button
                                     type="button"
                                     className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
@@ -3865,8 +3881,7 @@ function BrowserPageInner(): React.ReactElement {
                           onContextMenu={(event) => {
                             event.preventDefault()
                             event.stopPropagation()
-                            const rect = event.currentTarget.getBoundingClientRect()
-                            setIconPickerTarget({ type: 'board', id: board.id, anchor: rect })
+                            openBoardIconPicker(board.id, event.currentTarget)
                           }}
                         >
                           <span
@@ -3881,7 +3896,7 @@ function BrowserPageInner(): React.ReactElement {
                               const bm = getBoardMeta(board.id)
                               return (
                                 <>
-                                  <DynamicIcon name={bm.icon} fallback={Workflow} className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" style={bm.color ? { color: bm.color } : undefined} />
+                                  <DynamicIcon name={bm.icon} fallback={NotebookPen} className="h-3.5 w-3.5 text-muted-foreground group-hover/board:hidden" style={bm.color ? { color: bm.color } : undefined} />
                                   {collapsed ? (
                                     <ChevronRight className="hidden h-3.5 w-3.5 text-muted-foreground group-hover/board:block" />
                                   ) : (
@@ -3900,6 +3915,18 @@ function BrowserPageInner(): React.ReactElement {
                           })()}
                         </button>
                       )}
+                      <button
+                        type="button"
+                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
+                        onClick={(event) => {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          openBoardIconPicker(board.id, event.currentTarget)
+                        }}
+                        title="Customize board icon"
+                      >
+                        <NotebookPen className="h-3 w-3" />
+                      </button>
                       <button
                         type="button"
                         className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
@@ -3994,19 +4021,27 @@ function BrowserPageInner(): React.ReactElement {
             </div>
             {!isSettingsRoute && activeBoardId && (
               <div className="no-drag flex shrink-0 items-center gap-2">
-                <div className="flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5">
+                <div className="flex items-center gap-1 rounded-xl border border-border/50 bg-muted/40 p-1 shadow-sm">
                   <button
                     type="button"
-                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'whiteboard' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    className={`flex min-w-[104px] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                      boardView === 'whiteboard'
+                        ? 'border border-border/60 bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                    }`}
                     onClick={() => handleBoardViewChange('whiteboard')}
                     title="Whiteboard"
                   >
-                    <LayoutGrid className="h-3.5 w-3.5" />
-                    Board
+                    <Presentation className="h-3.5 w-3.5" />
+                    Whiteboard
                   </button>
                   <button
                     type="button"
-                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'tabs' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    className={`flex min-w-[88px] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                      boardView === 'tabs'
+                        ? 'border border-border/60 bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                    }`}
                     onClick={() => handleBoardViewChange('tabs')}
                     title="Tabs"
                   >
@@ -4015,12 +4050,16 @@ function BrowserPageInner(): React.ReactElement {
                   </button>
                   <button
                     type="button"
-                    className={`flex items-center gap-1.5 rounded px-2 py-1 text-xs transition-colors ${boardView === 'document' ? 'bg-background shadow-sm font-medium' : 'text-muted-foreground hover:text-foreground'}`}
+                    className={`flex min-w-[98px] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                      boardView === 'document'
+                        ? 'border border-border/60 bg-background text-foreground shadow-sm'
+                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                    }`}
                     onClick={() => handleBoardViewChange('document')}
-                    title="Document"
+                    title="Notebook"
                   >
-                    <FileText className="h-3.5 w-3.5" />
-                    Document
+                    <NotebookPen className="h-3.5 w-3.5" />
+                    Notebook
                   </button>
                 </div>
                 <button

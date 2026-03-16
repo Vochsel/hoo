@@ -262,11 +262,46 @@ export function BoardTabsView({
     }
   }, [selectedId, selectedItem, allItems, itemsById, pendingSelectId])
 
+  const handleSelectTab = useCallback((id: string) => {
+    setSelectedId(id)
+  }, [])
+
+  const closeItem = useCallback((id: string, kind: 'browser' | 'terminal' | 'file') => {
+    if (kind === 'browser') {
+      onDeleteTab(id)
+    } else {
+      onDeleteNode(id)
+    }
+    if (selectedId === id) {
+      const remaining = allItems.filter((item) => {
+        const itemId = item.kind === 'browser' ? item.tab.id : item.node.id
+        return itemId !== id
+      })
+      setSelectedId(remaining.length > 0
+        ? (remaining[0].kind === 'browser' ? remaining[0].tab.id : remaining[0].node.id)
+        : null
+      )
+    }
+  }, [selectedId, allItems, onDeleteTab, onDeleteNode])
+
+  const handleCloseTab = useCallback((e: React.MouseEvent, id: string, kind: 'browser' | 'terminal' | 'file') => {
+    e.stopPropagation()
+    closeItem(id, kind)
+  }, [closeItem])
+
   // Cmd+1-9 keyboard shortcuts to switch tabs
   // Ctrl+Tab / Ctrl+Shift+Tab to cycle next/previous tab
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent): void => {
       if (!e.metaKey && !e.ctrlKey) return
+
+      if (e.key.toLowerCase() === 'w' && !e.shiftKey && !e.altKey && selectedItem) {
+        e.preventDefault()
+        if (e.repeat) return
+        const id = selectedItem.kind === 'browser' ? selectedItem.tab.id : selectedItem.node.id
+        closeItem(id, selectedItem.kind)
+        return
+      }
 
       // Ctrl+Tab / Ctrl+Shift+Tab to cycle tabs
       if (e.ctrlKey && e.key === 'Tab' && allItems.length > 0) {
@@ -291,30 +326,7 @@ export function BoardTabsView({
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [allItems, selectedId])
-
-  const handleSelectTab = useCallback((id: string) => {
-    setSelectedId(id)
-  }, [])
-
-  const handleCloseTab = useCallback((e: React.MouseEvent, id: string, kind: 'browser' | 'terminal' | 'file') => {
-    e.stopPropagation()
-    if (kind === 'browser') {
-      onDeleteTab(id)
-    } else {
-      onDeleteNode(id)
-    }
-    if (selectedId === id) {
-      const remaining = allItems.filter((item) => {
-        const itemId = item.kind === 'browser' ? item.tab.id : item.node.id
-        return itemId !== id
-      })
-      setSelectedId(remaining.length > 0
-        ? (remaining[0].kind === 'browser' ? remaining[0].tab.id : remaining[0].node.id)
-        : null
-      )
-    }
-  }, [selectedId, allItems, onDeleteTab, onDeleteNode])
+  }, [allItems, closeItem, selectedId, selectedItem])
 
   // --- Drag-and-drop handlers ---
   const handleDragStart = useCallback((e: React.DragEvent, id: string) => {
@@ -452,7 +464,12 @@ export function BoardTabsView({
               )}
               <span
                 role="button"
-                className="ml-1 shrink-0 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:text-destructive transition-opacity"
+                className={`ml-1 shrink-0 rounded p-0.5 hover:text-destructive transition-opacity ${
+                  isSelected ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
+                }`}
+                aria-label={`Close ${title}`}
+                title={`Close ${title}`}
+                onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => handleCloseTab(e, id, item.kind)}
               >
                 <X className="h-3 w-3" />
@@ -546,6 +563,7 @@ export function BoardTabsView({
               sessionId={`pty-${selectedItem.node.id}`}
               label={selectedItem.node.label}
               config={parseNodeConfig(selectedItem.node.config) as TerminalNodeConfig}
+              onRequestClose={() => closeItem(selectedItem.node.id, 'terminal')}
               onUpdateConfig={(nextCfg) => {
                 void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
               }}
