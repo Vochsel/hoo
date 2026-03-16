@@ -3,6 +3,7 @@ import { Globe, Terminal, File, Plus, X, Sparkles } from 'lucide-react'
 import { BrowserTabContent } from './browser-tab-content'
 import { TerminalContent } from './terminal-content'
 import { FileContent } from './file-content'
+import { BrowserFavicon } from './browser-favicon'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import type { GraphNode } from '@/hooks/use-graph-nodes'
 import type { TerminalNodeConfig } from './terminal-node'
@@ -448,11 +449,11 @@ export function BoardTabsView({
                 <span className="absolute right-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
               )}
               {item.kind === 'browser' ? (
-                favicon ? (
-                  <img src={favicon} alt="" className="h-3.5 w-3.5 shrink-0 rounded-sm" />
-                ) : (
-                  <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                )
+                <BrowserFavicon
+                  src={favicon}
+                  imgClassName="h-3.5 w-3.5 shrink-0 rounded-sm"
+                  iconClassName="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                />
               ) : item.kind === 'terminal' ? (
                 <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
               ) : (

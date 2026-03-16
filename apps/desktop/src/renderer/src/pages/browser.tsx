@@ -43,6 +43,7 @@ import { TerminalDialog } from '@/components/browser/terminal-dialog'
 import { BrowserTabDialog } from '@/components/browser/browser-tab-dialog'
 import { MonitorWebviews } from '@/components/browser/monitor-webviews'
 import { BoardTabsView, type BoardTabsItemKind } from '@/components/browser/board-tabs-view'
+import { BrowserFavicon } from '@/components/browser/browser-favicon'
 import { BoardDocumentView } from '@/components/browser/board-document-view'
 import { useBrowserTabs, type BrowserTab, type BrowserTabMonitor, type MonitorRule } from '@/hooks/use-browser-tabs'
 import { useSettings } from '@/hooks/use-settings'
@@ -2754,7 +2755,7 @@ function BrowserPageInner(): React.ReactElement {
       const items = getOrderedSidebarBoardItems(boardId)
       if (items.length === 0) return null
       return (
-        <div className="ml-[7px] mt-0.5 space-y-0.5 border-l border-border/60 pl-[13px] py-0.5">
+        <div className="ml-[7px] mt-0.5 space-y-0.5 border-l border-border pl-[13px] py-0.5">
           {items.map((item) => {
             const isActive = activeItemId === item.id && boardId === activeBoardId
             if (item.kind === 'browser') {
@@ -2766,11 +2767,11 @@ function BrowserPageInner(): React.ReactElement {
                   onContextMenu={(event) => handleBoardItemContextMenu(event, item.id, item.kind, boardId)}
                   className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isActive ? 'bg-accent/60 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
                 >
-                  {item.tab.favicon ? (
-                    <img src={item.tab.favicon} className="h-3.5 w-3.5 rounded-sm" />
-                  ) : (
-                    <Globe className="h-3.5 w-3.5" />
-                  )}
+                  <BrowserFavicon
+                    src={item.tab.favicon}
+                    imgClassName="h-3.5 w-3.5 rounded-sm"
+                    iconClassName="h-3.5 w-3.5 text-muted-foreground"
+                  />
                   <span className="truncate">{item.tab.title || item.tab.url || 'New Tab'}</span>
                   {!isActive && notifiedItemIds.has(item.id) && (
                     <span className="ml-auto shrink-0 h-1.5 w-1.5 rounded-full bg-blue-500" />
@@ -3691,7 +3692,7 @@ function BrowserPageInner(): React.ReactElement {
                       </button>
                     </div>
                     {expanded && (
-                      <div className="ml-[15px] space-y-0.5 border-l border-border/60 pl-[5px] py-0.5">
+                      <div className="ml-[15px] space-y-0.5 border-l border-border pl-[5px] py-0.5">
                         {folderBoards.length === 0 ? (
                           <p className="px-1 py-1 text-[11px] text-muted-foreground">No items</p>
                         ) : (

@@ -13,7 +13,8 @@ import ListItem from '@tiptap/extension-list-item'
 import History from '@tiptap/extension-history'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
-import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, ListChecks, Undo2, Redo2, Globe, Terminal, FileText, ChevronDown, ChevronRight, AlertTriangle, Circle, Loader2, CheckCircle2 } from 'lucide-react'
+import { Bold as BoldIcon, Italic as ItalicIcon, List as ListIcon, ListChecks, Undo2, Redo2, Terminal, FileText, ChevronDown, ChevronRight, AlertTriangle, Circle, Loader2, CheckCircle2 } from 'lucide-react'
+import { BrowserFavicon } from './browser-favicon'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import type { GraphNode } from '@/hooks/use-graph-nodes'
 
@@ -239,11 +240,11 @@ function BrowserEmbedNodeView(props: NodeViewProps): React.ReactElement {
               {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </button>
           ) : null}
-          {tab.favicon ? (
-            <img src={tab.favicon} alt="" className="h-5 w-5 shrink-0 rounded-sm" />
-          ) : (
-            <Globe className="h-5 w-5 shrink-0 text-muted-foreground" />
-          )}
+          <BrowserFavicon
+            src={tab.favicon}
+            imgClassName="h-5 w-5 shrink-0 rounded-sm"
+            iconClassName="h-5 w-5 shrink-0 text-muted-foreground"
+          />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{tab.title || 'Untitled'}</p>
             <p className="truncate text-xs text-muted-foreground">{tab.url || 'about:blank'}</p>

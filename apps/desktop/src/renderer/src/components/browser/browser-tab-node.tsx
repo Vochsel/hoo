@@ -1,6 +1,7 @@
 import { memo } from 'react'
 import { type NodeProps, Position } from '@xyflow/react'
 import { HandleWithTooltip } from './handle-with-tooltip'
+import { BrowserFavicon } from './browser-favicon'
 import { Globe, X, Radio, Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { BrowserTabMonitor } from '@/hooks/use-browser-tabs'
@@ -80,10 +81,14 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
         )}
       </div>
 
-      {/* Info */}
+        {/* Info */}
       <div className="px-2.5 py-2">
         <div className="flex items-center gap-1.5">
-          {favicon ? <img src={favicon} alt="" draggable={false} className="h-3.5 w-3.5 shrink-0" /> : null}
+          <BrowserFavicon
+            src={favicon}
+            imgClassName="h-3.5 w-3.5 shrink-0"
+            iconClassName="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+          />
           <span className="truncate text-xs font-medium">{title || 'New Tab'}</span>
         </div>
       </div>
