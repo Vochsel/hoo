@@ -1,25 +1,16 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useMemo } from 'react'
 import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/use-settings'
 import { useWorkspace } from '@/hooks/use-workspace'
 import { useThemeContext } from '@/App'
-
-export const CLI_AGENTS = [
-  { id: 'claude', label: 'Claude Code', command: 'claude' },
-  { id: 'codex', label: 'Codex', command: 'codex' },
-  { id: 'opencode', label: 'OpenCode', command: 'opencode' },
-  { id: 'amp', label: 'Amp', command: 'amp' },
-  { id: 'gemini', label: 'Gemini CLI', command: 'gemini' }
-] as const
-
-export type AgentId = (typeof CLI_AGENTS)[number]['id']
-
-export function getAgentCommand(agentId: string | unknown): string {
-  const agent = CLI_AGENTS.find((a) => a.id === agentId)
-  return agent?.command ?? 'claude'
-}
+import {
+  CLI_AGENTS,
+  WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY,
+  getWorkspaceAgentCommandOverrides,
+  type AgentId
+} from '@/lib/cli-agents'
 
 const BROWSER_MODELS = [
   { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
@@ -44,9 +35,13 @@ export function SettingsPage(): React.ReactElement {
   const [workspaceRoot, setWorkspaceRoot] = useState('')
   const [saving, setSaving] = useState(false)
   const [savingWorkspace, setSavingWorkspace] = useState(false)
+  const [savingAgentCommands, setSavingAgentCommands] = useState(false)
   const [resettingWorkspace, setResettingWorkspace] = useState(false)
   const [recentWorkspaces, setRecentWorkspaces] = useState<Array<{ path: string; name: string }>>([])
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [workspaceAgentCommands, setWorkspaceAgentCommands] = useState<Record<AgentId, string>>(() =>
+    Object.fromEntries(CLI_AGENTS.map((agent) => [agent.id, ''])) as Record<AgentId, string>
+  )
   const [updateState, setUpdateState] = useState<
     | { status: 'idle' }
     | { status: 'checking' }
@@ -64,11 +59,24 @@ export function SettingsPage(): React.ReactElement {
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const nodeOpenClick: NodeOpenClick =
     (getSetting('nodeOpenClick') as string) === 'single' ? 'single' : 'double'
+  const workspaceRootDir = workspace?.rootDir ?? ''
+  const workspaceAgentCommandOverrides = useMemo(
+    () => getWorkspaceAgentCommandOverrides(getSetting(WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY)),
+    [getSetting, settings]
+  )
 
   useEffect(() => {
     setOpenAiKey(((getSetting('openaiApiKey') as string) ?? '').trim())
     setAnthropicKey(((getSetting('anthropicApiKey') as string) ?? '').trim())
   }, [settings, getSetting])
+
+  useEffect(() => {
+    const nextEntries = CLI_AGENTS.map((agent) => [
+      agent.id,
+      workspaceRootDir ? workspaceAgentCommandOverrides[workspaceRootDir]?.[agent.id] ?? '' : ''
+    ])
+    setWorkspaceAgentCommands(Object.fromEntries(nextEntries) as Record<AgentId, string>)
+  }, [workspaceRootDir, workspaceAgentCommandOverrides])
 
   // Listen for update events
   useEffect(() => {
@@ -155,6 +163,46 @@ export function SettingsPage(): React.ReactElement {
     }
   }
 
+  const saveWorkspaceAgentCommands = async (): Promise<void> => {
+    if (!workspaceRootDir) return
+
+    setSavingAgentCommands(true)
+    try {
+      const nextOverrides = { ...workspaceAgentCommandOverrides }
+      const nextWorkspaceOverrides = Object.fromEntries(
+        CLI_AGENTS.map((agent) => [agent.id, workspaceAgentCommands[agent.id]?.trim() ?? ''])
+          .filter(([, command]) => command.length > 0)
+      ) as Partial<Record<AgentId, string>>
+
+      if (Object.keys(nextWorkspaceOverrides).length > 0) {
+        nextOverrides[workspaceRootDir] = nextWorkspaceOverrides
+      } else {
+        delete nextOverrides[workspaceRootDir]
+      }
+
+      await setSetting(WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY, nextOverrides)
+    } finally {
+      setSavingAgentCommands(false)
+    }
+  }
+
+  const resetWorkspaceAgentCommands = async (): Promise<void> => {
+    setWorkspaceAgentCommands(
+      Object.fromEntries(CLI_AGENTS.map((agent) => [agent.id, ''])) as Record<AgentId, string>
+    )
+
+    if (!workspaceRootDir) return
+
+    setSavingAgentCommands(true)
+    try {
+      const nextOverrides = { ...workspaceAgentCommandOverrides }
+      delete nextOverrides[workspaceRootDir]
+      await setSetting(WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY, nextOverrides)
+    } finally {
+      setSavingAgentCommands(false)
+    }
+  }
+
   return (
     <div className="h-full overflow-auto p-6">
       <div className="mx-auto max-w-2xl space-y-6">
@@ -226,6 +274,56 @@ export function SettingsPage(): React.ReactElement {
               </option>
             ))}
           </select>
+        </section>
+
+        <section className="rounded-lg border p-4 space-y-4">
+          <div>
+            <h2 className="text-base font-semibold">Workspace Agent Commands</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Override the CLI command used for each agent in this workspace. Leave blank to use the default command.
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {workspaceRootDir ? `Current workspace: ${workspaceRootDir}` : 'Select a workspace to configure overrides.'}
+            </p>
+          </div>
+
+          <div className="space-y-3">
+            {CLI_AGENTS.map((agent) => (
+              <div key={agent.id} className="space-y-1.5">
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-sm font-medium">{agent.label}</label>
+                  <span className="text-xs text-muted-foreground">Default: <code>{agent.command}</code></span>
+                </div>
+                <Input
+                  value={workspaceAgentCommands[agent.id] ?? ''}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setWorkspaceAgentCommands((prev) => ({ ...prev, [agent.id]: value }))
+                  }}
+                  placeholder={agent.command}
+                  disabled={!workspaceRootDir || savingAgentCommands}
+                />
+              </div>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <Button
+              className="gap-1.5"
+              onClick={saveWorkspaceAgentCommands}
+              disabled={!workspaceRootDir || savingAgentCommands}
+            >
+              <Save className="h-3.5 w-3.5" />
+              {savingAgentCommands ? 'Saving...' : 'Save Workspace Agent Commands'}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void resetWorkspaceAgentCommands()}
+              disabled={!workspaceRootDir || savingAgentCommands}
+            >
+              Reset to Defaults
+            </Button>
+          </div>
         </section>
 
         <section className="rounded-lg border p-4">

@@ -195,6 +195,52 @@ export function BoardTabsView({
   const newTabMenuRef = useRef<HTMLDivElement | null>(null)
   const newTabBtnRef = useRef<HTMLButtonElement | null>(null)
 
+  const openNewTabMenu = useCallback(() => {
+    if (!newTabBtnRef.current) return
+    const rect = newTabBtnRef.current.getBoundingClientRect()
+    setNewTabMenuPos({ top: rect.bottom + 4, left: rect.left })
+    setNewTabMenuOpen(true)
+  }, [])
+
+  const appendCreatedItemToEnd = useCallback((id: string, kind: BoardTabsItemKind) => {
+    const nextOrderedIds = orderedIds.includes(id) ? orderedIds : [...orderedIds, id]
+    setOrderedIds((prev) => (areStringArraysEqual(prev, nextOrderedIds) ? prev : nextOrderedIds))
+    setSelectedId(id)
+    void onSaveViewOrder(nextOrderedIds)
+
+    const nextBrowserTabIds = nextOrderedIds.filter(
+      (entryId) => browserTabIdSet.has(entryId) || (kind === 'browser' && entryId === id)
+    )
+    if (nextBrowserTabIds.length > 0) {
+      void onSaveTabOrder(nextBrowserTabIds)
+    }
+
+    const nextGraphNodeIds = nextOrderedIds.filter(
+      (entryId) => graphItemIdSet.has(entryId) || (kind !== 'browser' && entryId === id)
+    )
+    if (nextGraphNodeIds.length > 0) {
+      void onSaveNodeOrder(nextGraphNodeIds)
+    }
+  }, [orderedIds, browserTabIdSet, graphItemIdSet, onSaveViewOrder, onSaveTabOrder, onSaveNodeOrder])
+
+  const handleCreateBrowserTab = useCallback(async () => {
+    const newTab = await onCreateTab()
+    if (!newTab) return
+    appendCreatedItemToEnd(newTab.id, 'browser')
+  }, [onCreateTab, appendCreatedItemToEnd])
+
+  const handleCreateAgentTab = useCallback(async () => {
+    const nodeId = await onCreateAgent()
+    if (!nodeId) return
+    appendCreatedItemToEnd(nodeId, 'terminal')
+  }, [onCreateAgent, appendCreatedItemToEnd])
+
+  const handleCreateTerminalTab = useCallback(async () => {
+    const nodeId = await onCreateTerminal()
+    if (!nodeId) return
+    appendCreatedItemToEnd(nodeId, 'terminal')
+  }, [onCreateTerminal, appendCreatedItemToEnd])
+
   useEffect(() => {
     if (!newTabMenuOpen) return
     const handleClickOutside = (e: MouseEvent): void => {
@@ -389,10 +435,7 @@ export function BoardTabsView({
         <button
           type="button"
           className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
-          onClick={async () => {
-            const newTab = await onCreateTab()
-            if (newTab) setSelectedId(newTab.id)
-          }}
+          onClick={() => void handleCreateBrowserTab()}
         >
           <Plus className="h-3.5 w-3.5" />
           New browser tab
@@ -484,13 +527,14 @@ export function BoardTabsView({
             type="button"
             className="flex items-center justify-center rounded-t-md px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
             onClick={() => {
-              if (newTabBtnRef.current) {
-                const rect = newTabBtnRef.current.getBoundingClientRect()
-                setNewTabMenuPos({ top: rect.bottom + 4, left: rect.left })
-              }
-              setNewTabMenuOpen((v) => !v)
+              setNewTabMenuOpen(false)
+              void handleCreateBrowserTab()
             }}
-            title="New tab"
+            onContextMenu={(event) => {
+              event.preventDefault()
+              openNewTabMenu()
+            }}
+            title="New browser tab"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
@@ -499,10 +543,9 @@ export function BoardTabsView({
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                onClick={async () => {
+                onClick={() => {
                   setNewTabMenuOpen(false)
-                  const newTab = await onCreateTab()
-                  if (newTab) setSelectedId(newTab.id)
+                  void handleCreateBrowserTab()
                 }}
               >
                 <Globe className="h-3.5 w-3.5" />
@@ -511,10 +554,9 @@ export function BoardTabsView({
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                onClick={async () => {
+                onClick={() => {
                   setNewTabMenuOpen(false)
-                  const nodeId = await onCreateAgent()
-                  if (nodeId) setSelectedId(nodeId)
+                  void handleCreateAgentTab()
                 }}
               >
                 <Sparkles className="h-3.5 w-3.5" />
@@ -523,10 +565,9 @@ export function BoardTabsView({
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                onClick={async () => {
+                onClick={() => {
                   setNewTabMenuOpen(false)
-                  const nodeId = await onCreateTerminal()
-                  if (nodeId) setSelectedId(nodeId)
+                  void handleCreateTerminalTab()
                 }}
               >
                 <Terminal className="h-3.5 w-3.5" />

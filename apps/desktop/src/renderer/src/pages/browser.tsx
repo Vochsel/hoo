@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Plus, Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus } from 'lucide-react'
+import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
@@ -57,7 +57,8 @@ import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/li
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu'
 import { DynamicIcon, IconPicker } from '@/components/ui/icon-picker'
-import { SettingsPage, getAgentCommand, CLI_AGENTS } from '@/pages/settings'
+import { SettingsPage } from '@/pages/settings'
+import { CLI_AGENTS, WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY, getAgentCommand } from '@/lib/cli-agents'
 import TurndownService from 'turndown'
 
 const MONITOR_TAG = '[browser-monitor]'
@@ -74,10 +75,18 @@ const PREVIEW_LOAD_TIMEOUT_MS = 12_000
 const NETWORK_IDLE_POLL_MS = 300
 const NETWORK_IDLE_WAIT_MS = 600
 const NETWORK_IDLE_TIMEOUT_MS = 15_000
+const MAX_TERMINAL_NOTIFICATION_TAIL_CHARS = 2_000
 const INTERACTIVE_SELECTOR =
   'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
 type FlowInteractionMode = 'design' | 'map'
+
+interface TerminalNotificationState {
+  tail: string
+  hasBackgroundOutput: boolean
+  hasSeenPrompt: boolean
+  lastAttentionSignature: string | null
+}
 
 const turndown = new TurndownService({
   headingStyle: 'atx',
@@ -91,6 +100,45 @@ function preview(value: string | undefined, max = 160): string {
   const compact = value.replace(/\s+/g, ' ').trim()
   if (compact.length <= max) return compact
   return `${compact.slice(0, max)}...`
+}
+
+function stripAnsiFromTerminalOutput(value: string): string {
+  // eslint-disable-next-line no-control-regex
+  return value.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
+}
+
+function normalizeTerminalOutput(value: string): string {
+  return stripAnsiFromTerminalOutput(value)
+    .replace(/\u0007/g, '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+}
+
+function getLastNonEmptyTerminalLine(value: string): string {
+  const lines = value.split('\n')
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    const line = lines[index]?.trimEnd() ?? ''
+    if (line.length > 0) return line
+  }
+  return ''
+}
+
+function isLikelyShellPromptLine(value: string): boolean {
+  const trimmed = value.trimEnd()
+  if (!trimmed || trimmed.length > 140) return false
+  if (/^PS [^>\n]+>\s*$/.test(value)) return true
+  if (/^(?:❯|➜|λ)\s*$/.test(trimmed)) return true
+  return /(?:[%#$›»>])\s*$/.test(trimmed)
+}
+
+function isLikelyTerminalInputRequest(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed || trimmed.length > 220) return false
+  if (/\[(?:Y\/n|y\/N|y\/n|N\/y|n\/Y)\]|\((?:Y\/n|y\/N|y\/n|N\/y|n\/Y)\)/.test(trimmed)) return true
+  if (/(press any key|password|passphrase|verification code|one-time code|otp|mfa|two-factor|2fa|username|email|login|confirm|are you sure|continue\?|overwrite\?|retry\?|select an option|choose an option|pick an option|enter (?:choice|selection|value|password|passphrase|code))/i.test(trimmed)) {
+    return true
+  }
+  return /:\s*$/.test(trimmed) && /(password|passphrase|username|email|login|code|otp|token|choice|selection)/i.test(trimmed)
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -356,6 +404,7 @@ function BrowserPageInner(): React.ReactElement {
   const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleRunningRef = useRef(false)
   const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
+  const terminalNotificationStateRef = useRef<Map<string, TerminalNotificationState>>(new Map())
   const pendingBoardRenameRef = useRef(false)
   const pendingFolderRenameRef = useRef(false)
   // -- Drag-and-drop state for sidebar boards/folders --
@@ -372,6 +421,7 @@ function BrowserPageInner(): React.ReactElement {
   const flowDirection: FlowDirection =
     (getSetting('flowDirection') as string) === 'vertical' ? 'vertical' : 'horizontal'
   const nodeOpenClick = (getSetting('nodeOpenClick') as string) === 'single' ? 'single' : 'double'
+  const workspaceAgentCommandOverrides = getSetting(WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY)
 
   const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
   const fileNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'file'), [gNodes])
@@ -384,6 +434,10 @@ function BrowserPageInner(): React.ReactElement {
   // Clear notification when an item becomes active
   useEffect(() => {
     if (!activeItemId) return
+    const terminalState = terminalNotificationStateRef.current.get(activeItemId)
+    if (terminalState) {
+      terminalState.lastAttentionSignature = null
+    }
     setNotifiedItemIds((prev) => {
       if (!prev.has(activeItemId)) return prev
       const next = new Set(prev)
@@ -392,21 +446,93 @@ function BrowserPageInner(): React.ReactElement {
     })
   }, [activeItemId])
 
-  // Listen for terminal data on non-active terminals and mark as notified
+  // Listen for terminal data on non-active terminals and notify only when a
+  // command appears finished or the shell is explicitly asking for input.
   useEffect(() => {
-    const removeListener = window.api.terminal.onData((sessionId: string) => {
-      // sessionId is 'pty-<nodeId>'
-      if (!sessionId.startsWith('pty-')) return
-      const nodeId = sessionId.slice(4)
-      if (nodeId === activeItemIdRef.current) return
+    const getTerminalState = (nodeId: string): TerminalNotificationState => {
+      const existing = terminalNotificationStateRef.current.get(nodeId)
+      if (existing) return existing
+      const next: TerminalNotificationState = {
+        tail: '',
+        hasBackgroundOutput: false,
+        hasSeenPrompt: true,
+        lastAttentionSignature: null
+      }
+      terminalNotificationStateRef.current.set(nodeId, next)
+      return next
+    }
+
+    const markTerminalNotified = (nodeId: string): void => {
       setNotifiedItemIds((prev) => {
         if (prev.has(nodeId)) return prev
         const next = new Set(prev)
         next.add(nodeId)
         return next
       })
+    }
+
+    const removeDataListener = window.api.terminal.onData((sessionId: string, data: string) => {
+      if (!sessionId.startsWith('pty-')) return
+      const nodeId = sessionId.slice(4)
+      const state = getTerminalState(nodeId)
+      const normalizedChunk = normalizeTerminalOutput(data)
+      const nextTail = `${state.tail}${normalizedChunk}`.slice(-MAX_TERMINAL_NOTIFICATION_TAIL_CHARS)
+      state.tail = nextTail
+
+      const lastLine = getLastNonEmptyTerminalLine(nextTail)
+      const isShellPrompt = isLikelyShellPromptLine(lastLine)
+      const isInputRequest = isLikelyTerminalInputRequest(lastLine)
+      const hasMeaningfulOutput = /\S/.test(normalizedChunk)
+      const isActive = nodeId === activeItemIdRef.current
+
+      if (isActive) {
+        state.hasSeenPrompt = state.hasSeenPrompt || isShellPrompt
+        if (!isShellPrompt && hasMeaningfulOutput) {
+          state.hasBackgroundOutput = true
+          state.lastAttentionSignature = null
+        } else if (isShellPrompt) {
+          state.hasBackgroundOutput = false
+          state.lastAttentionSignature = null
+        }
+        return
+      }
+
+      if (!isShellPrompt && hasMeaningfulOutput) {
+        state.hasBackgroundOutput = true
+        state.lastAttentionSignature = null
+      }
+
+      let attentionSignature: string | null = null
+      if (isInputRequest) {
+        attentionSignature = `input:${lastLine}`
+      } else if (isShellPrompt && state.hasSeenPrompt && state.hasBackgroundOutput) {
+        attentionSignature = `prompt:${lastLine}`
+        state.hasBackgroundOutput = false
+      }
+
+      if (isShellPrompt) {
+        state.hasSeenPrompt = true
+      }
+
+      if (!attentionSignature || attentionSignature === state.lastAttentionSignature) return
+      state.lastAttentionSignature = attentionSignature
+      markTerminalNotified(nodeId)
     })
-    return removeListener
+
+    const removeExitListener = window.api.terminal.onExit((sessionId: string) => {
+      if (!sessionId.startsWith('pty-')) return
+      const nodeId = sessionId.slice(4)
+      const state = getTerminalState(nodeId)
+      state.hasBackgroundOutput = false
+      state.lastAttentionSignature = 'exit'
+      if (nodeId === activeItemIdRef.current) return
+      markTerminalNotified(nodeId)
+    })
+
+    return () => {
+      removeDataListener()
+      removeExitListener()
+    }
   }, [])
 
   // Track browser tab title changes for non-active tabs
@@ -3348,7 +3474,7 @@ function BrowserPageInner(): React.ReactElement {
   const handleCreateTerminal = useCallback(async () => {
     if (!activeBoardId) return
     try {
-      const command = getAgentCommand(getSetting('defaultAgent'))
+      const command = getAgentCommand(getSetting('defaultAgent'), workspace?.rootDir, workspaceAgentCommandOverrides)
       const node = await createNode({
         nodeType: 'terminal',
         label: 'Terminal',
@@ -3362,7 +3488,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} failed to create terminal:`, error)
       window.alert(`Failed to create terminal: ${message}`)
     }
-  }, [activeBoardId, createNode, getSetting])
+  }, [activeBoardId, createNode, getSetting, workspace?.rootDir, workspaceAgentCommandOverrides])
 
   const startInlineBoardEdit = useCallback((boardId: string, name: string) => {
     setEditingFolderId(null)
@@ -3994,7 +4120,7 @@ function BrowserPageInner(): React.ReactElement {
         ].join(' ')}
       >
           <div className={`drag-region shrink-0 ${sidebarCollapsed ? 'sidebar-drag-region' : 'content-drag-region'}`} />
-          <div className="drag-region flex items-center justify-between gap-2 border-b border-border/40 px-4 py-2">
+          <div className="drag-region flex items-center justify-between gap-2 border-b border-border/40 pl-4 pr-3 py-1.5">
             <div className="flex items-center gap-2 min-w-0">
               {sidebarCollapsed && (
                 <button
@@ -4021,14 +4147,14 @@ function BrowserPageInner(): React.ReactElement {
               </p>
             </div>
             {!isSettingsRoute && activeBoardId && (
-              <div className="no-drag flex shrink-0 items-center gap-2">
-                <div className="flex items-center gap-1 rounded-xl border border-border/50 bg-muted/40 p-1 shadow-sm">
+              <div className="no-drag flex shrink-0 items-center">
+                <div className="flex items-center gap-0.5 rounded-lg border border-border/40 bg-background/60 p-0.5 backdrop-blur-sm">
                   <button
                     type="button"
-                    className={`flex min-w-[104px] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                    className={`flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors ${
                       boardView === 'whiteboard'
-                        ? 'border border-border/60 bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
                     }`}
                     onClick={() => handleBoardViewChange('whiteboard')}
                     title="Whiteboard"
@@ -4038,10 +4164,10 @@ function BrowserPageInner(): React.ReactElement {
                   </button>
                   <button
                     type="button"
-                    className={`flex min-w-[88px] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                    className={`flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors ${
                       boardView === 'tabs'
-                        ? 'border border-border/60 bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
                     }`}
                     onClick={() => handleBoardViewChange('tabs')}
                     title="Tabs"
@@ -4051,10 +4177,10 @@ function BrowserPageInner(): React.ReactElement {
                   </button>
                   <button
                     type="button"
-                    className={`flex min-w-[98px] items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                    className={`flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors ${
                       boardView === 'document'
-                        ? 'border border-border/60 bg-background text-foreground shadow-sm'
-                        : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'
+                        ? 'bg-foreground text-background'
+                        : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
                     }`}
                     onClick={() => handleBoardViewChange('document')}
                     title="Notebook"
@@ -4063,14 +4189,6 @@ function BrowserPageInner(): React.ReactElement {
                     Notebook
                   </button>
                 </div>
-                <button
-                  type="button"
-                  className="flex items-center gap-1 rounded-md px-2 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                  onClick={() => window.dispatchEvent(new CustomEvent('hoo:browser-add-tab'))}
-                  title="Add tab"
-                >
-                  <Plus className="h-3.5 w-3.5" />
-                </button>
               </div>
             )}
           </div>
@@ -4153,7 +4271,7 @@ function BrowserPageInner(): React.ReactElement {
 	                if (!activeBoardId) return undefined
 	                try {
 	                  const agentId = getSetting('defaultAgent')
-	                  const command = getAgentCommand(agentId)
+	                  const command = getAgentCommand(agentId, workspace?.rootDir, workspaceAgentCommandOverrides)
 	                  const agentLabel = CLI_AGENTS.find((a) => a.id === agentId)?.label ?? 'Agent'
 	                  const node = await createNode({
 	                    nodeType: 'terminal',
@@ -4241,7 +4359,9 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => handleContextAddGraphNode('terminal', 'Agent', { command: getAgentCommand(getSetting('defaultAgent')) })}
+                onClick={() => handleContextAddGraphNode('terminal', 'Agent', {
+                  command: getAgentCommand(getSetting('defaultAgent'), workspace?.rootDir, workspaceAgentCommandOverrides)
+                })}
               >
                 <Sparkles className="h-4 w-4" />
                 Add Agent

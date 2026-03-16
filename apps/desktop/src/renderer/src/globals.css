@@ -79,7 +79,7 @@
 }
 
 .content-drag-region {
-  height: 12px;
+  height: 4px;
 }
 
 html.platform-win32 .sidebar-traffic-row,
