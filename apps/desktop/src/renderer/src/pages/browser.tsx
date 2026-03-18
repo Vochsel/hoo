@@ -401,6 +401,7 @@ function BrowserPageInner(): React.ReactElement {
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [boardView, setBoardView] = useState<'whiteboard' | 'tabs' | 'document'>('whiteboard')
   const [showHubView, setShowHubView] = useState(false)
+  const [cameFromHub, setCameFromHub] = useState(false)
   const [boardDocHtml, setBoardDocHtmlState] = useState('<p></p>')
   const [boardDocLoading, setBoardDocLoading] = useState(false)
   const boardDocSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -4298,6 +4299,16 @@ function BrowserPageInner(): React.ReactElement {
                   <ArrowLeft className="h-4 w-4" />
                 </button>
               )}
+              {cameFromHub && !showHubView && !isSettingsRoute && (
+                <button
+                  type="button"
+                  className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                  onClick={() => { setCameFromHub(false); setShowHubView(true) }}
+                  title="Back to Hub"
+                >
+                  <ArrowLeft className="h-4 w-4" />
+                </button>
+              )}
               <p className="min-w-0 truncate text-sm font-semibold">
                 {isSettingsRoute ? 'Settings' : showHubView ? 'Hub' : workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
               </p>
@@ -4364,6 +4375,7 @@ function BrowserPageInner(): React.ReactElement {
               boards={workspace.boards}
               onSelectBoard={(boardId) => {
                 setShowHubView(false)
+                setCameFromHub(true)
                 void setActiveBoard(boardId).then(() => {
                   setBoardView('tabs')
                 })

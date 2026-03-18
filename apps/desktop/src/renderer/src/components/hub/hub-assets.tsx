@@ -10,6 +10,8 @@ import * as THREE from 'three'
 export interface AssetDef {
   file: string
   scale: number
+  yawOffset?: number // extra Y rotation to correct model facing direction
+  keepMaterial?: boolean // don't override with village texture
 }
 
 // Houses (folders)
@@ -18,7 +20,7 @@ export const HOUSE_ASSETS: AssetDef[] = [
   { file: 'house_blue.glb', scale: 3.5 },
   { file: 'house_red.glb', scale: 3.5 },
   { file: 'house_purple.glb', scale: 3.5 },
-  { file: 'house_2story_purple.glb', scale: 3.0 },
+  { file: 'house_2story_purple.glb', scale: 3.0, yawOffset: Math.PI / 2 },
   { file: 'barn.glb', scale: 2.5 },
   { file: 'chapel.glb', scale: 2.5 },
   { file: 'windmill.glb', scale: 1.5 },
@@ -37,7 +39,6 @@ export const OUTDOOR_PROPS: AssetDef[] = [
   { file: 'barrell.glb', scale: 3.0 },
   { file: 'boulder.glb', scale: 2.5 },
   { file: 'crate.glb', scale: 3.0 },
-  { file: 'fountain.glb', scale: 2.5 },
   { file: 'streetlight.glb', scale: 3.0 },
   { file: 'well.glb', scale: 3.0 },
   { file: 'hay_bale.glb', scale: 3.0 },
@@ -61,6 +62,9 @@ export const INDOOR_PROPS: AssetDef[] = [
   { file: 'potted_bush.glb', scale: 2.5 },
   { file: 'picnic_table.glb', scale: 3.0 },
 ]
+
+// Computer (for house interiors - tabs/terminals)
+export const COMPUTER_ASSET: AssetDef = { file: 'computer.glb', scale: 1.5, keepMaterial: true }
 
 /* ------------------------------------------------------------------ */
 /*  GLB model component                                                */
@@ -88,25 +92,27 @@ export function GlbModel({ asset, position = [0, 0, 0], rotation = [0, 0, 0], sc
         const mesh = child as THREE.Mesh
         mesh.castShadow = true
         mesh.receiveShadow = true
-        // Apply shared texture atlas via UVs
-        const newMat = new THREE.MeshStandardMaterial({
-          map: texture,
-          metalness: 0,
-          roughness: 0.82,
-        })
-        mesh.material = newMat
+        if (!asset.keepMaterial) {
+          mesh.material = new THREE.MeshStandardMaterial({
+            map: texture,
+            metalness: 0,
+            roughness: 0.82,
+          })
+        }
       }
     })
     return cloned
-  }, [gltf.scene, texture])
+  }, [gltf.scene, texture, asset.keepMaterial])
 
   const s = scale ?? asset.scale
+  const yaw = asset.yawOffset ?? 0
+  const finalRotation: [number, number, number] = [rotation[0], rotation[1] + yaw, rotation[2]]
 
   return (
     <primitive
       object={scene}
       position={position}
-      rotation={rotation}
+      rotation={finalRotation}
       scale={[s, s, s]}
     />
   )
