@@ -1,6 +1,6 @@
 import { Suspense } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { Sky, ContactShadows } from '@react-three/drei'
+import { Sky, ContactShadows, Environment } from '@react-three/drei'
 import { useVillage } from './village-context'
 import { VillageWorld } from './village-world'
 import { HouseInterior } from './house-interior'
@@ -18,10 +18,15 @@ export function VillageScene() {
     >
       <Suspense fallback={null}>
         <Sky sunPosition={[100, 20, 100]} />
-        <ambientLight intensity={0.4} />
+        <Environment
+          files="/hub-assets/suburban_garden_1k.hdr"
+          background={false}
+          environmentIntensity={0.6}
+        />
+        <ambientLight intensity={0.2} />
         <directionalLight
           position={[50, 50, 25]}
-          intensity={1.1}
+          intensity={1.0}
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
@@ -30,8 +35,8 @@ export function VillageScene() {
           shadow-camera-top={60}
           shadow-camera-bottom={-60}
         />
-        <hemisphereLight args={['#87CEEB', '#4a7c59', 0.25]} />
-        <fog attach="fog" args={['#87CEEB', 60, 200]} />
+        <hemisphereLight args={['#87CEEB', '#4a7c59', 0.15]} />
+        <fog attach="fog" args={['#87CEEB', 30, 120]} />
 
         <ContactShadows position={[0, 0.01, 0]} opacity={0.3} scale={150} blur={2.5} far={15} />
 

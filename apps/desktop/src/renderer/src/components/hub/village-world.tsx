@@ -6,6 +6,7 @@ import { useVillage } from './village-context'
 import { GlbModel, seededRandom, type AssetDef } from './hub-assets'
 import type { VillageNeighborhood, VillageHouse } from './village-types'
 import type { RoadSegment } from './use-village-layout'
+import { FluffyGrass } from './fluffy-grass'
 
 const ARCH_ASSET: AssetDef = { file: 'arch.glb', scale: 5.0 }
 const FOUNTAIN_ASSET: AssetDef = { file: 'fountain.glb', scale: 3.5 }
@@ -18,7 +19,7 @@ function Ground() {
   return (
     <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0, 0]} receiveShadow>
       <planeGeometry args={[500, 500]} />
-      <meshStandardMaterial color="#4a7c59" />
+      <meshStandardMaterial color="#3d6b45" />
     </mesh>
   )
 }
@@ -294,6 +295,7 @@ export function VillageWorld() {
   return (
     <>
       <Ground />
+      <FluffyGrass />
 
       {roads.map((seg, i) => (
         <RoadMesh key={`road-${i}`} segment={seg} />
