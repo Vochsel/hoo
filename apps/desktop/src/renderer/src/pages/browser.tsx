@@ -57,7 +57,7 @@ import { cronMatchesDate, formatLocalMinuteKey, resolveScheduleCron } from '@/li
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuLabel } from '@/components/ui/dropdown-menu'
 import { DynamicIcon, IconPicker } from '@/components/ui/icon-picker'
-import { SettingsPage } from '@/pages/settings'
+import { SettingsPage, SettingsSidebar, type SettingsSectionId } from '@/pages/settings'
 import { CLI_AGENTS, WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY, getAgentCommand } from '@/lib/cli-agents'
 import TurndownService from 'turndown'
 
@@ -384,6 +384,7 @@ function BrowserPageInner(): React.ReactElement {
   const [notifiedItemIds, setNotifiedItemIds] = useState<Set<string>>(new Set())
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('appearance')
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [boardView, setBoardView] = useState<'whiteboard' | 'tabs' | 'document'>('whiteboard')
   const [boardDocHtml, setBoardDocHtmlState] = useState('<p></p>')
@@ -2454,6 +2455,32 @@ function BrowserPageInner(): React.ReactElement {
     [createTab, activeBoardId]
   )
 
+  const handleAddAgent = useCallback(
+    async (flowX?: number, flowY?: number): Promise<string | undefined> => {
+      if (!activeBoardId) return undefined
+      try {
+        const agentId = getSetting('defaultAgent')
+        const command = getAgentCommand(agentId, workspace?.rootDir, workspaceAgentCommandOverrides)
+        const agentLabel = CLI_AGENTS.find((a) => a.id === agentId)?.label ?? 'Agent'
+        const cx = (flowX ?? 100 + Math.random() * 200) - 120
+        const cy = (flowY ?? 100 + Math.random() * 200) - 84
+        const node = await createNode({
+          nodeType: 'terminal',
+          label: agentLabel,
+          config: JSON.stringify({ command }),
+          flowX: cx,
+          flowY: cy
+        })
+        return node.id
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`[browser] failed to create agent terminal:`, message)
+        return undefined
+      }
+    },
+    [activeBoardId, createNode, getSetting, workspace?.rootDir, workspaceAgentCommandOverrides]
+  )
+
   const handleSidebarItemClick = useCallback(
     (itemId: string, boardId: string) => {
       if (boardId !== activeBoardId) {
@@ -2556,7 +2583,7 @@ function BrowserPageInner(): React.ReactElement {
     }
   }, [reactFlowInstance])
 
-  // Cmd+T / Ctrl+T → add new tab (works across all board views)
+  // Cmd+T / Ctrl+T → add new tab matching the active tab kind (works across all board views)
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key.toLowerCase() !== 't') return
@@ -2564,6 +2591,10 @@ function BrowserPageInner(): React.ReactElement {
       if (event.repeat) return
 
       event.preventDefault()
+
+      // Determine the kind of the currently active item so we create the same type
+      const currentId = activeItemIdRef.current
+      const isTerminal = currentId != null && terminalNodes.some((n) => n.id === currentId)
 
       if (boardView === 'whiteboard') {
         const flowRect = flowContainerRef.current?.getBoundingClientRect()
@@ -2588,13 +2619,27 @@ function BrowserPageInner(): React.ReactElement {
         if (!clientPosition) return
 
         const flowPosition = reactFlowInstance.screenToFlowPosition(clientPosition)
-        void handleAddTab(flowPosition.x, flowPosition.y)
+        if (isTerminal) {
+          void handleAddAgent(flowPosition.x, flowPosition.y).then((nodeId) => {
+            if (nodeId) requestTabSelect(nodeId)
+          })
+        } else {
+          void handleAddTab(flowPosition.x, flowPosition.y)
+        }
       } else {
-        void handleAddTab().then((tab) => {
-          if (tab && boardView === 'tabs') {
-            requestTabSelect(tab.id)
-          }
-        })
+        if (isTerminal) {
+          void handleAddAgent().then((nodeId) => {
+            if (nodeId && boardView === 'tabs') {
+              requestTabSelect(nodeId)
+            }
+          })
+        } else {
+          void handleAddTab().then((tab) => {
+            if (tab && boardView === 'tabs') {
+              requestTabSelect(tab.id)
+            }
+          })
+        }
       }
     }
 
@@ -2602,7 +2647,7 @@ function BrowserPageInner(): React.ReactElement {
     return (): void => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [reactFlowInstance, handleAddTab, boardView])
+  }, [reactFlowInstance, handleAddTab, handleAddAgent, boardView, terminalNodes])
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent): void => {
@@ -3643,6 +3688,33 @@ function BrowserPageInner(): React.ReactElement {
               <PanelLeftClose className="h-4 w-4" />
             </button>
           </div>
+          {isSettingsRoute && (
+            <>
+              <div className="drag-region px-3 py-2.5">
+                <div className="no-drag">
+                  <button
+                    type="button"
+                    className="flex h-8 w-full items-center gap-2 rounded-xl px-3 text-sm font-semibold text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+                    onClick={() => navigate('/')}
+                  >
+                    <ArrowLeft className="h-4 w-4 shrink-0" />
+                    Back to app
+                  </button>
+                </div>
+              </div>
+
+              <div className="min-h-0 flex-1">
+                <div className="no-drag h-full">
+                  <SettingsSidebar
+                    activeSection={settingsSection}
+                    onSectionChange={setSettingsSection}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+          {!isSettingsRoute && (
+            <>
           <div className="drag-region px-3 py-2.5">
             <div className="no-drag">
               <DropdownMenu>
@@ -4102,6 +4174,8 @@ function BrowserPageInner(): React.ReactElement {
               Changelog
             </button>
           </div>
+            </>
+          )}
         </aside>
       )}
       {!sidebarCollapsed && (
@@ -4132,7 +4206,7 @@ function BrowserPageInner(): React.ReactElement {
                   <PanelLeftOpen className="h-4 w-4" />
                 </button>
               )}
-              {isSettingsRoute && (
+              {isSettingsRoute && sidebarCollapsed && (
                 <button
                   type="button"
                   className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
@@ -4192,9 +4266,7 @@ function BrowserPageInner(): React.ReactElement {
               </div>
             )}
           </div>
-          {isSettingsRoute && (
-            <SettingsPage />
-          )}
+          {isSettingsRoute && <SettingsPage activeSection={settingsSection} />}
           {!isSettingsRoute && boardView === 'whiteboard' && (
           <FlowDirectionContext.Provider value={flowDirection}>
           <div ref={flowContainerRef} className="flex-1" onMouseMove={handleFlowContainerMouseMove}>
