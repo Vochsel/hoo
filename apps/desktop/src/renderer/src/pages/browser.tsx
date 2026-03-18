@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive } from 'lucide-react'
+import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
@@ -298,6 +298,13 @@ interface BoardItemMenu {
   boardId: string
 }
 
+interface BoardContextMenu {
+  x: number
+  y: number
+  boardId: string
+  boardName: string
+}
+
 interface RenameDialogState {
   itemId: string
   currentName: string
@@ -362,6 +369,8 @@ function BrowserPageInner(): React.ReactElement {
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [boardItemMenu, setBoardItemMenu] = useState<BoardItemMenu | null>(null)
   const [boardItemMenuPosition, setBoardItemMenuPosition] = useState<{ x: number; y: number } | null>(null)
+  const [boardContextMenu, setBoardContextMenu] = useState<BoardContextMenu | null>(null)
+  const [boardContextMenuPosition, setBoardContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [monitorInput, setMonitorInput] = useState('')
   const [monitorNodeId, setMonitorNodeId] = useState<string | null>(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState<string | null>(null)
@@ -399,6 +408,7 @@ function BrowserPageInner(): React.ReactElement {
   const [archivingBoardId, setArchivingBoardId] = useState<string | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const boardItemMenuRef = useRef<HTMLDivElement | null>(null)
+  const boardContextMenuRef = useRef<HTMLDivElement | null>(null)
   const flowContainerRef = useRef<HTMLDivElement | null>(null)
   const lastMouseClientPositionRef = useRef<{ x: number; y: number } | null>(null)
   const triggerWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
@@ -2760,6 +2770,33 @@ function BrowserPageInner(): React.ReactElement {
     setBoardItemMenu(null)
   }, [])
 
+  const closeBoardContextMenu = useCallback(() => {
+    setBoardContextMenu(null)
+  }, [])
+
+  useLayoutEffect(() => {
+    if (!boardContextMenu) {
+      setBoardContextMenuPosition(null)
+      return
+    }
+
+    const clampToViewport = (): void => {
+      const menuEl = boardContextMenuRef.current
+      const menuWidth = menuEl?.offsetWidth ?? 180
+      const menuHeight = menuEl?.offsetHeight ?? 140
+      const pad = 8
+      const maxX = Math.max(pad, window.innerWidth - menuWidth - pad)
+      const maxY = Math.max(pad, window.innerHeight - menuHeight - pad)
+      const x = Math.min(Math.max(boardContextMenu.x, pad), maxX)
+      const y = Math.min(Math.max(boardContextMenu.y, pad), maxY)
+      setBoardContextMenuPosition({ x, y })
+    }
+
+    clampToViewport()
+    window.addEventListener('resize', clampToViewport)
+    return (): void => window.removeEventListener('resize', clampToViewport)
+  }, [boardContextMenu])
+
   useLayoutEffect(() => {
     if (!contextMenu) {
       setContextMenuPosition(null)
@@ -3698,7 +3735,7 @@ function BrowserPageInner(): React.ReactElement {
   }, [workspace, moveBoard])
 
   return (
-    <div className="flex h-full min-h-0 bg-transparent" onClick={() => { closeContextMenu(); closeBoardItemMenu() }}>
+    <div className="flex h-full min-h-0 bg-transparent" onClick={() => { closeContextMenu(); closeBoardItemMenu(); closeBoardContextMenu() }}>
       {!sidebarCollapsed && (
         <aside style={{ width: sidebarWidth }} className="shrink-0 sidebar-vibrancy flex flex-col min-h-0">
           <div className="sidebar-traffic-row shrink-0 flex items-center justify-end pr-3">
@@ -3977,7 +4014,7 @@ function BrowserPageInner(): React.ReactElement {
                                       onContextMenu={(event) => {
                                         event.preventDefault()
                                         event.stopPropagation()
-                                        openBoardIconPicker(board.id, event.currentTarget)
+                                        setBoardContextMenu({ x: event.clientX, y: event.clientY, boardId: board.id, boardName: board.name })
                                       }}
                                     >
                                       <span
@@ -4011,39 +4048,37 @@ function BrowserPageInner(): React.ReactElement {
                                       })()}
                                     </button>
                                   )}
-                                  <button
-                                    type="button"
-                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
-                                    onClick={(event) => {
-                                      event.preventDefault()
-                                      event.stopPropagation()
-                                      openBoardIconPicker(board.id, event.currentTarget)
-                                    }}
-                                    title="Customize board icon"
-                                  >
-                                    <NotebookPen className="h-3 w-3" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
-                                    onClick={() => {
-                                      setSettingsDialogBoardId(board.id)
-                                      void window.api.workspace.getBoardRootDir(board.id).then((dir) => {
-                                        setSettingsDialogRootDir((dir as string) || '')
-                                      })
-                                    }}
-                                    title="Board settings"
-                                  >
-                                    <Settings className="h-3 w-3" />
-                                  </button>
-                                  <button
-                                    type="button"
-                                    className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-destructive"
-                                    onClick={() => void handleDeleteBoard(board.id, board.name)}
-                                    title="Delete board"
-                                  >
-                                    <Trash2 className="h-3 w-3" />
-                                  </button>
+                                  <DropdownMenu>
+                                    <DropdownMenuTrigger asChild>
+                                      <button
+                                        type="button"
+                                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
+                                        onClick={(event) => event.stopPropagation()}
+                                      >
+                                        <Menu className="h-3 w-3" />
+                                      </button>
+                                    </DropdownMenuTrigger>
+                                    <DropdownMenuContent align="start" side="bottom" className="min-w-[160px]">
+                                      <DropdownMenuItem onClick={(event) => openBoardIconPicker(board.id, event.currentTarget)}>
+                                        <NotebookPen className="mr-2 h-4 w-4" />
+                                        Change Icon
+                                      </DropdownMenuItem>
+                                      <DropdownMenuItem onClick={() => {
+                                        setSettingsDialogBoardId(board.id)
+                                        void window.api.workspace.getBoardRootDir(board.id).then((dir) => {
+                                          setSettingsDialogRootDir((dir as string) || '')
+                                        })
+                                      }}>
+                                        <Settings className="mr-2 h-4 w-4" />
+                                        Settings
+                                      </DropdownMenuItem>
+                                      <DropdownMenuSeparator />
+                                      <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => void handleDeleteBoard(board.id, board.name)}>
+                                        <Trash2 className="mr-2 h-4 w-4" />
+                                        Delete
+                                      </DropdownMenuItem>
+                                    </DropdownMenuContent>
+                                  </DropdownMenu>
                                 </div>
 	                                {!collapsed && boardItems.length > 0 && renderSidebarBoardItems(board.id)}
 	                              </div>
@@ -4114,7 +4149,7 @@ function BrowserPageInner(): React.ReactElement {
                           onContextMenu={(event) => {
                             event.preventDefault()
                             event.stopPropagation()
-                            openBoardIconPicker(board.id, event.currentTarget)
+                            setBoardContextMenu({ x: event.clientX, y: event.clientY, boardId: board.id, boardName: board.name })
                           }}
                         >
                           <span
@@ -4148,39 +4183,37 @@ function BrowserPageInner(): React.ReactElement {
                           })()}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
-                        onClick={(event) => {
-                          event.preventDefault()
-                          event.stopPropagation()
-                          openBoardIconPicker(board.id, event.currentTarget)
-                        }}
-                        title="Customize board icon"
-                      >
-                        <NotebookPen className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
-                        onClick={() => {
-                          setSettingsDialogBoardId(board.id)
-                          void window.api.workspace.getBoardRootDir(board.id).then((dir) => {
-                            setSettingsDialogRootDir((dir as string) || '')
-                          })
-                        }}
-                        title="Board settings"
-                      >
-                        <Settings className="h-3 w-3" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-destructive"
-                        onClick={() => void handleDeleteBoard(board.id, board.name)}
-                        title="Delete board"
-                      >
-                        <Trash2 className="h-3 w-3" />
-                      </button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground opacity-0 group-hover/boardItem:opacity-100 transition-opacity hover:text-foreground"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <Menu className="h-3 w-3" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" side="bottom" className="min-w-[160px]">
+                          <DropdownMenuItem onClick={(event) => openBoardIconPicker(board.id, event.currentTarget)}>
+                            <NotebookPen className="mr-2 h-4 w-4" />
+                            Change Icon
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => {
+                            setSettingsDialogBoardId(board.id)
+                            void window.api.workspace.getBoardRootDir(board.id).then((dir) => {
+                              setSettingsDialogRootDir((dir as string) || '')
+                            })
+                          }}>
+                            <Settings className="mr-2 h-4 w-4" />
+                            Settings
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => void handleDeleteBoard(board.id, board.name)}>
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
 	                    {!collapsed && boardItems.length > 0 && renderSidebarBoardItems(board.id)}
 	                  </div>
@@ -4721,6 +4754,54 @@ function BrowserPageInner(): React.ReactElement {
           <button
             className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
             onClick={() => void handleBoardItemDelete()}
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </button>
+        </div>
+      )}
+
+      {boardContextMenu && (
+        <div
+          ref={boardContextMenuRef}
+          className="fixed z-50 min-w-[160px] rounded-md border border-border/40 bg-popover p-1 shadow-sm animate-in fade-in-0 zoom-in-95"
+          style={{
+            left: boardContextMenuPosition?.x ?? boardContextMenu.x,
+            top: boardContextMenuPosition?.y ?? boardContextMenu.y
+          }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+            onClick={(event) => {
+              openBoardIconPicker(boardContextMenu.boardId, event.currentTarget)
+              setBoardContextMenu(null)
+            }}
+          >
+            <NotebookPen className="h-4 w-4" />
+            Change Icon
+          </button>
+          <button
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+            onClick={() => {
+              setSettingsDialogBoardId(boardContextMenu.boardId)
+              void window.api.workspace.getBoardRootDir(boardContextMenu.boardId).then((dir) => {
+                setSettingsDialogRootDir((dir as string) || '')
+              })
+              setBoardContextMenu(null)
+            }}
+          >
+            <Settings className="h-4 w-4" />
+            Settings
+          </button>
+          <div className="my-1 h-px bg-border/40" />
+          <button
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
+            onClick={() => {
+              void handleDeleteBoard(boardContextMenu.boardId, boardContextMenu.boardName)
+              setBoardContextMenu(null)
+            }}
           >
             <Trash2 className="h-4 w-4" />
             Delete
