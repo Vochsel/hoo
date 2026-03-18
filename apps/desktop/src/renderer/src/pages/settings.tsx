@@ -1,10 +1,10 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2 } from 'lucide-react'
+import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2, Sparkles, KeyRound, type LucideIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/use-settings'
-import { useWorkspace } from '@/hooks/use-workspace'
 import { useThemeContext } from '@/App'
+import type { RecentWorkspace, WorkspaceState } from '@/hooks/use-workspace'
 import {
   CLI_AGENTS,
   WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY,
@@ -24,10 +24,156 @@ const BROWSER_MODELS = [
 
 type FlowInteractionMode = 'design' | 'map'
 type NodeOpenClick = 'single' | 'double'
+export type SettingsSectionId = 'appearance' | 'agents' | 'interaction' | 'workspace' | 'updates' | 'api'
 
-export function SettingsPage(): React.ReactElement {
+export const SETTINGS_SECTIONS: Array<{
+  id: SettingsSectionId
+  label: string
+  description: string
+  icon: LucideIcon
+}> = [
+  {
+    id: 'appearance',
+    label: 'Appearance',
+    description: 'Theme and visual display preferences.',
+    icon: Monitor
+  },
+  {
+    id: 'agents',
+    label: 'Agents',
+    description: 'Browser model, default agent, and workspace overrides.',
+    icon: Sparkles
+  },
+  {
+    id: 'interaction',
+    label: 'Interaction',
+    description: 'Canvas and node interaction behavior.',
+    icon: MousePointer2
+  },
+  {
+    id: 'workspace',
+    label: 'Workspace',
+    description: 'Storage location and workspace maintenance.',
+    icon: Folder
+  },
+  {
+    id: 'updates',
+    label: 'Updates',
+    description: 'App version and update installation.',
+    icon: RefreshCw
+  },
+  {
+    id: 'api',
+    label: 'API Keys',
+    description: 'Provider credentials used by the app.',
+    icon: KeyRound
+  }
+]
+
+function SettingsPanel({
+  title,
+  description,
+  children
+}: {
+  title: string
+  description: string
+  children: React.ReactNode
+}): React.ReactElement {
+  return (
+    <section className="rounded-[24px] border border-border/50 bg-background/80 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.06)] backdrop-blur-sm">
+      <div className="mb-5 space-y-1">
+        <h3 className="text-base font-semibold tracking-tight">{title}</h3>
+        <p className="text-sm text-muted-foreground">{description}</p>
+      </div>
+      {children}
+    </section>
+  )
+}
+
+export function SettingsSidebar({
+  workspace,
+  activeSection,
+  onSectionChange
+}: {
+  workspace: WorkspaceState | null
+  activeSection: SettingsSectionId
+  onSectionChange: (section: SettingsSectionId) => void
+}): React.ReactElement {
+  const workspaceRootDir = workspace?.rootDir ?? ''
+  const workspaceName = useMemo(() => {
+    if (!workspaceRootDir) return 'No workspace selected'
+    const normalized = workspaceRootDir.replace(/[\\/]+$/, '')
+    return normalized.split(/[\\/]/).pop() || workspaceRootDir
+  }, [workspaceRootDir])
+
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="px-3 pb-1 pt-1">
+        <p className="px-2 text-[10px] font-medium uppercase tracking-[0.18em] text-muted-foreground">
+          Settings
+        </p>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto scrollbar-hidden px-1.5 py-1">
+        <nav className="space-y-0.5">
+          {SETTINGS_SECTIONS.map((section) => {
+            const Icon = section.icon
+            const isActive = section.id === activeSection
+            return (
+              <button
+                key={section.id}
+                type="button"
+                className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${
+                  isActive
+                    ? 'bg-accent text-foreground'
+                    : 'text-muted-foreground hover:bg-accent/60 hover:text-foreground'
+                }`}
+                onClick={() => onSectionChange(section.id)}
+              >
+                <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+                  <Icon className="h-3.5 w-3.5" />
+                </span>
+                <span className="min-w-0 flex-1 truncate font-medium">{section.label}</span>
+                {isActive && (
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-foreground/80" />
+                )}
+              </button>
+            )
+          })}
+        </nav>
+      </div>
+
+      <div className="border-t border-border/40 px-3 py-2">
+        <div className="rounded-lg bg-background/50 px-2 py-2">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+            Active workspace
+          </p>
+          <p className="mt-1 truncate text-xs font-medium text-foreground">{workspaceName}</p>
+          <p className="mt-0.5 line-clamp-2 text-[11px] leading-4 text-muted-foreground">
+            {workspaceRootDir || 'Choose a workspace to enable storage and per-workspace agent overrides.'}
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export function SettingsPage({
+  activeSection,
+  workspace,
+  setRootDir,
+  resetWorkspace,
+  getRecentWorkspaces,
+  unarchiveBoard
+}: {
+  workspace: WorkspaceState | null
+  activeSection: SettingsSectionId
+  setRootDir: (rootDir: string) => Promise<void>
+  resetWorkspace: () => Promise<void>
+  getRecentWorkspaces: () => Promise<RecentWorkspace[]>
+  unarchiveBoard: (boardId: string) => Promise<void>
+}): React.ReactElement {
   const { settings, getSetting, setSetting } = useSettings()
-  const { workspace, setRootDir, resetWorkspace, getRecentWorkspaces } = useWorkspace()
   const { theme, setTheme } = useThemeContext()
 
   const [openAiKey, setOpenAiKey] = useState('')
@@ -37,8 +183,9 @@ export function SettingsPage(): React.ReactElement {
   const [savingWorkspace, setSavingWorkspace] = useState(false)
   const [savingAgentCommands, setSavingAgentCommands] = useState(false)
   const [resettingWorkspace, setResettingWorkspace] = useState(false)
-  const [recentWorkspaces, setRecentWorkspaces] = useState<Array<{ path: string; name: string }>>([])
+  const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspace[]>([])
   const [showResetConfirm, setShowResetConfirm] = useState(false)
+  const [restoringArchivedBoardId, setRestoringArchivedBoardId] = useState<string | null>(null)
   const [workspaceAgentCommands, setWorkspaceAgentCommands] = useState<Record<AgentId, string>>(() =>
     Object.fromEntries(CLI_AGENTS.map((agent) => [agent.id, ''])) as Record<AgentId, string>
   )
@@ -63,6 +210,10 @@ export function SettingsPage(): React.ReactElement {
   const workspaceAgentCommandOverrides = useMemo(
     () => getWorkspaceAgentCommandOverrides(getSetting(WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY)),
     [getSetting, settings]
+  )
+  const activeSectionMeta = useMemo(
+    () => SETTINGS_SECTIONS.find((section) => section.id === activeSection) ?? SETTINGS_SECTIONS[0],
+    [activeSection]
   )
 
   useEffect(() => {
@@ -163,6 +314,15 @@ export function SettingsPage(): React.ReactElement {
     }
   }
 
+  const handleUnarchiveBoard = async (boardId: string): Promise<void> => {
+    setRestoringArchivedBoardId(boardId)
+    try {
+      await unarchiveBoard(boardId)
+    } finally {
+      setRestoringArchivedBoardId((current) => (current === boardId ? null : current))
+    }
+  }
+
   const saveWorkspaceAgentCommands = async (): Promise<void> => {
     if (!workspaceRootDir) return
 
@@ -204,361 +364,484 @@ export function SettingsPage(): React.ReactElement {
   }
 
   return (
-    <div className="h-full overflow-auto p-6">
-      <div className="mx-auto max-w-2xl space-y-6">
-        <section className="rounded-lg border p-4">
-          <h2 className="text-base font-semibold">Appearance</h2>
-          <p className="mt-1 text-sm text-muted-foreground">Theme is saved in local settings.</p>
-          <div className="mt-3 flex gap-2">
-            <Button
-              size="sm"
-              variant={theme === 'system' ? 'default' : 'outline'}
-              className="gap-1.5"
-              onClick={() => setTheme('system')}
-            >
-              <Monitor className="h-3.5 w-3.5" />
-              System
-            </Button>
-            <Button
-              size="sm"
-              variant={theme === 'light' ? 'default' : 'outline'}
-              className="gap-1.5"
-              onClick={() => setTheme('light')}
-            >
-              <Sun className="h-3.5 w-3.5" />
-              Light
-            </Button>
-            <Button
-              size="sm"
-              variant={theme === 'dark' ? 'default' : 'outline'}
-              className="gap-1.5"
-              onClick={() => setTheme('dark')}
-            >
-              <Moon className="h-3.5 w-3.5" />
-              Dark
-            </Button>
-          </div>
-        </section>
-
-        <section className="rounded-lg border p-4">
-          <h2 className="text-base font-semibold">Browser Model</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Chooses the model used by browser chat and AI prompt nodes.
+    <div className="flex-1 overflow-auto bg-[linear-gradient(180deg,hsl(var(--background)/0.94),hsl(var(--background)))]">
+      <div className="mx-auto max-w-3xl px-8 py-9">
+        <div className="mb-8">
+          <p className="text-[11px] uppercase tracking-[0.24em] text-muted-foreground">Configuration</p>
+          <h2 className="mt-3 text-3xl font-semibold tracking-tight text-foreground">
+            {activeSectionMeta.label}
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
+            {activeSectionMeta.description}
           </p>
-          <select
-            className="mt-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-            value={selectedModel}
-            onChange={(e) => setSetting('browserAiModel', e.target.value)}
-          >
-            {BROWSER_MODELS.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.label}
-              </option>
-            ))}
-          </select>
-        </section>
+        </div>
 
-        <section className="rounded-lg border p-4">
-          <h2 className="text-base font-semibold">Default Agent</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            CLI agent launched when creating a new terminal from the sidebar.
-          </p>
-          <select
-            className="mt-3 h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-            value={defaultAgent}
-            onChange={(e) => setSetting('defaultAgent', e.target.value)}
-          >
-            {CLI_AGENTS.map((agent) => (
-              <option key={agent.id} value={agent.id}>
-                {agent.label}
-              </option>
-            ))}
-          </select>
-        </section>
-
-        <section className="rounded-lg border p-4 space-y-4">
-          <div>
-            <h2 className="text-base font-semibold">Workspace Agent Commands</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Override the CLI command used for each agent in this workspace. Leave blank to use the default command.
-            </p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {workspaceRootDir ? `Current workspace: ${workspaceRootDir}` : 'Select a workspace to configure overrides.'}
-            </p>
-          </div>
-
-          <div className="space-y-3">
-            {CLI_AGENTS.map((agent) => (
-              <div key={agent.id} className="space-y-1.5">
-                <div className="flex items-center justify-between gap-3">
-                  <label className="text-sm font-medium">{agent.label}</label>
-                  <span className="text-xs text-muted-foreground">Default: <code>{agent.command}</code></span>
-                </div>
-                <Input
-                  value={workspaceAgentCommands[agent.id] ?? ''}
-                  onChange={(event) => {
-                    const value = event.target.value
-                    setWorkspaceAgentCommands((prev) => ({ ...prev, [agent.id]: value }))
-                  }}
-                  placeholder={agent.command}
-                  disabled={!workspaceRootDir || savingAgentCommands}
-                />
+        <div className="space-y-4">
+          {activeSection === 'appearance' && (
+            <SettingsPanel
+              title="Theme"
+              description="Choose how Hoo should look on this machine."
+            >
+              <div className="grid gap-3 sm:grid-cols-3">
+                {[
+                  { id: 'system', label: 'System', icon: Monitor, selected: theme === 'system' },
+                  { id: 'light', label: 'Light', icon: Sun, selected: theme === 'light' },
+                  { id: 'dark', label: 'Dark', icon: Moon, selected: theme === 'dark' }
+                ].map((option) => {
+                  const Icon = option.icon
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`rounded-[20px] border px-4 py-4 text-left transition-colors ${
+                        option.selected
+                          ? 'border-foreground bg-foreground text-background shadow-sm'
+                          : 'border-border/50 bg-muted/30 hover:bg-muted/50'
+                      }`}
+                      onClick={() => void setTheme(option.id as 'system' | 'light' | 'dark')}
+                    >
+                      <Icon className="h-4 w-4" />
+                      <p className="mt-3 text-sm font-medium">{option.label}</p>
+                      <p className={`mt-1 text-xs ${option.selected ? 'text-background/70' : 'text-muted-foreground'}`}>
+                        {option.id === 'system'
+                          ? 'Follow macOS or system theme.'
+                          : option.id === 'light'
+                            ? 'Bright interface with softer contrast.'
+                            : 'Dark surfaces for lower-light use.'}
+                      </p>
+                    </button>
+                  )
+                })}
               </div>
-            ))}
-          </div>
-
-          <div className="flex gap-2">
-            <Button
-              className="gap-1.5"
-              onClick={saveWorkspaceAgentCommands}
-              disabled={!workspaceRootDir || savingAgentCommands}
-            >
-              <Save className="h-3.5 w-3.5" />
-              {savingAgentCommands ? 'Saving...' : 'Save Workspace Agent Commands'}
-            </Button>
-            <Button
-              variant="outline"
-              onClick={() => void resetWorkspaceAgentCommands()}
-              disabled={!workspaceRootDir || savingAgentCommands}
-            >
-              Reset to Defaults
-            </Button>
-          </div>
-        </section>
-
-        <section className="rounded-lg border p-4">
-          <h2 className="text-base font-semibold">Canvas Interaction</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Switch between graph editing mode and map-style navigation mode.
-          </p>
-          <div className="mt-3 flex gap-2">
-            <Button
-              size="sm"
-              variant={flowInteractionMode === 'design' ? 'default' : 'outline'}
-              className="gap-1.5"
-              onClick={() => setSetting('flowInteractionMode', 'design')}
-            >
-              <MousePointer2 className="h-3.5 w-3.5" />
-              Design Tool
-            </Button>
-            <Button
-              size="sm"
-              variant={flowInteractionMode === 'map' ? 'default' : 'outline'}
-              className="gap-1.5"
-              onClick={() => setSetting('flowInteractionMode', 'map')}
-            >
-              <Map className="h-3.5 w-3.5" />
-              Map Like
-            </Button>
-          </div>
-        </section>
-
-        <section className="rounded-lg border p-4">
-          <h2 className="text-base font-semibold">Node Open Action</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Open tab and terminal nodes with a single click or double click.
-          </p>
-          <div className="mt-3 flex gap-2">
-            <Button
-              size="sm"
-              variant={nodeOpenClick === 'single' ? 'default' : 'outline'}
-              className="gap-1.5"
-              onClick={() => setSetting('nodeOpenClick', 'single')}
-            >
-              <MousePointerClick className="h-3.5 w-3.5" />
-              Single Click
-            </Button>
-            <Button
-              size="sm"
-              variant={nodeOpenClick === 'double' ? 'default' : 'outline'}
-              className="gap-1.5"
-              onClick={() => setSetting('nodeOpenClick', 'double')}
-            >
-              <MousePointer className="h-3.5 w-3.5" />
-              Double Click
-            </Button>
-          </div>
-        </section>
-
-        <section className="rounded-lg border p-4 space-y-4">
-          <div>
-            <h2 className="text-base font-semibold">Workspace Storage</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Folders are real directories and each board is stored as a JSON file under this root directory.
-            </p>
-          </div>
-
-          {recentWorkspaces.length > 0 && (
-            <div className="space-y-2">
-              <label className="text-sm font-medium">Recent Workspaces</label>
-              <select
-                className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm"
-                value={workspace?.rootDir ?? ''}
-                onChange={(e) => {
-                  if (e.target.value) switchToRecentWorkspace(e.target.value)
-                }}
-                disabled={savingWorkspace}
-              >
-                {recentWorkspaces.map((w) => (
-                  <option key={w.path} value={w.path}>
-                    {w.name} — {w.path}
-                  </option>
-                ))}
-              </select>
-            </div>
+            </SettingsPanel>
           )}
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Workspace Root Directory</label>
-            <Input
-              value={workspaceRoot}
-              onChange={(e) => setWorkspaceRoot(e.target.value)}
-              placeholder="Choose a directory for workspace data"
-            />
-          </div>
-
-          <div className="flex gap-2">
-            <Button variant="outline" className="gap-1.5" onClick={browseWorkspaceRoot} disabled={savingWorkspace}>
-              <Folder className="h-3.5 w-3.5" />
-              Browse
-            </Button>
-            <Button className="gap-1.5" onClick={saveWorkspaceRoot} disabled={savingWorkspace || workspaceRoot.trim().length === 0}>
-              <Save className="h-3.5 w-3.5" />
-              {savingWorkspace ? 'Saving...' : 'Save Workspace Root'}
-            </Button>
-          </div>
-
-          <div className="border-t pt-4 space-y-2">
-            <label className="text-sm font-medium">Reset Workspace</label>
-            <p className="text-sm text-muted-foreground">
-              Delete all boards and folders in the current workspace and restore default content.
-            </p>
-            {showResetConfirm ? (
-              <div className="flex gap-2 items-center">
-                <span className="text-sm text-destructive">Are you sure? This cannot be undone.</span>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={handleResetWorkspace}
-                  disabled={resettingWorkspace}
-                >
-                  <Trash2 className="h-3.5 w-3.5" />
-                  {resettingWorkspace ? 'Resetting...' : 'Confirm Reset'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => setShowResetConfirm(false)}
-                  disabled={resettingWorkspace}
-                >
-                  Cancel
-                </Button>
-              </div>
-            ) : (
-              <Button
-                variant="outline"
-                size="sm"
-                className="gap-1.5"
-                onClick={() => setShowResetConfirm(true)}
+          {activeSection === 'agents' && (
+            <>
+              <SettingsPanel
+                title="Browser Model"
+                description="Choose the model used by browser chat and AI prompt nodes."
               >
-                <Trash2 className="h-3.5 w-3.5" />
-                Reset Workspace
-              </Button>
-            )}
-          </div>
-        </section>
+                <select
+                  className="h-11 w-full rounded-2xl border border-input bg-background px-4 text-sm"
+                  value={selectedModel}
+                  onChange={(e) => setSetting('browserAiModel', e.target.value)}
+                >
+                  {BROWSER_MODELS.map((model) => (
+                    <option key={model.id} value={model.id}>
+                      {model.label}
+                    </option>
+                  ))}
+                </select>
+              </SettingsPanel>
 
-        <section className="rounded-lg border p-4 space-y-4">
-          <div>
-            <h2 className="text-base font-semibold">Updates</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Current version: <code className="text-xs">{__APP_VERSION__}</code>
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {(updateState.status === 'idle' || updateState.status === 'up-to-date' || updateState.status === 'error') && (
-              <Button size="sm" className="gap-1.5" onClick={checkForUpdates}>
-                <RefreshCw className="h-3.5 w-3.5" />
-                Check for updates
-              </Button>
-            )}
-            {updateState.status === 'checking' && (
-              <Button size="sm" disabled className="gap-1.5">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Checking…
-              </Button>
-            )}
-            {updateState.status === 'available' && (
-              <Button size="sm" className="gap-1.5" onClick={() => window.api.updater.download()}>
-                <Download className="h-3.5 w-3.5" />
-                Download v{updateState.version}
-              </Button>
-            )}
-            {updateState.status === 'downloading' && (
-              <Button size="sm" disabled className="gap-1.5">
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                Downloading… {Math.round(updateState.percent)}%
-              </Button>
-            )}
-            {updateState.status === 'ready' && (
-              <Button size="sm" className="gap-1.5" onClick={() => window.api.updater.install()}>
-                <RotateCcw className="h-3.5 w-3.5" />
-                Restart to update
-              </Button>
-            )}
-            {updateState.status === 'up-to-date' && (
-              <span className="flex items-center gap-1.5 text-sm text-green-600">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                Up to date
-              </span>
-            )}
-            {updateState.status === 'error' && (
-              <span className="text-sm text-destructive">{updateState.message}</span>
-            )}
-          </div>
-        </section>
+              <SettingsPanel
+                title="Default Agent"
+                description="Choose which CLI agent Hoo launches by default for new agent terminals."
+              >
+                <select
+                  className="h-11 w-full rounded-2xl border border-input bg-background px-4 text-sm"
+                  value={defaultAgent}
+                  onChange={(e) => setSetting('defaultAgent', e.target.value)}
+                >
+                  {CLI_AGENTS.map((agent) => (
+                    <option key={agent.id} value={agent.id}>
+                      {agent.label}
+                    </option>
+                  ))}
+                </select>
+              </SettingsPanel>
 
-        <section className="rounded-lg border p-4 space-y-4">
-          <div>
-            <h2 className="text-base font-semibold">API Keys</h2>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Stored locally in app settings. Environment variables are also supported as fallback:
-              <code className="ml-1">OPENAI_API_KEY</code> and <code>ANTHROPIC_API_KEY</code>.
-            </p>
-          </div>
+              <SettingsPanel
+                title="Workspace Agent Commands"
+                description="Override the CLI command used for each agent in this workspace. Leave any field blank to fall back to the built-in default."
+              >
+                <div className="mb-4 rounded-2xl border border-dashed border-border/60 bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+                  {workspaceRootDir
+                    ? `Current workspace: ${workspaceRootDir}`
+                    : 'Select a workspace to configure overrides.'}
+                </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">OpenAI API Key</label>
-            <Input
-              type="password"
-              value={openAiKey}
-              onChange={(e) => setOpenAiKey(e.target.value)}
-              placeholder="sk-..."
-            />
-          </div>
+                <div className="space-y-3">
+                  {CLI_AGENTS.map((agent) => (
+                    <div key={agent.id} className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-3">
+                        <label className="text-sm font-medium">{agent.label}</label>
+                        <span className="text-xs text-muted-foreground">
+                          Default: <code>{agent.command}</code>
+                        </span>
+                      </div>
+                      <Input
+                        value={workspaceAgentCommands[agent.id] ?? ''}
+                        onChange={(event) => {
+                          const value = event.target.value
+                          setWorkspaceAgentCommands((prev) => ({ ...prev, [agent.id]: value }))
+                        }}
+                        placeholder={agent.command}
+                        disabled={!workspaceRootDir || savingAgentCommands}
+                      />
+                    </div>
+                  ))}
+                </div>
 
-          <div className="space-y-2">
-            <label className="text-sm font-medium">Anthropic API Key</label>
-            <Input
-              type="password"
-              value={anthropicKey}
-              onChange={(e) => setAnthropicKey(e.target.value)}
-              placeholder="sk-ant-..."
-            />
-          </div>
+                <div className="mt-5 flex gap-2">
+                  <Button
+                    className="gap-1.5"
+                    onClick={saveWorkspaceAgentCommands}
+                    disabled={!workspaceRootDir || savingAgentCommands}
+                  >
+                    <Save className="h-3.5 w-3.5" />
+                    {savingAgentCommands ? 'Saving...' : 'Save Overrides'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void resetWorkspaceAgentCommands()}
+                    disabled={!workspaceRootDir || savingAgentCommands}
+                  >
+                    Reset to defaults
+                  </Button>
+                </div>
+              </SettingsPanel>
+            </>
+          )}
 
-          <div className="flex gap-2">
-            <Button className="gap-1.5" onClick={saveKeys} disabled={saving}>
-              <Save className="h-3.5 w-3.5" />
-              {saving ? 'Saving...' : 'Save Keys'}
-            </Button>
-            <Button variant="outline" className="gap-1.5" onClick={() => window.api.app.restart()}>
-              <RotateCcw className="h-3.5 w-3.5" />
-              Restart App
-            </Button>
-          </div>
-        </section>
+          {activeSection === 'interaction' && (
+            <>
+              <SettingsPanel
+                title="Canvas Interaction"
+                description="Switch between graph editing mode and map-style navigation mode."
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {[
+                    {
+                      id: 'design',
+                      label: 'Design Tool',
+                      description: 'Optimized for editing nodes, wiring, and selection.',
+                      icon: MousePointer2,
+                      selected: flowInteractionMode === 'design'
+                    },
+                    {
+                      id: 'map',
+                      label: 'Map Like',
+                      description: 'Pan and zoom the canvas like a spatial map.',
+                      icon: Map,
+                      selected: flowInteractionMode === 'map'
+                    }
+                  ].map((option) => {
+                    const Icon = option.icon
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`rounded-[20px] border px-4 py-4 text-left transition-colors ${
+                          option.selected
+                            ? 'border-foreground bg-foreground text-background shadow-sm'
+                            : 'border-border/50 bg-muted/30 hover:bg-muted/50'
+                        }`}
+                        onClick={() => setSetting('flowInteractionMode', option.id)}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <p className="mt-3 text-sm font-medium">{option.label}</p>
+                        <p className={`mt-1 text-xs ${option.selected ? 'text-background/70' : 'text-muted-foreground'}`}>
+                          {option.description}
+                        </p>
+                      </button>
+                    )
+                  })}
+                </div>
+              </SettingsPanel>
+
+              <SettingsPanel
+                title="Node Open Action"
+                description="Choose whether tabs and terminals open on a single click or a double click."
+              >
+                <div className="grid gap-3 sm:grid-cols-2">
+                  {[
+                    {
+                      id: 'single',
+                      label: 'Single Click',
+                      description: 'Open nodes immediately with one click.',
+                      icon: MousePointerClick,
+                      selected: nodeOpenClick === 'single'
+                    },
+                    {
+                      id: 'double',
+                      label: 'Double Click',
+                      description: 'Require a double click before opening nodes.',
+                      icon: MousePointer,
+                      selected: nodeOpenClick === 'double'
+                    }
+                  ].map((option) => {
+                    const Icon = option.icon
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`rounded-[20px] border px-4 py-4 text-left transition-colors ${
+                          option.selected
+                            ? 'border-foreground bg-foreground text-background shadow-sm'
+                            : 'border-border/50 bg-muted/30 hover:bg-muted/50'
+                        }`}
+                        onClick={() => setSetting('nodeOpenClick', option.id)}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <p className="mt-3 text-sm font-medium">{option.label}</p>
+                        <p className={`mt-1 text-xs ${option.selected ? 'text-background/70' : 'text-muted-foreground'}`}>
+                          {option.description}
+                        </p>
+                      </button>
+                    )
+                  })}
+                </div>
+              </SettingsPanel>
+            </>
+          )}
+
+          {activeSection === 'workspace' && (
+            <>
+              <SettingsPanel
+                title="Workspace Storage"
+                description="Folders are real directories and each board is stored as a JSON file under the selected root directory."
+              >
+                <div className="space-y-5">
+                  {recentWorkspaces.length > 0 && (
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium">Recent Workspaces</label>
+                      <select
+                        className="h-11 w-full rounded-2xl border border-input bg-background px-4 text-sm"
+                        value={workspace?.rootDir ?? ''}
+                        onChange={(e) => {
+                          if (e.target.value) void switchToRecentWorkspace(e.target.value)
+                        }}
+                        disabled={savingWorkspace}
+                      >
+                        {recentWorkspaces.map((w) => (
+                          <option key={w.path} value={w.path}>
+                            {w.name} — {w.path}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  )}
+
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium">Workspace Root Directory</label>
+                    <Input
+                      value={workspaceRoot}
+                      onChange={(e) => setWorkspaceRoot(e.target.value)}
+                      placeholder="Choose a directory for workspace data"
+                    />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      className="gap-1.5"
+                      onClick={browseWorkspaceRoot}
+                      disabled={savingWorkspace}
+                    >
+                      <Folder className="h-3.5 w-3.5" />
+                      Browse
+                    </Button>
+                    <Button
+                      className="gap-1.5"
+                      onClick={saveWorkspaceRoot}
+                      disabled={savingWorkspace || workspaceRoot.trim().length === 0}
+                    >
+                      <Save className="h-3.5 w-3.5" />
+                      {savingWorkspace ? 'Saving...' : 'Save Workspace Root'}
+                    </Button>
+                  </div>
+
+                  <div className="rounded-[20px] border border-destructive/20 bg-destructive/[0.04] p-4">
+                    <label className="text-sm font-medium text-foreground">Reset Workspace</label>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      Delete all boards and folders in the current workspace and restore default content.
+                    </p>
+                    {showResetConfirm ? (
+                      <div className="mt-4 flex flex-wrap items-center gap-2">
+                        <span className="text-sm text-destructive">
+                          Are you sure? This cannot be undone.
+                        </span>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          className="gap-1.5"
+                          onClick={handleResetWorkspace}
+                          disabled={resettingWorkspace}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          {resettingWorkspace ? 'Resetting...' : 'Confirm Reset'}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setShowResetConfirm(false)}
+                          disabled={resettingWorkspace}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="mt-4 gap-1.5"
+                        onClick={() => setShowResetConfirm(true)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        Reset Workspace
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              </SettingsPanel>
+
+              <SettingsPanel
+                title="Archived Boards"
+                description="Archived boards live in a hidden .archive folder inside their original parent folder and stay out of the main UI until restored."
+              >
+                <div className="space-y-3">
+                  {(workspace?.archivedBoards ?? []).length === 0 && (
+                    <div className="rounded-[20px] border border-dashed border-border/60 bg-muted/20 px-4 py-4 text-sm text-muted-foreground">
+                      No archived boards in this workspace.
+                    </div>
+                  )}
+
+                  {(workspace?.archivedBoards ?? []).map((board) => (
+                    <div
+                      key={board.id}
+                      className="flex flex-col gap-3 rounded-[20px] border border-border/50 bg-muted/20 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium text-foreground">{board.name}</p>
+                        <p className="mt-1 text-xs text-muted-foreground">
+                          {board.folderId
+                            ? `Stored in ${board.folderId}/.archive`
+                            : 'Stored in .archive at the workspace root'}
+                        </p>
+                      </div>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1.5 self-start sm:self-auto"
+                        disabled={restoringArchivedBoardId === board.id}
+                        onClick={() => void handleUnarchiveBoard(board.id)}
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        {restoringArchivedBoardId === board.id ? 'Unarchiving...' : 'Unarchive'}
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              </SettingsPanel>
+            </>
+          )}
+
+          {activeSection === 'updates' && (
+            <SettingsPanel
+              title="App Updates"
+              description="Check for updates, download the newest build, and restart into a ready update."
+            >
+              <div className="flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-border/50 bg-muted/25 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">Current version</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    <code>{__APP_VERSION__}</code>
+                  </p>
+                </div>
+                {updateState.status === 'up-to-date' && (
+                  <span className="flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-3 py-1 text-sm text-emerald-600">
+                    <CheckCircle2 className="h-3.5 w-3.5" />
+                    Up to date
+                  </span>
+                )}
+              </div>
+
+              <div className="mt-5 flex flex-wrap items-center gap-3">
+                {(updateState.status === 'idle' ||
+                  updateState.status === 'up-to-date' ||
+                  updateState.status === 'error') && (
+                  <Button className="gap-1.5" onClick={checkForUpdates}>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Check for updates
+                  </Button>
+                )}
+                {updateState.status === 'checking' && (
+                  <Button disabled className="gap-1.5">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Checking…
+                  </Button>
+                )}
+                {updateState.status === 'available' && (
+                  <Button className="gap-1.5" onClick={() => window.api.updater.download()}>
+                    <Download className="h-3.5 w-3.5" />
+                    Download v{updateState.version}
+                  </Button>
+                )}
+                {updateState.status === 'downloading' && (
+                  <Button disabled className="gap-1.5">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Downloading… {Math.round(updateState.percent)}%
+                  </Button>
+                )}
+                {updateState.status === 'ready' && (
+                  <Button className="gap-1.5" onClick={() => window.api.updater.install()}>
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Restart to update
+                  </Button>
+                )}
+                {updateState.status === 'error' && (
+                  <span className="text-sm text-destructive">{updateState.message}</span>
+                )}
+              </div>
+            </SettingsPanel>
+          )}
+
+          {activeSection === 'api' && (
+            <SettingsPanel
+              title="API Keys"
+              description="Stored locally in app settings. Environment variables still work as fallbacks: OPENAI_API_KEY and ANTHROPIC_API_KEY."
+            >
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">OpenAI API Key</label>
+                  <Input
+                    type="password"
+                    value={openAiKey}
+                    onChange={(e) => setOpenAiKey(e.target.value)}
+                    placeholder="sk-..."
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">Anthropic API Key</label>
+                  <Input
+                    type="password"
+                    value={anthropicKey}
+                    onChange={(e) => setAnthropicKey(e.target.value)}
+                    placeholder="sk-ant-..."
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button className="gap-1.5" onClick={saveKeys} disabled={saving}>
+                    <Save className="h-3.5 w-3.5" />
+                    {saving ? 'Saving...' : 'Save Keys'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => window.api.app.restart()}
+                  >
+                    <RotateCcw className="h-3.5 w-3.5" />
+                    Restart App
+                  </Button>
+                </div>
+              </div>
+            </SettingsPanel>
+          )}
+        </div>
       </div>
     </div>
   )

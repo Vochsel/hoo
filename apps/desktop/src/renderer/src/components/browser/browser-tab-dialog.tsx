@@ -217,20 +217,6 @@ export function BrowserTabDialog({
         console.warn(`${TAG} did-fail-load: ${e.errorDescription} (${e.errorCode}) url=${e.validatedURL}`)
       }
 
-      const handleNewWindow = (event: Event): void => {
-        const popupEvent = event as Event & { url?: string; preventDefault?: () => void }
-        popupEvent.preventDefault?.()
-        const popupUrl = typeof popupEvent.url === 'string' ? popupEvent.url : ''
-        if (!popupUrl) return
-        console.log(`${TAG} redirecting popup to current tab: ${popupUrl}`)
-        setCurrentUrl(popupUrl)
-        void persistTabUpdate({ url: popupUrl })
-        el.loadURL(popupUrl).catch((error: Error) => {
-          if (error.message?.includes('ERR_ABORTED')) return
-          console.warn(`${TAG} popup redirect loadURL error:`, error)
-        })
-      }
-
       const handleDomReady = (): void => {
         try {
           const wcId = el.getWebContentsId()
@@ -241,53 +227,6 @@ export function BrowserTabDialog({
         } catch {
           // ignore
         }
-        void el.executeJavaScript(`
-          (() => {
-            try {
-              const rewriteAnchorTarget = (root) => {
-                const links = root.querySelectorAll ? root.querySelectorAll('a[target="_blank"]') : [];
-                for (const link of links) {
-                  link.setAttribute('target', '_self');
-                  const rel = (link.getAttribute('rel') || '').split(/\\s+/).filter(Boolean);
-                  const filtered = rel.filter((value) => value !== 'noopener' && value !== 'noreferrer');
-                  if (filtered.length > 0) {
-                    link.setAttribute('rel', filtered.join(' '));
-                  } else {
-                    link.removeAttribute('rel');
-                  }
-                }
-              };
-
-              rewriteAnchorTarget(document);
-              const observer = new MutationObserver((mutations) => {
-                for (const mutation of mutations) {
-                  for (const node of mutation.addedNodes) {
-                    if (node && node.nodeType === Node.ELEMENT_NODE) {
-                      rewriteAnchorTarget(node);
-                    }
-                  }
-                }
-              });
-              observer.observe(document.documentElement || document.body, {
-                childList: true,
-                subtree: true
-              });
-
-              const originalOpen = window.open;
-              window.open = function (url, target, features) {
-                if (typeof url === 'string' && url.length > 0) {
-                  location.href = url;
-                }
-                return null;
-              };
-              Object.defineProperty(window, '__hooOriginalWindowOpen', {
-                value: originalOpen,
-                configurable: true,
-                writable: true
-              });
-            } catch {}
-          })();
-        `).catch(() => {})
       }
 
       el.addEventListener('did-navigate', handleDidNavigate)
@@ -297,7 +236,6 @@ export function BrowserTabDialog({
       el.addEventListener('did-start-loading', handleDidStartLoading)
       el.addEventListener('did-stop-loading', handleDidStopLoading)
       el.addEventListener('did-fail-load', handleDidFailLoad)
-      el.addEventListener('new-window', handleNewWindow)
       el.addEventListener('dom-ready', handleDomReady)
 
       webviewCleanupRef.current = (): void => {
@@ -308,7 +246,6 @@ export function BrowserTabDialog({
         el.removeEventListener('did-start-loading', handleDidStartLoading)
         el.removeEventListener('did-stop-loading', handleDidStopLoading)
         el.removeEventListener('did-fail-load', handleDidFailLoad)
-        el.removeEventListener('new-window', handleNewWindow)
         el.removeEventListener('dom-ready', handleDomReady)
       }
     },
@@ -800,6 +737,7 @@ export function BrowserTabDialog({
                 ref={setupWebview}
                 src={webviewSrc}
                 partition="persist:browser-tabs"
+                allowpopups
                 useragent={WEBVIEW_USER_AGENT}
                 style={{ width: '100%', height: '100%' }}
               />
@@ -839,4 +777,3 @@ export function BrowserTabDialog({
     </div>
   )
 }
-

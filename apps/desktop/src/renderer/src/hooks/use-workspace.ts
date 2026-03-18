@@ -22,6 +22,7 @@ export interface WorkspaceState {
   activeBoardId: string | null
   folders: WorkspaceFolder[]
   boards: WorkspaceBoard[]
+  archivedBoards: WorkspaceBoard[]
 }
 
 export interface RecentWorkspace {
@@ -43,6 +44,8 @@ export function useWorkspace(): {
   createBoard: (payload?: { name?: string; folderId?: string | null }) => Promise<void>
   renameBoard: (boardId: string, name: string) => Promise<string>
   moveBoard: (boardId: string, folderId?: string | null) => Promise<void>
+  archiveBoard: (boardId: string) => Promise<void>
+  unarchiveBoard: (boardId: string) => Promise<void>
   deleteBoard: (boardId: string) => Promise<void>
   setActiveBoard: (boardId: string) => Promise<void>
   getBoardDocumentHtml: (boardId: string) => Promise<string>
@@ -158,6 +161,20 @@ export function useWorkspace(): {
     [applyWorkspaceMutation]
   )
 
+  const archiveBoard = useCallback(
+    async (boardId: string) => {
+      await applyWorkspaceMutation(() => window.api.workspace.archiveBoard(boardId))
+    },
+    [applyWorkspaceMutation]
+  )
+
+  const unarchiveBoard = useCallback(
+    async (boardId: string) => {
+      await applyWorkspaceMutation(() => window.api.workspace.unarchiveBoard(boardId))
+    },
+    [applyWorkspaceMutation]
+  )
+
   const setActiveBoard = useCallback(
     async (boardId: string) => {
       await applyWorkspaceMutation(() => window.api.workspace.setActiveBoard(boardId))
@@ -196,6 +213,8 @@ export function useWorkspace(): {
     createBoard,
     renameBoard,
     moveBoard,
+    archiveBoard,
+    unarchiveBoard,
     deleteBoard,
     setActiveBoard,
     getBoardDocumentHtml,

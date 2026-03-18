@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, Menu } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, Menu, type WebContents } from 'electron'
 import { existsSync } from 'fs'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
@@ -33,6 +33,56 @@ function resolveAppIconPath(): string | null {
   return null
 }
 
+function buildPopupWindowOptions(
+  options: Electron.BrowserWindowConstructorOptions,
+  iconPath: string | null
+): Electron.BrowserWindowConstructorOptions {
+  return {
+    ...options,
+    width: typeof options.width === 'number' ? options.width : 960,
+    height: typeof options.height === 'number' ? options.height : 720,
+    minWidth: typeof options.minWidth === 'number' ? options.minWidth : 480,
+    minHeight: typeof options.minHeight === 'number' ? options.minHeight : 360,
+    autoHideMenuBar: true,
+    show: false,
+    ...(process.platform !== 'darwin' && iconPath ? { icon: iconPath } : {})
+  }
+}
+
+function attachPopupSupport(sourceContents: WebContents, iconPath: string | null): void {
+  sourceContents.setWindowOpenHandler((details) => {
+    console.log(
+      `[main] popup requested opener=${sourceContents.id} disposition=${details.disposition} url=${details.url}`
+    )
+
+    return {
+      action: 'allow',
+      createWindow: (options) => {
+        const popupWindow = new BrowserWindow(buildPopupWindowOptions(options, iconPath))
+        popupWindow.setMenuBarVisibility(false)
+
+        const showAndFocusPopup = (): void => {
+          if (popupWindow.isDestroyed()) return
+          popupWindow.show()
+          popupWindow.focus()
+        }
+
+        popupWindow.once('ready-to-show', showAndFocusPopup)
+        popupWindow.webContents.once('dom-ready', showAndFocusPopup)
+        popupWindow.webContents.on('did-fail-load', (_event, errorCode, errorDescription, validatedURL) => {
+          if (errorCode === -3) return
+          console.warn(
+            `[main] popup load failed window=${popupWindow.id} code=${errorCode} url=${validatedURL} error=${errorDescription}`
+          )
+        })
+
+        attachPopupSupport(popupWindow.webContents, iconPath)
+        return popupWindow.webContents
+      }
+    }
+  })
+}
+
 function createWindow(iconPath: string | null): void {
   const isMac = process.platform === 'darwin'
 
@@ -63,6 +113,10 @@ function createWindow(iconPath: string | null): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
+  })
+
+  mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
+    attachPopupSupport(guestContents, iconPath)
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

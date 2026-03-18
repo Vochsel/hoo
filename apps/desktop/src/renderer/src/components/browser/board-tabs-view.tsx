@@ -299,15 +299,13 @@ export function BoardTabsView({
       .filter((tab): tab is BrowserTab => tab != null)
   }, [mountedBrowserTabIds, browserTabsById])
 
-  // Auto-select first tab if current selection disappears —
-  // but skip when selectedId matches pendingSelectId (item may still be loading after board switch)
+  // Auto-select the first available item if the restored/pending selection no longer exists.
   useEffect(() => {
     if (selectedId && !selectedItem && allItems.length > 0 && !itemsById.has(selectedId)) {
-      if (selectedId === pendingSelectId) return
       const first = allItems[0]
       setSelectedId(first.kind === 'browser' ? first.tab.id : first.node.id)
     }
-  }, [selectedId, selectedItem, allItems, itemsById, pendingSelectId])
+  }, [selectedId, selectedItem, allItems, itemsById])
 
   const handleSelectTab = useCallback((id: string) => {
     setSelectedId(id)

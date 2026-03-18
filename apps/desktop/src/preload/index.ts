@@ -105,6 +105,8 @@ const api = {
     renameBoard: (boardId: string, name: string) => ipcRenderer.invoke('workspace:renameBoard', boardId, name),
     moveBoard: (boardId: string, folderId?: string | null) =>
       ipcRenderer.invoke('workspace:moveBoard', boardId, folderId),
+    archiveBoard: (boardId: string) => ipcRenderer.invoke('workspace:archiveBoard', boardId),
+    unarchiveBoard: (boardId: string) => ipcRenderer.invoke('workspace:unarchiveBoard', boardId),
     deleteBoard: (boardId: string) => ipcRenderer.invoke('workspace:deleteBoard', boardId),
     setActiveBoard: (boardId: string) => ipcRenderer.invoke('workspace:setActiveBoard', boardId),
     getBoardActiveView: (boardId: string) => ipcRenderer.invoke('workspace:getBoardActiveView', boardId),

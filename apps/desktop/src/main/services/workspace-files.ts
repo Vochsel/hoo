@@ -12,6 +12,7 @@ const WORKSPACE_ACTIVE_BOARD_KEY = 'activeBoardId'
 const RECENT_WORKSPACES_KEY = 'recentWorkspaces'
 const DEFAULT_WORKSPACE_DIRNAME = 'Hoo Workspace'
 const BOARD_FILE_SUFFIX = '.board.json'
+const ARCHIVE_DIRNAME = '.archive'
 const MAX_RECENT_WORKSPACES = 10
 
 export interface RecentWorkspace {
@@ -41,6 +42,7 @@ export interface WorkspaceSnapshot {
   activeBoardId: string | null
   folders: WorkspaceFolderSnapshot[]
   boards: WorkspaceBoardSnapshot[]
+  archivedBoards: WorkspaceBoardSnapshot[]
 }
 
 export type BoardViewMode = 'whiteboard' | 'tabs' | 'document'
@@ -307,6 +309,32 @@ function toBoardPath(rootDir: string, boardId: string): string {
   return absolute
 }
 
+function toArchiveDir(directory: string): string {
+  return join(directory, ARCHIVE_DIRNAME)
+}
+
+function isArchivedBoardId(boardId: string): boolean {
+  const segments = normalizeBoardId(boardId).split('/')
+  return segments.length >= 2 && segments[segments.length - 2] === ARCHIVE_DIRNAME
+}
+
+function getArchivedBoardFolderId(boardId: string): string | null {
+  if (!isArchivedBoardId(boardId)) {
+    return null
+  }
+  const segments = normalizeBoardId(boardId).split('/')
+  return segments.length > 2 ? segments[segments.length - 3] : null
+}
+
+function getArchivedBoardRestoreDir(rootDir: string, boardId: string): string {
+  if (!isArchivedBoardId(boardId)) {
+    throw new Error('Board is not archived')
+  }
+  const segments = normalizeBoardId(boardId).split('/')
+  const restoreSegments = segments.slice(0, -2)
+  return restoreSegments.length > 0 ? join(rootDir, ...restoreSegments) : rootDir
+}
+
 async function fileExists(path: string): Promise<boolean> {
   try {
     await fs.access(path)
@@ -353,6 +381,26 @@ async function listWorkspaceBoardFiles(rootDir: string): Promise<string[]> {
 
   boardFiles.sort((a, b) => a.localeCompare(b))
   return boardFiles
+}
+
+async function listArchivedBoardFiles(rootDir: string): Promise<string[]> {
+  const archivedFiles: string[] = []
+  const rootArchiveDir = toArchiveDir(rootDir)
+  if (await fileExists(rootArchiveDir)) {
+    archivedFiles.push(...(await listBoardFilesInDirectory(rootArchiveDir)))
+  }
+
+  const entries = await fs.readdir(rootDir, { withFileTypes: true })
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue
+    if (entry.name.startsWith('.')) continue
+    const archiveDir = toArchiveDir(join(rootDir, entry.name))
+    if (!(await fileExists(archiveDir))) continue
+    archivedFiles.push(...(await listBoardFilesInDirectory(archiveDir)))
+  }
+
+  archivedFiles.sort((a, b) => a.localeCompare(b))
+  return archivedFiles
 }
 
 function tableExists(sqlite: Database.Database, tableName: string): boolean {
@@ -564,13 +612,15 @@ export async function ensureWorkspaceInitialized(): Promise<void> {
   const legacyDbPath = join(rootDir, 'workspace.db')
   const legacyBackupPath = join(rootDir, 'workspace.legacy.db')
   let boardFiles = await listWorkspaceBoardFiles(rootDir)
-  if (boardFiles.length === 0) {
+  let archivedBoardFiles = await listArchivedBoardFiles(rootDir)
+  if (boardFiles.length === 0 && archivedBoardFiles.length === 0) {
     await migrateLegacyWorkspaceDb(rootDir)
     boardFiles = await listWorkspaceBoardFiles(rootDir)
-    if (boardFiles.length === 0) {
+    archivedBoardFiles = await listArchivedBoardFiles(rootDir)
+    if (boardFiles.length === 0 && archivedBoardFiles.length === 0) {
       const seeded = await seedDefaultWorkspace(rootDir)
       boardFiles = seeded.length > 0 ? seeded : boardFiles
-      if (boardFiles.length === 0) {
+      if (boardFiles.length === 0 && archivedBoardFiles.length === 0) {
         const filePath = await ensureUniquePath(rootDir, 'Board 1', BOARD_FILE_SUFFIX)
         await fs.writeFile(filePath, JSON.stringify(defaultBoardDocument(), null, 2), 'utf8')
         boardFiles = [filePath]
@@ -578,7 +628,11 @@ export async function ensureWorkspaceInitialized(): Promise<void> {
     }
   }
 
-  if (boardFiles.length > 0 && (await fileExists(legacyDbPath)) && !(await fileExists(legacyBackupPath))) {
+  if (
+    boardFiles.length + archivedBoardFiles.length > 0 &&
+    (await fileExists(legacyDbPath)) &&
+    !(await fileExists(legacyBackupPath))
+  ) {
     try {
       await fs.rename(legacyDbPath, legacyBackupPath)
     } catch (error) {
@@ -590,16 +644,22 @@ export async function ensureWorkspaceInitialized(): Promise<void> {
   }
 
   const active = getWorkspaceActiveBoardId()
+  const visibleBoardIds = new Set(boardFiles.map((boardPath) => toBoardId(rootDir, boardPath)))
   if (active) {
     try {
       const activePath = toBoardPath(rootDir, active)
-      if (await fileExists(activePath)) return
+      if ((await fileExists(activePath)) && visibleBoardIds.has(active)) return
     } catch {
       // fallthrough to reset active board id
     }
   }
 
-  setWorkspaceActiveBoardId(toBoardId(rootDir, boardFiles[0]))
+  if (boardFiles.length > 0) {
+    setWorkspaceActiveBoardId(toBoardId(rootDir, boardFiles[0]))
+    return
+  }
+
+  clearWorkspaceActiveBoardId()
 }
 
 export async function boardExists(boardId: string): Promise<boolean> {
@@ -681,6 +741,10 @@ export async function deleteFolderInWorkspace(folderId: string): Promise<void> {
   const normalizedFolderId = normalizeFolderId(folderId)
   const folderPath = join(rootDir, normalizedFolderId)
   const boardFiles = await listBoardFilesInDirectory(folderPath)
+  const archiveDir = toArchiveDir(folderPath)
+  const archivedBoardFiles = await (await fileExists(archiveDir)
+    ? listBoardFilesInDirectory(archiveDir)
+    : Promise.resolve<string[]>([]))
 
   const activeId = getWorkspaceActiveBoardId()
   for (const boardPath of boardFiles) {
@@ -693,6 +757,16 @@ export async function deleteFolderInWorkspace(folderId: string): Promise<void> {
       if (activeId === oldBoardId) {
         setWorkspaceActiveBoardId(toBoardId(rootDir, targetPath))
       }
+    }
+  }
+
+  if (archivedBoardFiles.length > 0) {
+    const rootArchiveDir = toArchiveDir(rootDir)
+    await fs.mkdir(rootArchiveDir, { recursive: true })
+    for (const archivedBoardPath of archivedBoardFiles) {
+      const boardName = basename(archivedBoardPath, BOARD_FILE_SUFFIX)
+      const targetPath = await ensureUniquePath(rootArchiveDir, boardName, BOARD_FILE_SUFFIX)
+      await fs.rename(archivedBoardPath, targetPath)
     }
   }
 
@@ -754,6 +828,38 @@ export async function moveBoardInWorkspace(
   return nextBoardId
 }
 
+export async function archiveBoardInWorkspace(boardId: string): Promise<string> {
+  const rootDir = await ensureWorkspaceRootExists()
+  const normalizedBoardId = normalizeBoardId(boardId)
+  if (isArchivedBoardId(normalizedBoardId)) {
+    throw new Error('Board is already archived')
+  }
+  const sourcePath = toBoardPath(rootDir, normalizedBoardId)
+  const targetDir = toArchiveDir(dirname(sourcePath))
+  await fs.mkdir(targetDir, { recursive: true })
+
+  const sourceName = basename(sourcePath, BOARD_FILE_SUFFIX)
+  const targetPath = await ensureUniquePath(targetDir, sourceName, BOARD_FILE_SUFFIX)
+  await fs.rename(sourcePath, targetPath)
+  return toBoardId(rootDir, targetPath)
+}
+
+export async function unarchiveBoardInWorkspace(boardId: string): Promise<string> {
+  const rootDir = await ensureWorkspaceRootExists()
+  const normalizedBoardId = normalizeBoardId(boardId)
+  if (!isArchivedBoardId(normalizedBoardId)) {
+    throw new Error('Board is not archived')
+  }
+  const sourcePath = toBoardPath(rootDir, normalizedBoardId)
+  const restoreDir = getArchivedBoardRestoreDir(rootDir, normalizedBoardId)
+  await fs.mkdir(restoreDir, { recursive: true })
+
+  const sourceName = basename(sourcePath, BOARD_FILE_SUFFIX)
+  const targetPath = await ensureUniquePath(restoreDir, sourceName, BOARD_FILE_SUFFIX)
+  await fs.rename(sourcePath, targetPath)
+  return toBoardId(rootDir, targetPath)
+}
+
 export async function deleteBoardInWorkspace(boardId: string): Promise<void> {
   const rootDir = await ensureWorkspaceRootExists()
   const normalizedBoardId = normalizeBoardId(boardId)
@@ -802,6 +908,22 @@ export async function getWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
     })
   )
 
+  const archivedBoardFiles = await listArchivedBoardFiles(rootDir)
+  const archivedBoards: WorkspaceBoardSnapshot[] = await Promise.all(
+    archivedBoardFiles.map(async (boardPath, index) => {
+      const stat = await fs.stat(boardPath)
+      const boardId = toBoardId(rootDir, boardPath)
+      return {
+        id: boardId,
+        folderId: getArchivedBoardFolderId(boardId),
+        name: boardNameFromId(boardId),
+        sortOrder: index,
+        createdAt: isoFromFsTime(stat.birthtimeMs),
+        updatedAt: isoFromFsTime(stat.mtimeMs)
+      }
+    })
+  )
+
   let activeBoardId = resolveBoardId()
   if (!activeBoardId || !boards.some((board) => board.id === activeBoardId)) {
     activeBoardId = boards[0]?.id ?? null
@@ -816,7 +938,8 @@ export async function getWorkspaceSnapshot(): Promise<WorkspaceSnapshot> {
     rootDir,
     activeBoardId,
     folders,
-    boards
+    boards,
+    archivedBoards
   }
 }
 
@@ -865,12 +988,31 @@ export async function resetWorkspace(): Promise<WorkspaceSnapshot> {
   for (const boardPath of boardFiles) {
     await fs.rm(boardPath, { force: true })
   }
+  const archivedBoardFiles = await listArchivedBoardFiles(rootDir)
+  for (const boardPath of archivedBoardFiles) {
+    await fs.rm(boardPath, { force: true })
+  }
 
   // Remove empty subdirectories (one level deep, matching workspace structure)
   const entries = await fs.readdir(rootDir, { withFileTypes: true })
   for (const entry of entries) {
-    if (!entry.isDirectory() || entry.name.startsWith('.')) continue
+    if (!entry.isDirectory()) continue
+    if (entry.name === ARCHIVE_DIRNAME) {
+      const remaining = await fs.readdir(join(rootDir, entry.name))
+      if (remaining.length === 0) {
+        await fs.rm(join(rootDir, entry.name), { recursive: true, force: true })
+      }
+      continue
+    }
+    if (entry.name.startsWith('.')) continue
     const folderPath = join(rootDir, entry.name)
+    const folderArchiveDir = toArchiveDir(folderPath)
+    if (await fileExists(folderArchiveDir)) {
+      const archiveRemaining = await fs.readdir(folderArchiveDir)
+      if (archiveRemaining.length === 0) {
+        await fs.rm(folderArchiveDir, { recursive: true, force: true })
+      }
+    }
     const remaining = await fs.readdir(folderPath)
     if (remaining.length === 0) {
       await fs.rm(folderPath, { recursive: true, force: true })

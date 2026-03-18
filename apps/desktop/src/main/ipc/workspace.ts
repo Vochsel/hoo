@@ -10,6 +10,8 @@ import {
   createBoardInWorkspace,
   renameBoardInWorkspace,
   moveBoardInWorkspace,
+  archiveBoardInWorkspace,
+  unarchiveBoardInWorkspace,
   deleteBoardInWorkspace,
   setWorkspaceActiveBoardId,
   boardExists,
@@ -90,6 +92,16 @@ export function registerWorkspaceHandlers(): void {
 
   ipcMain.handle('workspace:moveBoard', async (_event, boardId: string, folderId?: string | null) => {
     await moveBoardInWorkspace(boardId, folderId)
+    return getWorkspaceSnapshot()
+  })
+
+  ipcMain.handle('workspace:archiveBoard', async (_event, boardId: string) => {
+    await archiveBoardInWorkspace(boardId)
+    return getWorkspaceSnapshot()
+  })
+
+  ipcMain.handle('workspace:unarchiveBoard', async (_event, boardId: string) => {
+    await unarchiveBoardInWorkspace(boardId)
     return getWorkspaceSnapshot()
   })
 

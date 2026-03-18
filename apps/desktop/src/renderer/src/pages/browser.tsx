@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus } from 'lucide-react'
+import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
@@ -316,6 +316,7 @@ function BrowserPageInner(): React.ReactElement {
     loading: workspaceLoading,
     activeBoard,
     setRootDir,
+    resetWorkspace,
     getRecentWorkspaces,
     createFolder,
     renameFolder,
@@ -323,6 +324,8 @@ function BrowserPageInner(): React.ReactElement {
     createBoard,
     renameBoard,
     moveBoard,
+    archiveBoard,
+    unarchiveBoard,
     deleteBoard,
     setActiveBoard,
     getBoardDocumentHtml,
@@ -348,13 +351,13 @@ function BrowserPageInner(): React.ReactElement {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [terminalDialogNodeId, setTerminalDialogNodeId] = useState<string | null>(null)
   const pendingSelectNonceRef = useRef(0)
-  const [pendingTabSelect, setPendingTabSelect] = useState<{ itemId: string; nonce: number } | null>(null)
+  const [pendingTabSelect, setPendingTabSelect] = useState<{ boardId: string | null; itemId: string; nonce: number } | null>(null)
   const pendingTabSelectRef = useRef(pendingTabSelect)
   pendingTabSelectRef.current = pendingTabSelect
-  const requestTabSelect = useCallback((itemId: string) => {
+  const requestTabSelect = useCallback((itemId: string, boardId: string | null = activeBoardId) => {
     pendingSelectNonceRef.current += 1
-    setPendingTabSelect({ itemId, nonce: pendingSelectNonceRef.current })
-  }, [])
+    setPendingTabSelect({ boardId, itemId, nonce: pendingSelectNonceRef.current })
+  }, [activeBoardId])
   const [contextMenu, setContextMenu] = useState<ContextMenu | null>(null)
   const [contextMenuPosition, setContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [boardItemMenu, setBoardItemMenu] = useState<BoardItemMenu | null>(null)
@@ -393,6 +396,7 @@ function BrowserPageInner(): React.ReactElement {
   const [boardRootDir, setBoardRootDir] = useState<string | null>(null)
   const [settingsDialogBoardId, setSettingsDialogBoardId] = useState<string | null>(null)
   const [settingsDialogRootDir, setSettingsDialogRootDir] = useState('')
+  const [archivingBoardId, setArchivingBoardId] = useState<string | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const boardItemMenuRef = useRef<HTMLDivElement | null>(null)
   const flowContainerRef = useRef<HTMLDivElement | null>(null)
@@ -592,40 +596,55 @@ function BrowserPageInner(): React.ReactElement {
   // ─── Folder / Board icon & color meta ──────────────────────────────────────
   const folderMeta = (getSetting('folderMeta') ?? {}) as Record<string, { icon?: string; color?: string }>
   const boardMeta = (getSetting('boardMeta') ?? {}) as Record<string, { icon?: string; color?: string }>
+  const lastSelectedBoardItems = (getSetting('lastSelectedBoardItems') ?? {}) as Record<string, string>
+  const legacyLastSelectedTabs = (getSetting('lastSelectedTabs') ?? {}) as Record<string, string>
 
   const getFolderMeta = useCallback((id: string) => folderMeta[id] ?? {}, [folderMeta])
   const getBoardMeta = useCallback((id: string) => boardMeta[id] ?? {}, [boardMeta])
 
   const setFolderMeta = useCallback(
     (id: string, meta: { icon?: string; color?: string }) => {
-      const next = { ...folderMeta }
-      if (!meta.icon && !meta.color) {
-        delete next[id]
-      } else {
-        next[id] = meta
-      }
-      void setSetting('folderMeta', next)
+      void setSetting('folderMeta', (prevValue) => {
+        const next = { ...((prevValue as Record<string, { icon?: string; color?: string }> | null) ?? {}) }
+        if (!meta.icon && !meta.color) {
+          delete next[id]
+        } else {
+          next[id] = meta
+        }
+        return next
+      })
     },
-    [folderMeta, setSetting]
+    [setSetting]
   )
 
   const setBoardMeta = useCallback(
     (id: string, meta: { icon?: string; color?: string }) => {
-      const next = { ...boardMeta }
-      if (!meta.icon && !meta.color) {
-        delete next[id]
-      } else {
-        next[id] = meta
-      }
-      void setSetting('boardMeta', next)
+      void setSetting('boardMeta', (prevValue) => {
+        const next = { ...((prevValue as Record<string, { icon?: string; color?: string }> | null) ?? {}) }
+        if (!meta.icon && !meta.color) {
+          delete next[id]
+        } else {
+          next[id] = meta
+        }
+        return next
+      })
     },
-    [boardMeta, setSetting]
+    [setSetting]
   )
+
+  const restoredBoardItemId = activeBoardId
+    ? (lastSelectedBoardItems[activeBoardId] ?? legacyLastSelectedTabs[activeBoardId] ?? null)
+    : null
 
   const openBoardIconPicker = useCallback((boardId: string, anchorEl: HTMLElement) => {
     const rect = anchorEl.getBoundingClientRect()
     setIconPickerTarget({ type: 'board', id: boardId, anchor: rect })
   }, [])
+
+  const settingsDialogBoard = useMemo(
+    () => workspace?.boards.find((board) => board.id === settingsDialogBoardId) ?? null,
+    [settingsDialogBoardId, workspace?.boards]
+  )
 
   const boardsByFolderId = useMemo(() => {
     const map = new Map<string, WorkspaceBoard[]>()
@@ -750,25 +769,8 @@ function BrowserPageInner(): React.ReactElement {
     })
   }, [setSetting])
 
-  // Save last selected tab per board — use refs to avoid re-firing on every settings change
-  const lastSelectedTabRef = useRef<string | null>(null)
-  const prevBoardIdRef = useRef<string | null>(activeBoardId)
-  const restoredForBoardRef = useRef<string | null>(null)
-  const getSettingRef = useRef(getSetting)
-  getSettingRef.current = getSetting
-  const setSettingRef = useRef(setSetting)
-  setSettingRef.current = setSetting
-
   useEffect(() => {
     if (pendingBoardRenameRef.current || pendingFolderRenameRef.current) return
-    // Persist last selected tab for the board we're leaving
-    if (prevBoardIdRef.current && lastSelectedTabRef.current) {
-      const prev = (getSettingRef.current('lastSelectedTabs') ?? {}) as Record<string, string>
-      void setSettingRef.current('lastSelectedTabs', { ...prev, [prevBoardIdRef.current]: lastSelectedTabRef.current })
-    }
-    prevBoardIdRef.current = activeBoardId
-    lastSelectedTabRef.current = null
-    restoredForBoardRef.current = null
     setRunningTabs(new Set())
     setPreviewingTabs(new Set())
     dialogWebviews.current.clear()
@@ -779,26 +781,6 @@ function BrowserPageInner(): React.ReactElement {
     setContextMenu(null)
     setBoardItemMenu(null)
   }, [activeBoardId])
-
-  // Track the currently selected tab for persistence
-  useEffect(() => {
-    lastSelectedTabRef.current = selectedTab?.id ?? null
-  }, [selectedTab])
-
-  // Restore last selected tab when tabs finish loading for the active board
-  useEffect(() => {
-    if (!activeBoardId || tabs.length === 0) return
-    if (restoredForBoardRef.current === activeBoardId) return
-    restoredForBoardRef.current = activeBoardId
-    const saved = (getSettingRef.current('lastSelectedTabs') ?? {}) as Record<string, string>
-    const lastTabId = saved[activeBoardId]
-    if (lastTabId) {
-      const tab = tabs.find((t) => t.id === lastTabId)
-      if (tab) {
-        setSelectedTab(tab)
-      }
-    }
-  }, [activeBoardId, tabs])
 
   useEffect(() => {
     if (!workspace) return
@@ -826,7 +808,7 @@ function BrowserPageInner(): React.ReactElement {
       return
     }
     // Pending tab selection → force tabs view, skip loading saved view
-    if (pendingTabSelectRef.current) {
+    if (pendingTabSelectRef.current?.boardId === activeBoardId) {
       setBoardView('tabs')
       setTerminalDialogNodeId(null)
       return
@@ -2489,9 +2471,30 @@ function BrowserPageInner(): React.ReactElement {
       }
       setBoardView('tabs')
       setTerminalDialogNodeId(null)
-      requestTabSelect(itemId)
+      requestTabSelect(itemId, boardId)
     },
     [activeBoardId, setActiveBoard, setBoardActiveView, requestTabSelect]
+  )
+
+  const handleActiveBoardItemChange = useCallback(
+    (itemId: string | null) => {
+      setActiveItemId(itemId)
+      const pendingSelection = pendingTabSelectRef.current
+      if (pendingSelection && pendingSelection.boardId === activeBoardId && pendingSelection.itemId === itemId) {
+        setPendingTabSelect(null)
+      }
+      if (!activeBoardId) return
+      void setSetting('lastSelectedBoardItems', (prevValue) => {
+        const next = { ...((prevValue as Record<string, string> | null) ?? {}) }
+        if (itemId) {
+          next[activeBoardId] = itemId
+        } else {
+          delete next[activeBoardId]
+        }
+        return next
+      })
+    },
+    [activeBoardId, setSetting]
   )
 
 
@@ -3576,6 +3579,27 @@ function BrowserPageInner(): React.ReactElement {
     [deleteBoard]
   )
 
+  const handleArchiveBoard = useCallback(
+    async (boardId: string, boardName: string) => {
+      const confirmed = window.confirm(
+        `Archive board "${boardName}"? It will move into a hidden .archive folder and disappear from the main UI until restored from Settings.`
+      )
+      if (!confirmed) return
+      setArchivingBoardId(boardId)
+      try {
+        await archiveBoard(boardId)
+        setSettingsDialogBoardId((current) => (current === boardId ? null : current))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to archive board id=${boardId}:`, error)
+        window.alert(`Failed to archive board: ${message}`)
+      } finally {
+        setArchivingBoardId((current) => (current === boardId ? null : current))
+      }
+    },
+    [archiveBoard]
+  )
+
   const handleSelectBoard = useCallback(
     async (boardId: string) => {
       await setActiveBoard(boardId)
@@ -3706,6 +3730,7 @@ function BrowserPageInner(): React.ReactElement {
               <div className="min-h-0 flex-1">
                 <div className="no-drag h-full">
                   <SettingsSidebar
+                    workspace={workspace}
                     activeSection={settingsSection}
                     onSectionChange={setSettingsSection}
                   />
@@ -3799,6 +3824,10 @@ function BrowserPageInner(): React.ReactElement {
               {workspace?.folders.map((folder) => {
                 const folderBoards = boardsByFolderId.get(folder.id) ?? []
                 const expanded = expandedFolders.has(folder.id)
+                const folderNotificationCount = folderBoards.reduce((count, board) => {
+                  const boardItems = getOrderedSidebarBoardItems(board.id)
+                  return count + boardItems.filter((item) => notifiedItemIds.has(item.id)).length
+                }, 0)
                 return (
                   <section
                     key={folder.id}
@@ -3869,7 +3898,12 @@ function BrowserPageInner(): React.ReactElement {
                             })()}
                           </span>
                           <span className="truncate text-[13px] font-medium">{folder.name}</span>
-                          <span className="text-[10px] text-muted-foreground">{folderBoards.length}</span>
+                          <span className="ml-auto text-[10px] text-muted-foreground">{folderBoards.length}</span>
+                          {folderNotificationCount > 0 ? (
+                            <span className="shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">
+                              {folderNotificationCount}
+                            </span>
+                          ) : null}
                         </button>
                       )}
                       <button
@@ -3907,7 +3941,7 @@ function BrowserPageInner(): React.ReactElement {
                                 className={[
                                   'group/boardItem rounded-lg px-2 py-1 transition-colors',
                                   board.id === activeBoardId
-                                    ? ''
+                                    ? 'bg-accent/60 text-foreground'
                                     : 'hover:bg-accent/50'
                                 ].join(' ')}
                               >
@@ -4044,7 +4078,7 @@ function BrowserPageInner(): React.ReactElement {
                     className={[
                       'group/boardItem rounded-lg px-2 py-1 transition-colors',
                       board.id === activeBoardId
-                        ? ''
+                        ? 'bg-accent/60 text-foreground'
                         : 'hover:bg-accent/50'
                     ].join(' ')}
                   >
@@ -4266,7 +4300,16 @@ function BrowserPageInner(): React.ReactElement {
               </div>
             )}
           </div>
-          {isSettingsRoute && <SettingsPage activeSection={settingsSection} />}
+          {isSettingsRoute && (
+            <SettingsPage
+              activeSection={settingsSection}
+              workspace={workspace}
+              setRootDir={setRootDir}
+              resetWorkspace={resetWorkspace}
+              getRecentWorkspaces={getRecentWorkspaces}
+              unarchiveBoard={unarchiveBoard}
+            />
+          )}
           {!isSettingsRoute && boardView === 'whiteboard' && (
           <FlowDirectionContext.Provider value={flowDirection}>
           <div ref={flowContainerRef} className="flex-1" onMouseMove={handleFlowContainerMouseMove}>
@@ -4329,8 +4372,12 @@ function BrowserPageInner(): React.ReactElement {
 	              fileNodes={fileNodes}
 	              activeBoardId={activeBoardId}
 	              preferredOrderIds={activeBoardId ? (boardItemOrderMap.get(activeBoardId) ?? []) : []}
-	              pendingSelectId={pendingTabSelect?.itemId ?? null}
-	              pendingSelectNonce={pendingTabSelect?.nonce ?? 0}
+	              pendingSelectId={
+	                pendingTabSelect?.boardId === activeBoardId
+	                  ? pendingTabSelect.itemId
+	                  : restoredBoardItemId
+	              }
+	              pendingSelectNonce={pendingTabSelect?.boardId === activeBoardId ? pendingTabSelect.nonce : 0}
 	              onTabUpdate={updateTab}
 	              onSaveViewOrder={async (orderedIds) => {
 	                if (!activeBoardId) return
@@ -4389,10 +4436,10 @@ function BrowserPageInner(): React.ReactElement {
                 if (!activeBoardId) return
                 handleBoardItemContextMenu(event, item.id, item.kind, activeBoardId)
               }}
-              workspaceRootDir={workspace?.rootDir}
-              boardRootDir={boardRootDir}
-              onActiveItemChange={setActiveItemId}
-            />
+	              workspaceRootDir={workspace?.rootDir}
+	              boardRootDir={boardRootDir}
+	              onActiveItemChange={handleActiveBoardItemChange}
+	            />
           )}
           {!isSettingsRoute && boardView === 'document' && (
             <BoardDocumentView
@@ -4961,12 +5008,35 @@ function BrowserPageInner(): React.ReactElement {
                 </Button>
               </div>
             </div>
+            <div className="rounded-[20px] border border-border/60 bg-muted/20 p-4">
+              <label className="text-sm font-medium">Archive Board</label>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Move this board into a hidden <code>.archive</code> folder inside its current location. Archived boards are removed from the sidebar and can be restored from Settings.
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 gap-1.5"
+                disabled={!settingsDialogBoard || archivingBoardId === settingsDialogBoard.id}
+                onClick={() => {
+                  if (!settingsDialogBoard) return
+                  void handleArchiveBoard(settingsDialogBoard.id, settingsDialogBoard.name)
+                }}
+              >
+                <Archive className="h-3.5 w-3.5" />
+                {settingsDialogBoard && archivingBoardId === settingsDialogBoard.id ? 'Archiving...' : 'Archive Board'}
+              </Button>
+            </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setSettingsDialogBoardId(null)}>
+            <Button
+              variant="outline"
+              disabled={!!settingsDialogBoard && archivingBoardId === settingsDialogBoard.id}
+              onClick={() => setSettingsDialogBoardId(null)}
+            >
               Cancel
             </Button>
-            <Button onClick={async () => {
+            <Button disabled={!!settingsDialogBoard && archivingBoardId === settingsDialogBoard.id} onClick={async () => {
               if (!settingsDialogBoardId) return
               await window.api.workspace.setBoardRootDir(settingsDialogBoardId, settingsDialogRootDir.trim() || null)
               if (settingsDialogBoardId === activeBoardId) {

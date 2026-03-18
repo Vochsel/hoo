@@ -162,19 +162,6 @@ export function BrowserTabContent({
         console.warn(`${TAG} did-fail-load: ${e.errorDescription} (${e.errorCode})`)
       }
 
-      const handleNewWindow = (event: Event): void => {
-        const popupEvent = event as Event & { url?: string; preventDefault?: () => void }
-        popupEvent.preventDefault?.()
-        const popupUrl = typeof popupEvent.url === 'string' ? popupEvent.url : ''
-        if (!popupUrl) return
-        setCurrentUrl(popupUrl)
-        void persistTabUpdate({ url: popupUrl })
-        el.loadURL(popupUrl).catch((error: Error) => {
-          if (error.message?.includes('ERR_ABORTED')) return
-          console.warn(`${TAG} popup redirect error:`, error)
-        })
-      }
-
       const handleDomReady = (): void => {
         try {
           const wcId = el.getWebContentsId()
@@ -183,29 +170,6 @@ export function BrowserTabContent({
             publishLiveWebContents(wcId)
           }
         } catch {}
-        void el.executeJavaScript(`
-          (() => {
-            try {
-              const rewriteAnchorTarget = (root) => {
-                const links = root.querySelectorAll ? root.querySelectorAll('a[target="_blank"]') : [];
-                for (const link of links) {
-                  link.setAttribute('target', '_self');
-                }
-              };
-              rewriteAnchorTarget(document);
-              const observer = new MutationObserver((mutations) => {
-                for (const mutation of mutations) {
-                  for (const node of mutation.addedNodes) {
-                    if (node && node.nodeType === Node.ELEMENT_NODE) rewriteAnchorTarget(node);
-                  }
-                }
-              });
-              observer.observe(document.documentElement || document.body, { childList: true, subtree: true });
-              const originalOpen = window.open;
-              window.open = function (url) { if (typeof url === 'string' && url.length > 0) location.href = url; return null; };
-            } catch {}
-          })();
-        `).catch(() => {})
       }
 
       el.addEventListener('did-navigate', handleDidNavigate)
@@ -215,7 +179,6 @@ export function BrowserTabContent({
       el.addEventListener('did-start-loading', handleDidStartLoading)
       el.addEventListener('did-stop-loading', handleDidStopLoading)
       el.addEventListener('did-fail-load', handleDidFailLoad)
-      el.addEventListener('new-window', handleNewWindow)
       el.addEventListener('dom-ready', handleDomReady)
 
       webviewCleanupRef.current = (): void => {
@@ -226,7 +189,6 @@ export function BrowserTabContent({
         el.removeEventListener('did-start-loading', handleDidStartLoading)
         el.removeEventListener('did-stop-loading', handleDidStopLoading)
         el.removeEventListener('did-fail-load', handleDidFailLoad)
-        el.removeEventListener('new-window', handleNewWindow)
         el.removeEventListener('dom-ready', handleDomReady)
       }
     },
@@ -278,6 +240,7 @@ export function BrowserTabContent({
           ref={setupWebview}
           src={initialUrlRef.current}
           partition="persist:browser-tabs"
+          allowpopups
           useragent={WEBVIEW_USER_AGENT}
           style={{ width: '100%', height: '100%' }}
         />
