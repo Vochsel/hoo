@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu } from 'lucide-react'
+import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu, Waypoints } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
@@ -59,6 +59,7 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { DynamicIcon, IconPicker } from '@/components/ui/icon-picker'
 import { SettingsPage, SettingsSidebar, type SettingsSectionId } from '@/pages/settings'
 import { CLI_AGENTS, WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY, getAgentCommand } from '@/lib/cli-agents'
+import { HubView } from '@/components/hub/hub-view'
 import TurndownService from 'turndown'
 
 const MONITOR_TAG = '[browser-monitor]'
@@ -399,6 +400,7 @@ function BrowserPageInner(): React.ReactElement {
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('appearance')
   const resizeRef = useRef<{ startX: number; startWidth: number } | null>(null)
   const [boardView, setBoardView] = useState<'whiteboard' | 'tabs' | 'document'>('whiteboard')
+  const [showHubView, setShowHubView] = useState(false)
   const [boardDocHtml, setBoardDocHtmlState] = useState('<p></p>')
   const [boardDocLoading, setBoardDocLoading] = useState(false)
   const boardDocSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -3639,6 +3641,7 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleSelectBoard = useCallback(
     async (boardId: string) => {
+      setShowHubView(false)
       await setActiveBoard(boardId)
     },
     [setActiveBoard]
@@ -4225,6 +4228,18 @@ function BrowserPageInner(): React.ReactElement {
 
           <div className="border-t border-border/40 px-3 py-2 space-y-0.5">
             <UpdateBanner />
+            <button
+              type="button"
+              onClick={() => setShowHubView((v) => !v)}
+              className={`flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs transition-colors ${
+                showHubView
+                  ? 'bg-accent text-foreground font-medium'
+                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+              }`}
+            >
+              <Waypoints className="h-3.5 w-3.5" />
+              Hub
+            </button>
             <NavLink
               to="/settings"
               className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
@@ -4284,10 +4299,10 @@ function BrowserPageInner(): React.ReactElement {
                 </button>
               )}
               <p className="min-w-0 truncate text-sm font-semibold">
-                {isSettingsRoute ? 'Settings' : workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
+                {isSettingsRoute ? 'Settings' : showHubView ? 'Hub' : workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
               </p>
             </div>
-            {!isSettingsRoute && activeBoardId && (
+            {!isSettingsRoute && !showHubView && activeBoardId && (
               <div className="no-drag flex shrink-0 items-center">
                 <div className="flex items-center gap-0.5 rounded-lg border border-border/40 bg-background/60 p-0.5 backdrop-blur-sm">
                   <button
@@ -4343,7 +4358,19 @@ function BrowserPageInner(): React.ReactElement {
               unarchiveBoard={unarchiveBoard}
             />
           )}
-          {!isSettingsRoute && boardView === 'whiteboard' && (
+          {!isSettingsRoute && showHubView && workspace && (
+            <HubView
+              folders={workspace.folders}
+              boards={workspace.boards}
+              onSelectBoard={(boardId) => {
+                setShowHubView(false)
+                void setActiveBoard(boardId).then(() => {
+                  setBoardView('tabs')
+                })
+              }}
+            />
+          )}
+          {!isSettingsRoute && !showHubView && boardView === 'whiteboard' && (
           <FlowDirectionContext.Provider value={flowDirection}>
           <div ref={flowContainerRef} className="flex-1" onMouseMove={handleFlowContainerMouseMove}>
             <ReactFlow
@@ -4397,7 +4424,7 @@ function BrowserPageInner(): React.ReactElement {
           </div>
           </FlowDirectionContext.Provider>
           )}
-          {!isSettingsRoute && boardView === 'tabs' && (
+          {!isSettingsRoute && !showHubView && boardView === 'tabs' && (
 	            <BoardTabsView
 	              key={activeBoardId}
 	              tabs={tabs}
@@ -4474,7 +4501,7 @@ function BrowserPageInner(): React.ReactElement {
 	              onActiveItemChange={handleActiveBoardItemChange}
 	            />
           )}
-          {!isSettingsRoute && boardView === 'document' && (
+          {!isSettingsRoute && !showHubView && boardView === 'document' && (
             <BoardDocumentView
               boardId={activeBoardId}
               html={boardDocHtml}
