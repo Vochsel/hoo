@@ -219,6 +219,16 @@ function normalizeOptionalPath(value: string | null | undefined): string | undef
   return trimmed ? trimmed : undefined
 }
 
+function compactBoardTabsForSidebar(tabs: BrowserTab[]): BrowserTab[] {
+  let changed = false
+  const compacted = tabs.map((tab) => {
+    if (tab.screenshot == null) return tab
+    changed = true
+    return { ...tab, screenshot: null }
+  })
+  return changed ? compacted : tabs
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
@@ -707,28 +717,6 @@ function BrowserPageInner(): React.ReactElement {
     return map
   }, [workspace])
 
-  const allKnownBrowserTabs = useMemo(() => {
-    const tabsById = new Map<string, BrowserTab>()
-    for (const boardTabs of boardTabsMap.values()) {
-      for (const tab of boardTabs) {
-        tabsById.set(tab.id, tab)
-      }
-    }
-
-    const activeBoardTabs =
-      activeBoardId == null
-        ? []
-        : tabsLoading
-          ? (boardTabsMap.get(activeBoardId) ?? [])
-          : tabs
-
-    for (const tab of activeBoardTabs) {
-      tabsById.set(tab.id, tab)
-    }
-
-    return Array.from(tabsById.values())
-  }, [activeBoardId, boardTabsMap, tabs, tabsLoading])
-
   useEffect(() => {
     if (!workspace) return
     let cancelled = false
@@ -746,7 +734,7 @@ function BrowserPageInner(): React.ReactElement {
       )
       if (cancelled) return
       for (const { boardId, boardTabs, itemOrder } of boardEntries) {
-        next.set(boardId, boardTabs)
+        next.set(boardId, compactBoardTabsForSidebar(boardTabs))
         if (itemOrder.length > 0) {
           nextItemOrderMap.set(boardId, itemOrder)
         }
@@ -763,7 +751,7 @@ function BrowserPageInner(): React.ReactElement {
     }
     void loadAllBoardTabs()
     return () => { cancelled = true }
-  }, [workspace, tabs, activeBoardId])
+  }, [workspace, activeBoardId])
 
   // Load terminal and file nodes for non-active boards (sidebar).
   // Mirrors the boardTabsMap pattern — only re-fetches when workspace changes.
@@ -807,7 +795,7 @@ function BrowserPageInner(): React.ReactElement {
     setBoardTabsMap((prev) => {
       const next = new Map(prev)
       if (tabs.length > 0) {
-        next.set(activeBoardId, tabs)
+        next.set(activeBoardId, compactBoardTabsForSidebar(tabs))
       } else {
         next.delete(activeBoardId)
       }
@@ -4757,7 +4745,6 @@ function BrowserPageInner(): React.ReactElement {
           {!isSettingsRoute && boardView === 'tabs' && (
             <BoardTabsView
               tabs={activeBoardTabsViewCollections.tabs}
-              allBrowserTabs={allKnownBrowserTabs}
               terminalNodes={activeBoardTabsViewCollections.terminalNodes}
               fileNodes={activeBoardTabsViewCollections.fileNodes}
               loading={tabsLoading || graphNodesLoading}
