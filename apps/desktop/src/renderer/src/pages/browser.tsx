@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu } from 'lucide-react'
+import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu, RotateCw } from 'lucide-react'
 import { useAppActions } from '@/App'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
@@ -296,6 +296,7 @@ interface BoardItemMenu {
   itemId: string
   kind: SidebarItemKind
   boardId: string
+  source: 'sidebar' | 'tab-strip'
 }
 
 interface BoardContextMenu {
@@ -368,6 +369,8 @@ function BrowserPageInner(): React.ReactElement {
   const [pendingTabSelect, setPendingTabSelect] = useState<{ boardId: string | null; itemId: string; nonce: number } | null>(null)
   const pendingTabSelectRef = useRef(pendingTabSelect)
   pendingTabSelectRef.current = pendingTabSelect
+  const pendingReloadNonceRef = useRef(0)
+  const [pendingTabReload, setPendingTabReload] = useState<{ itemId: string; nonce: number } | null>(null)
   const requestTabSelect = useCallback((itemId: string, boardId: string | null = activeBoardId) => {
     pendingSelectNonceRef.current += 1
     setPendingTabSelect({ boardId, itemId, nonce: pendingSelectNonceRef.current })
@@ -955,7 +958,7 @@ function BrowserPageInner(): React.ReactElement {
               <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
             </button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="min-w-[180px]">
+          <DropdownMenuContent align="end" className="min-w-[180px] rounded-xl">
             {boardViewOptions.map((option) => {
               const Icon = option.icon
               const isActive = option.value === boardView
@@ -2944,7 +2947,13 @@ function BrowserPageInner(): React.ReactElement {
   }, [boardItemMenu])
 
   const handleBoardItemContextMenu = useCallback(
-    (event: React.MouseEvent, itemId: string, kind: SidebarItemKind, boardId: string) => {
+    (
+      event: React.MouseEvent,
+      itemId: string,
+      kind: SidebarItemKind,
+      boardId: string,
+      source: BoardItemMenu['source'] = 'sidebar'
+    ) => {
       event.preventDefault()
       event.stopPropagation()
       setContextMenu(null)
@@ -2955,7 +2964,8 @@ function BrowserPageInner(): React.ReactElement {
         y: event.clientY,
         itemId,
         kind,
-        boardId
+        boardId,
+        source
       })
     },
     []
@@ -3287,6 +3297,21 @@ function BrowserPageInner(): React.ReactElement {
     }
     setBoardItemMenu(null)
   }, [activeBoardId, boardItemMenu, boardTabsMap, boardTerminalsMap, boardFilesMap, tabs, terminalNodes, fileNodes])
+
+  const handleBoardItemReload = useCallback(() => {
+    if (!boardItemMenu) return
+    if (boardItemMenu.source !== 'tab-strip') {
+      setBoardItemMenu(null)
+      return
+    }
+    if (boardItemMenu.kind !== 'browser' && boardItemMenu.kind !== 'terminal') {
+      setBoardItemMenu(null)
+      return
+    }
+    pendingReloadNonceRef.current += 1
+    setPendingTabReload({ itemId: boardItemMenu.itemId, nonce: pendingReloadNonceRef.current })
+    setBoardItemMenu(null)
+  }, [boardItemMenu])
 
   const deleteBoardItem = useCallback(
     async (itemId: string, kind: 'browser' | 'graph' | 'terminal' | 'file', boardId: string | null) => {
@@ -3885,7 +3910,7 @@ function BrowserPageInner(): React.ReactElement {
                 <DropdownMenuTrigger asChild>
 	                  <button
 	                    type="button"
-	                    className="flex h-8 w-full items-center justify-between gap-3 rounded-xl px-3 text-sm font-semibold text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors outline-none"
+	                    className="flex h-8 w-full items-center justify-between gap-3 rounded-xl border border-border/40 bg-background/60 px-3 text-sm font-semibold text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors outline-none"
 	                  >
                     <span className="truncate text-left">{workspace?.rootDir.split('/').pop() || 'Workspace'}</span>
                     <ChevronDown className="h-4 w-4 shrink-0" />
@@ -4571,10 +4596,12 @@ function BrowserPageInner(): React.ReactElement {
               notifiedIds={notifiedItemIds}
               onItemContextMenu={(event, item) => {
                 if (!activeBoardId) return
-                handleBoardItemContextMenu(event, item.id, item.kind, activeBoardId)
+                handleBoardItemContextMenu(event, item.id, item.kind, activeBoardId, 'tab-strip')
               }}
 	              workspaceRootDir={workspace?.rootDir}
 	              boardRootDir={boardRootDir}
+	              pendingReloadId={pendingTabReload?.itemId ?? null}
+	              pendingReloadNonce={pendingTabReload?.nonce}
 	              onActiveItemChange={handleActiveBoardItemChange}
 	            />
           )}
@@ -4848,6 +4875,15 @@ function BrowserPageInner(): React.ReactElement {
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
         >
+          {boardItemMenu.source === 'tab-strip' && (boardItemMenu.kind === 'browser' || boardItemMenu.kind === 'terminal') && (
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+              onClick={() => void handleBoardItemReload()}
+            >
+              <RotateCw className="h-4 w-4" />
+              {boardItemMenu.kind === 'browser' ? 'Reload Webview' : 'Restart Terminal'}
+            </button>
+          )}
           <button
             className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
             onClick={() => void handleBoardItemRename()}

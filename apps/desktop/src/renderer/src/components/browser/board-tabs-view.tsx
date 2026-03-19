@@ -44,6 +44,8 @@ interface BoardTabsViewProps {
   boardRootDir?: string | null
   pendingSelectId?: string | null
   pendingSelectNonce?: number
+  pendingReloadId?: string | null
+  pendingReloadNonce?: number
   onActiveItemChange?: (id: string | null) => void
 }
 
@@ -133,6 +135,8 @@ export function BoardTabsView({
   boardRootDir,
   pendingSelectId,
   pendingSelectNonce,
+  pendingReloadId,
+  pendingReloadNonce,
   onActiveItemChange
 }: BoardTabsViewProps): React.ReactElement {
   const [selectedId, setSelectedId] = useState<string | null>(() => {
@@ -171,12 +175,20 @@ export function BoardTabsView({
   const [orderedIds, setOrderedIds] = useState<string[]>([])
   const [cachedBrowserTabIds, setCachedBrowserTabIds] = useState<string[]>([])
   const [mountedBrowserTabIds, setMountedBrowserTabIds] = useState<string[]>([])
+  const [browserReloadNonceById, setBrowserReloadNonceById] = useState<Map<string, number>>(new Map())
+  const [terminalInstanceRevisionById, setTerminalInstanceRevisionById] = useState<Map<string, number>>(new Map())
+  const cachedBrowserTabIdsRef = useRef<string[]>([])
+  const lastProcessedReloadNonce = useRef(pendingReloadNonce ?? 0)
 
   // Sync orderedIds from the saved mixed order, then append any new items.
   useEffect(() => {
     const next = buildOrderedIds(preferredOrderIds, tabs, terminalNodes, fileNodes, new Set(itemsById.keys()))
     setOrderedIds((prev) => (areStringArraysEqual(prev, next) ? prev : next))
   }, [itemsById, preferredOrderIds, tabs, terminalNodes, fileNodes])
+
+  useEffect(() => {
+    cachedBrowserTabIdsRef.current = cachedBrowserTabIds
+  }, [cachedBrowserTabIds])
 
   const allItems: TabItem[] = useMemo(
     () => orderedIds.map((id) => itemsById.get(id)).filter((item): item is TabItem => item != null),
@@ -290,6 +302,45 @@ export function BoardTabsView({
       return areStringArraysEqual(prev, next) ? prev : next
     })
   }, [tabs])
+
+  useEffect(() => {
+    if (!pendingReloadId || pendingReloadNonce == null) return
+    if (pendingReloadNonce === lastProcessedReloadNonce.current) return
+    lastProcessedReloadNonce.current = pendingReloadNonce
+
+    const item = itemsById.get(pendingReloadId)
+    if (!item) return
+
+    if (item.kind === 'browser') {
+      const nextCachedIds = [
+        item.tab.id,
+        ...cachedBrowserTabIdsRef.current.filter((id) => id !== item.tab.id)
+      ].slice(0, MAX_CACHED_BROWSER_TABS)
+      setCachedBrowserTabIds((prev) => (areStringArraysEqual(prev, nextCachedIds) ? prev : nextCachedIds))
+      setMountedBrowserTabIds((prev) => {
+        const withTarget = prev.includes(item.tab.id) ? prev : [...prev, item.tab.id]
+        const next = withTarget.filter((id) => nextCachedIds.includes(id))
+        return areStringArraysEqual(prev, next) ? prev : next
+      })
+      setBrowserReloadNonceById((prev) => {
+        if (prev.get(item.tab.id) === pendingReloadNonce) return prev
+        const next = new Map(prev)
+        next.set(item.tab.id, pendingReloadNonce)
+        return next
+      })
+      return
+    }
+
+    if (item.kind === 'terminal') {
+      void window.api.terminal.kill(`pty-${item.node.id}`).catch(() => {}).then(() => {
+        setTerminalInstanceRevisionById((prev) => {
+          const next = new Map(prev)
+          next.set(item.node.id, (prev.get(item.node.id) ?? 0) + 1)
+          return next
+        })
+      })
+    }
+  }, [itemsById, pendingReloadId, pendingReloadNonce])
 
   const browserTabsById = useMemo(() => {
     const map = new Map<string, BrowserTab>()
@@ -613,6 +664,7 @@ export function BoardTabsView({
                 boardId={activeBoardId}
                 onTabUpdate={onTabUpdate}
                 active={isActive}
+                reloadNonce={browserReloadNonceById.get(tab.id) ?? 0}
               />
             </div>
           )
@@ -620,7 +672,7 @@ export function BoardTabsView({
         {selectedItem?.kind === 'terminal' && (
           <div className="absolute inset-0 flex min-h-0 z-10">
             <TerminalContent
-              key={selectedItem.node.id}
+              key={`${selectedItem.node.id}:${terminalInstanceRevisionById.get(selectedItem.node.id) ?? 0}`}
               sessionId={`pty-${selectedItem.node.id}`}
               label={selectedItem.node.label}
               config={parseNodeConfig(selectedItem.node.config) as TerminalNodeConfig}

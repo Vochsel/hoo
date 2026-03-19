@@ -8,6 +8,7 @@ interface BrowserTabContentProps {
   boardId?: string | null
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
   active?: boolean
+  reloadNonce?: number
 }
 
 const TAG = '[browser-tab-content]'
@@ -16,7 +17,8 @@ const WEBVIEW_USER_AGENT = getWebviewUserAgent()
 export function BrowserTabContent({
   tab,
   onTabUpdate,
-  active = true
+  active = true,
+  reloadNonce = 0
 }: BrowserTabContentProps): React.ReactElement {
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
   const addressBarRef = useRef<AddressBarHandle>(null)
@@ -40,6 +42,11 @@ export function BrowserTabContent({
     const nextUrl = tab.url || 'about:blank'
     setCurrentUrl(nextUrl)
   }, [tab.id, tab.url])
+
+  useEffect(() => {
+    if (!reloadNonce) return
+    webviewRef.current?.reload()
+  }, [reloadNonce])
 
   // Auto-focus address bar on new empty tabs
   useEffect(() => {

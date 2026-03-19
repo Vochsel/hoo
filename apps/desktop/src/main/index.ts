@@ -9,6 +9,8 @@ import { registerBrowserTabHandlers } from './ipc/browser-tabs'
 import { registerWorkspaceHandlers } from './ipc/workspace'
 import { registerTerminalHandlers, cleanupTerminalSessions } from './ipc/terminal'
 
+const popupWindows = new Set<BrowserWindow>()
+
 function resolveAppIconPath(): string | null {
   const preferredFile =
     process.platform === 'win32'
@@ -35,18 +37,38 @@ function resolveAppIconPath(): string | null {
 
 function buildPopupWindowOptions(
   options: Electron.BrowserWindowConstructorOptions,
+  sourceContents: WebContents,
   iconPath: string | null
 ): Electron.BrowserWindowConstructorOptions {
+  const parentWindow = BrowserWindow.fromWebContents(sourceContents) ?? undefined
+  const inheritedWebPreferences = options.webPreferences ?? {}
+  const webPreferences =
+    inheritedWebPreferences.partition || inheritedWebPreferences.session
+      ? inheritedWebPreferences
+      : {
+          ...inheritedWebPreferences,
+          session: sourceContents.session
+        }
+
   return {
     ...options,
     width: typeof options.width === 'number' ? options.width : 960,
     height: typeof options.height === 'number' ? options.height : 720,
     minWidth: typeof options.minWidth === 'number' ? options.minWidth : 480,
     minHeight: typeof options.minHeight === 'number' ? options.minHeight : 360,
+    parent: options.parent ?? parentWindow,
     autoHideMenuBar: true,
     show: false,
+    webPreferences,
     ...(process.platform !== 'darwin' && iconPath ? { icon: iconPath } : {})
   }
+}
+
+function trackPopupWindow(popupWindow: BrowserWindow): void {
+  popupWindows.add(popupWindow)
+  popupWindow.once('closed', () => {
+    popupWindows.delete(popupWindow)
+  })
 }
 
 function attachPopupSupport(sourceContents: WebContents, iconPath: string | null): void {
@@ -58,8 +80,13 @@ function attachPopupSupport(sourceContents: WebContents, iconPath: string | null
     return {
       action: 'allow',
       createWindow: (options) => {
-        const popupWindow = new BrowserWindow(buildPopupWindowOptions(options, iconPath))
+        const popupOptions = buildPopupWindowOptions(options, sourceContents, iconPath)
+        const popupWindow = new BrowserWindow(popupOptions)
+        trackPopupWindow(popupWindow)
         popupWindow.setMenuBarVisibility(false)
+        console.log(
+          `[main] popup created opener=${sourceContents.id} window=${popupWindow.id} url=${details.url} parent=${popupOptions.parent ? 'yes' : 'no'}`
+        )
 
         const showAndFocusPopup = (): void => {
           if (popupWindow.isDestroyed()) return
