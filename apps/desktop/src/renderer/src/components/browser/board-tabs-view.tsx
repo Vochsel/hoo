@@ -23,6 +23,8 @@ interface BoardTabsViewProps {
   terminalNodes: GraphNode[]
   fileNodes: GraphNode[]
   activeBoardId: string | null
+  tabBarLeading?: React.ReactNode
+  tabBarTrailing?: React.ReactNode
   preferredOrderIds?: string[]
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
   onSaveViewOrder: (orderedIds: string[]) => Promise<void>
@@ -110,6 +112,8 @@ export function BoardTabsView({
   terminalNodes,
   fileNodes,
   activeBoardId,
+  tabBarLeading,
+  tabBarTrailing,
   preferredOrderIds = [],
   onTabUpdate,
   onSaveViewOrder,
@@ -426,26 +430,14 @@ export function BoardTabsView({
     setDropIndicator(null)
   }, [])
 
-  if (allItems.length === 0) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
-        <p className="text-sm">No tabs or terminals yet</p>
-        <button
-          type="button"
-          className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
-          onClick={() => void handleCreateBrowserTab()}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          New browser tab
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="flex flex-1 flex-col min-h-0">
-      {/* Tab bar */}
-      <div className="flex items-end gap-0 border-b border-border/40 bg-muted/20 px-1 pt-1 overflow-x-auto">
+  const tabBar = (
+    <div className="flex items-end gap-2 border-b border-border/40 bg-muted/20 px-1 pt-1">
+      {tabBarLeading ? (
+        <div className="flex shrink-0 items-center self-center pb-1">
+          {tabBarLeading}
+        </div>
+      ) : null}
+      <div className="flex min-w-0 flex-1 items-end gap-0 overflow-x-auto">
         {allItems.map((item) => {
           const id = item.kind === 'browser' ? item.tab.id : item.node.id
           const isSelected = id === selectedId
@@ -482,7 +474,6 @@ export function BoardTabsView({
               }}
               title={title}
             >
-              {/* Drop indicator lines */}
               {showLeftIndicator && (
                 <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
               )}
@@ -575,6 +566,36 @@ export function BoardTabsView({
           )}
         </div>
       </div>
+      {tabBarTrailing ? (
+        <div className="flex shrink-0 items-center self-center pb-1">
+          {tabBarTrailing}
+        </div>
+      ) : null}
+    </div>
+  )
+
+  if (allItems.length === 0) {
+    return (
+      <div className="flex flex-1 flex-col min-h-0">
+        {tabBar}
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
+          <p className="text-sm">No tabs or terminals yet</p>
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
+            onClick={() => void handleCreateBrowserTab()}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New browser tab
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-1 flex-col min-h-0">
+      {tabBar}
 
       {/* Content */}
       <div className="relative flex flex-1 min-h-0">
@@ -608,6 +629,7 @@ export function BoardTabsView({
                 void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
               }}
               workspaceRootDir={boardRootDir || workspaceRootDir}
+              showHeader={false}
             />
           </div>
         )}

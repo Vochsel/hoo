@@ -17,6 +17,7 @@ interface TerminalContentProps {
   onRequestClose?: () => void
   onUpdateConfig: (config: TerminalNodeConfig) => void
   workspaceRootDir?: string
+  showHeader?: boolean
 }
 
 export function TerminalContent({
@@ -25,7 +26,8 @@ export function TerminalContent({
   config,
   onRequestClose,
   onUpdateConfig,
-  workspaceRootDir
+  workspaceRootDir,
+  showHeader = true
 }: TerminalContentProps): React.ReactElement {
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -290,12 +292,14 @@ export function TerminalContent({
       onDragOver={handleDragOver}
       onDrop={handleDrop}
     >
-      <div className="flex items-center gap-2 border-b px-4 py-2">
-        <span className="text-sm font-medium shrink-0">{label || 'Terminal'}</span>
-        {config.command && (
-          <span className="truncate text-xs text-muted-foreground font-mono">$ {config.command}</span>
-        )}
-      </div>
+      {showHeader && (
+        <div className="flex items-center gap-2 border-b px-4 py-2">
+          <span className="text-sm font-medium shrink-0">{label || 'Terminal'}</span>
+          {config.command && (
+            <span className="truncate text-xs text-muted-foreground font-mono">$ {config.command}</span>
+          )}
+        </div>
+      )}
       <div className="relative flex-1 min-h-0">
         <div
           ref={containerCallbackRef}

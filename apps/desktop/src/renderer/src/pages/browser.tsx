@@ -305,6 +305,13 @@ interface BoardContextMenu {
   boardName: string
 }
 
+interface FolderContextMenu {
+  x: number
+  y: number
+  folderId: string
+  folderName: string
+}
+
 interface RenameDialogState {
   itemId: string
   currentName: string
@@ -371,6 +378,8 @@ function BrowserPageInner(): React.ReactElement {
   const [boardItemMenuPosition, setBoardItemMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [boardContextMenu, setBoardContextMenu] = useState<BoardContextMenu | null>(null)
   const [boardContextMenuPosition, setBoardContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
+  const [folderContextMenu, setFolderContextMenu] = useState<FolderContextMenu | null>(null)
+  const [folderContextMenuPosition, setFolderContextMenuPosition] = useState<{ x: number; y: number } | null>(null)
   const [monitorInput, setMonitorInput] = useState('')
   const [monitorNodeId, setMonitorNodeId] = useState<string | null>(null)
   const [expandedMonitorId, setExpandedMonitorId] = useState<string | null>(null)
@@ -409,6 +418,7 @@ function BrowserPageInner(): React.ReactElement {
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
   const boardItemMenuRef = useRef<HTMLDivElement | null>(null)
   const boardContextMenuRef = useRef<HTMLDivElement | null>(null)
+  const folderContextMenuRef = useRef<HTMLDivElement | null>(null)
   const flowContainerRef = useRef<HTMLDivElement | null>(null)
   const lastMouseClientPositionRef = useRef<{ x: number; y: number } | null>(null)
   const triggerWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
@@ -651,6 +661,11 @@ function BrowserPageInner(): React.ReactElement {
     setIconPickerTarget({ type: 'board', id: boardId, anchor: rect })
   }, [])
 
+  const openFolderIconPicker = useCallback((folderId: string, anchorEl: HTMLElement) => {
+    const rect = anchorEl.getBoundingClientRect()
+    setIconPickerTarget({ type: 'folder', id: folderId, anchor: rect })
+  }, [])
+
   const settingsDialogBoard = useMemo(
     () => workspace?.boards.find((board) => board.id === settingsDialogBoardId) ?? null,
     [settingsDialogBoardId, workspace?.boards]
@@ -790,6 +805,8 @@ function BrowserPageInner(): React.ReactElement {
     setTerminalDialogNodeId(null)
     setContextMenu(null)
     setBoardItemMenu(null)
+    setBoardContextMenu(null)
+    setFolderContextMenu(null)
   }, [activeBoardId])
 
   useEffect(() => {
@@ -907,6 +924,58 @@ function BrowserPageInner(): React.ReactElement {
       }
     },
     [activeBoardId, setBoardActiveView]
+  )
+
+  const isCompactTabsView = !isSettingsRoute && boardView === 'tabs'
+
+  const boardViewOptions = useMemo(
+    () => [
+      { value: 'whiteboard' as const, label: 'Whiteboard', icon: Presentation },
+      { value: 'tabs' as const, label: 'Tabs', icon: PanelTop },
+      { value: 'document' as const, label: 'Notebook', icon: NotebookPen }
+    ],
+    []
+  )
+
+  const currentBoardViewOption = boardViewOptions.find((option) => option.value === boardView) ?? boardViewOptions[0]
+
+  const renderBoardViewSwitcher = useCallback(
+    (className: string): React.ReactElement => {
+      const CurrentIcon = currentBoardViewOption.icon
+      return (
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <button
+              type="button"
+              className={className}
+              title={`View: ${currentBoardViewOption.label}`}
+            >
+              <CurrentIcon className="h-3.5 w-3.5 shrink-0" />
+              <span>{currentBoardViewOption.label}</span>
+              <ChevronDown className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+            </button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[180px]">
+            {boardViewOptions.map((option) => {
+              const Icon = option.icon
+              const isActive = option.value === boardView
+              return (
+                <DropdownMenuItem
+                  key={option.value}
+                  className="gap-2 text-xs"
+                  onClick={() => handleBoardViewChange(option.value)}
+                >
+                  <Icon className="h-3.5 w-3.5 shrink-0" />
+                  <span className="flex-1">{option.label}</span>
+                  {isActive ? <Check className="h-3.5 w-3.5 shrink-0" /> : null}
+                </DropdownMenuItem>
+              )
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )
+    },
+    [boardView, boardViewOptions, currentBoardViewOption, handleBoardViewChange]
   )
 
   const handleBoardDocHtmlChange = useCallback(
@@ -2733,6 +2802,8 @@ function BrowserPageInner(): React.ReactElement {
     (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
       event.preventDefault()
       setBoardItemMenu(null)
+      setBoardContextMenu(null)
+      setFolderContextMenu(null)
       const flowPosition = reactFlowInstance.screenToFlowPosition({
         x: event.clientX,
         y: event.clientY
@@ -2751,6 +2822,8 @@ function BrowserPageInner(): React.ReactElement {
     (event: React.MouseEvent, node: Node) => {
       event.preventDefault()
       setBoardItemMenu(null)
+      setBoardContextMenu(null)
+      setFolderContextMenu(null)
       setContextMenu({
         x: event.clientX,
         y: event.clientY,
@@ -2772,6 +2845,10 @@ function BrowserPageInner(): React.ReactElement {
 
   const closeBoardContextMenu = useCallback(() => {
     setBoardContextMenu(null)
+  }, [])
+
+  const closeFolderContextMenu = useCallback(() => {
+    setFolderContextMenu(null)
   }, [])
 
   useLayoutEffect(() => {
@@ -2796,6 +2873,29 @@ function BrowserPageInner(): React.ReactElement {
     window.addEventListener('resize', clampToViewport)
     return (): void => window.removeEventListener('resize', clampToViewport)
   }, [boardContextMenu])
+
+  useLayoutEffect(() => {
+    if (!folderContextMenu) {
+      setFolderContextMenuPosition(null)
+      return
+    }
+
+    const clampToViewport = (): void => {
+      const menuEl = folderContextMenuRef.current
+      const menuWidth = menuEl?.offsetWidth ?? 180
+      const menuHeight = menuEl?.offsetHeight ?? 150
+      const pad = 8
+      const maxX = Math.max(pad, window.innerWidth - menuWidth - pad)
+      const maxY = Math.max(pad, window.innerHeight - menuHeight - pad)
+      const x = Math.min(Math.max(folderContextMenu.x, pad), maxX)
+      const y = Math.min(Math.max(folderContextMenu.y, pad), maxY)
+      setFolderContextMenuPosition({ x, y })
+    }
+
+    clampToViewport()
+    window.addEventListener('resize', clampToViewport)
+    return (): void => window.removeEventListener('resize', clampToViewport)
+  }, [folderContextMenu])
 
   useLayoutEffect(() => {
     if (!contextMenu) {
@@ -2848,6 +2948,8 @@ function BrowserPageInner(): React.ReactElement {
       event.preventDefault()
       event.stopPropagation()
       setContextMenu(null)
+      setBoardContextMenu(null)
+      setFolderContextMenu(null)
       setBoardItemMenu({
         x: event.clientX,
         y: event.clientY,
@@ -3735,7 +3837,7 @@ function BrowserPageInner(): React.ReactElement {
   }, [workspace, moveBoard])
 
   return (
-    <div className="flex h-full min-h-0 bg-transparent" onClick={() => { closeContextMenu(); closeBoardItemMenu(); closeBoardContextMenu() }}>
+    <div className="flex h-full min-h-0 bg-transparent" onClick={() => { closeContextMenu(); closeBoardItemMenu(); closeBoardContextMenu(); closeFolderContextMenu() }}>
       {!sidebarCollapsed && (
         <aside style={{ width: sidebarWidth }} className="shrink-0 sidebar-vibrancy flex flex-col min-h-0">
           <div className="sidebar-traffic-row shrink-0 flex items-center justify-end pr-3">
@@ -3914,8 +4016,15 @@ function BrowserPageInner(): React.ReactElement {
                           onContextMenu={(event) => {
                             event.preventDefault()
                             event.stopPropagation()
-                            const rect = event.currentTarget.getBoundingClientRect()
-                            setIconPickerTarget({ type: 'folder', id: folder.id, anchor: rect })
+                            setContextMenu(null)
+                            setBoardItemMenu(null)
+                            setBoardContextMenu(null)
+                            setFolderContextMenu({
+                              x: event.clientX,
+                              y: event.clientY,
+                              folderId: folder.id,
+                              folderName: folder.name
+                            })
                           }}
                         >
                           <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
@@ -3943,22 +4052,32 @@ function BrowserPageInner(): React.ReactElement {
                           ) : null}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:text-foreground"
-                        onClick={() => void handleCreateBoard(folder.id)}
-                        title="New board in folder"
-                      >
-                        <NotebookPen className="h-3.5 w-3.5" />
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:text-destructive"
-                        onClick={() => void handleDeleteFolder(folder.id, folder.name)}
-                        title="Delete folder"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger asChild>
+                          <button
+                            type="button"
+                            className="rounded p-1 text-muted-foreground opacity-0 group-hover/folderItem:opacity-100 transition-opacity hover:text-foreground"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <Menu className="h-3 w-3" />
+                          </button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="start" side="bottom" className="min-w-[160px]">
+                          <DropdownMenuItem onClick={(event) => openFolderIconPicker(folder.id, event.currentTarget)}>
+                            <Folder className="mr-2 h-4 w-4" />
+                            Change Icon
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => void handleCreateBoard(folder.id)}>
+                            <NotebookPen className="mr-2 h-4 w-4" />
+                            Add New Board
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem className="text-destructive focus:text-destructive" onClick={() => void handleDeleteFolder(folder.id, folder.name)}>
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
                     </div>
                     {expanded && (
                       <div className="ml-[15px] space-y-0.5 border-l border-border pl-[5px] py-0.5">
@@ -4014,6 +4133,9 @@ function BrowserPageInner(): React.ReactElement {
                                       onContextMenu={(event) => {
                                         event.preventDefault()
                                         event.stopPropagation()
+                                        setContextMenu(null)
+                                        setBoardItemMenu(null)
+                                        setFolderContextMenu(null)
                                         setBoardContextMenu({ x: event.clientX, y: event.clientY, boardId: board.id, boardName: board.name })
                                       }}
                                     >
@@ -4149,6 +4271,9 @@ function BrowserPageInner(): React.ReactElement {
                           onContextMenu={(event) => {
                             event.preventDefault()
                             event.stopPropagation()
+                            setContextMenu(null)
+                            setBoardItemMenu(null)
+                            setFolderContextMenu(null)
                             setBoardContextMenu({ x: event.clientX, y: event.clientY, boardId: board.id, boardName: board.name })
                           }}
                         >
@@ -4261,78 +4386,40 @@ function BrowserPageInner(): React.ReactElement {
         ].join(' ')}
       >
           <div className={`drag-region shrink-0 ${sidebarCollapsed ? 'sidebar-drag-region' : 'content-drag-region'}`} />
-          <div className="drag-region flex items-center justify-between gap-2 border-b border-border/40 pl-4 pr-3 py-1.5">
-            <div className="flex items-center gap-2 min-w-0">
-              {sidebarCollapsed && (
-                <button
-                  type="button"
-                  className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                  onClick={() => setSidebarCollapsed(false)}
-                  title="Expand sidebar"
-                >
-                  <PanelLeftOpen className="h-4 w-4" />
-                </button>
-              )}
-              {isSettingsRoute && sidebarCollapsed && (
-                <button
-                  type="button"
-                  className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-                  onClick={() => navigate('/')}
-                  title="Back"
-                >
-                  <ArrowLeft className="h-4 w-4" />
-                </button>
-              )}
-              <p className="min-w-0 truncate text-sm font-semibold">
-                {isSettingsRoute ? 'Settings' : workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
-              </p>
-            </div>
-            {!isSettingsRoute && activeBoardId && (
-              <div className="no-drag flex shrink-0 items-center">
-                <div className="flex items-center gap-0.5 rounded-lg border border-border/40 bg-background/60 p-0.5 backdrop-blur-sm">
+          {!isCompactTabsView && (
+            <div className="drag-region flex items-center justify-between gap-2 border-b border-border/40 pl-4 pr-3 py-1.5">
+              <div className="flex items-center gap-2 min-w-0">
+                {sidebarCollapsed && (
                   <button
                     type="button"
-                    className={`flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors ${
-                      boardView === 'whiteboard'
-                        ? 'bg-foreground text-background'
-                        : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
-                    }`}
-                    onClick={() => handleBoardViewChange('whiteboard')}
-                    title="Whiteboard"
+                    className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                    onClick={() => setSidebarCollapsed(false)}
+                    title="Expand sidebar"
                   >
-                    <Presentation className="h-3.5 w-3.5" />
-                    Whiteboard
+                    <PanelLeftOpen className="h-4 w-4" />
                   </button>
+                )}
+                {isSettingsRoute && sidebarCollapsed && (
                   <button
                     type="button"
-                    className={`flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors ${
-                      boardView === 'tabs'
-                        ? 'bg-foreground text-background'
-                        : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
-                    }`}
-                    onClick={() => handleBoardViewChange('tabs')}
-                    title="Tabs"
+                    className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
+                    onClick={() => navigate('/')}
+                    title="Back"
                   >
-                    <PanelTop className="h-3.5 w-3.5" />
-                    Tabs
+                    <ArrowLeft className="h-4 w-4" />
                   </button>
-                  <button
-                    type="button"
-                    className={`flex h-7 items-center justify-center gap-1.5 rounded-md px-2.5 text-[11px] font-medium transition-colors ${
-                      boardView === 'document'
-                        ? 'bg-foreground text-background'
-                        : 'text-muted-foreground hover:bg-muted/70 hover:text-foreground'
-                    }`}
-                    onClick={() => handleBoardViewChange('document')}
-                    title="Notebook"
-                  >
-                    <NotebookPen className="h-3.5 w-3.5" />
-                    Notebook
-                  </button>
-                </div>
+                )}
+                <p className="min-w-0 truncate text-sm font-semibold">
+                  {isSettingsRoute ? 'Settings' : workspaceLoading ? 'Loading...' : activeBoard?.name ?? 'Select a board'}
+                </p>
               </div>
-            )}
-          </div>
+              {!isSettingsRoute && activeBoardId && (
+                <div className="no-drag flex shrink-0 items-center">
+                  {renderBoardViewSwitcher('flex h-8 items-center gap-2 rounded-xl border border-border/40 bg-background/60 px-3 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-accent/60')}
+                </div>
+              )}
+            </div>
+          )}
           {isSettingsRoute && (
             <SettingsPage
               activeSection={settingsSection}
@@ -4404,6 +4491,23 @@ function BrowserPageInner(): React.ReactElement {
 	              terminalNodes={terminalNodes}
 	              fileNodes={fileNodes}
 	              activeBoardId={activeBoardId}
+	              tabBarLeading={
+	                sidebarCollapsed ? (
+	                  <button
+	                    type="button"
+	                    className="no-drag rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+	                    onClick={() => setSidebarCollapsed(false)}
+	                    title="Expand sidebar"
+	                  >
+	                    <PanelLeftOpen className="h-4 w-4" />
+	                  </button>
+	                ) : undefined
+	              }
+	              tabBarTrailing={
+	                activeBoardId
+	                  ? renderBoardViewSwitcher('no-drag flex h-7 items-center gap-2 rounded-md border border-border/40 bg-background/80 px-2.5 text-[11px] font-medium text-foreground shadow-sm transition-colors hover:bg-accent/60')
+	                  : undefined
+	              }
 	              preferredOrderIds={activeBoardId ? (boardItemOrderMap.get(activeBoardId) ?? []) : []}
 	              pendingSelectId={
 	                pendingTabSelect?.boardId === activeBoardId
@@ -4754,6 +4858,51 @@ function BrowserPageInner(): React.ReactElement {
           <button
             className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
             onClick={() => void handleBoardItemDelete()}
+          >
+            <Trash2 className="h-4 w-4" />
+            Delete
+          </button>
+        </div>
+      )}
+
+      {folderContextMenu && (
+        <div
+          ref={folderContextMenuRef}
+          className="fixed z-50 min-w-[170px] rounded-md border border-border/40 bg-popover p-1 shadow-sm animate-in fade-in-0 zoom-in-95"
+          style={{
+            left: folderContextMenuPosition?.x ?? folderContextMenu.x,
+            top: folderContextMenuPosition?.y ?? folderContextMenu.y
+          }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+            onClick={(event) => {
+              openFolderIconPicker(folderContextMenu.folderId, event.currentTarget)
+              setFolderContextMenu(null)
+            }}
+          >
+            <Folder className="h-4 w-4" />
+            Change Icon
+          </button>
+          <button
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+            onClick={() => {
+              void handleCreateBoard(folderContextMenu.folderId)
+              setFolderContextMenu(null)
+            }}
+          >
+            <NotebookPen className="h-4 w-4" />
+            Add New Board
+          </button>
+          <div className="my-1 h-px bg-border/40" />
+          <button
+            className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
+            onClick={() => {
+              void handleDeleteFolder(folderContextMenu.folderId, folderContextMenu.folderName)
+              setFolderContextMenu(null)
+            }}
           >
             <Trash2 className="h-4 w-4" />
             Delete
