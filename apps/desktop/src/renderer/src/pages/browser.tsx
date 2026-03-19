@@ -4387,7 +4387,7 @@ function BrowserPageInner(): React.ReactElement {
       >
           <div className={`drag-region shrink-0 ${sidebarCollapsed ? 'sidebar-drag-region' : 'content-drag-region'}`} />
           {!isCompactTabsView && (
-            <div className="drag-region flex items-center justify-between gap-2 border-b border-border/40 pl-4 pr-3 py-1.5">
+            <div className="drag-region flex items-center justify-between gap-2 border-b border-border/40 pl-3 pr-2 py-1.5">
               <div className="flex items-center gap-2 min-w-0">
                 {sidebarCollapsed && (
                   <button
@@ -4415,7 +4415,7 @@ function BrowserPageInner(): React.ReactElement {
               </div>
               {!isSettingsRoute && activeBoardId && (
                 <div className="no-drag flex shrink-0 items-center">
-                  {renderBoardViewSwitcher('flex h-8 items-center gap-2 rounded-xl border border-border/40 bg-background/60 px-3 text-xs font-medium text-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-accent/60')}
+                  {renderBoardViewSwitcher('flex h-7 items-center gap-2 rounded-md border border-border/40 bg-background/80 px-2.5 text-[11px] font-medium text-foreground shadow-sm transition-colors hover:bg-accent/60')}
                 </div>
               )}
             </div>

@@ -431,7 +431,7 @@ export function BoardTabsView({
   }, [])
 
   const tabBar = (
-    <div className="flex items-end gap-2 border-b border-border/40 bg-muted/20 px-1 pt-1">
+    <div className="flex items-end gap-2 border-b border-border/40 bg-muted/20 pl-3 pr-2 pt-1">
       {tabBarLeading ? (
         <div className="flex shrink-0 items-center self-center pb-1">
           {tabBarLeading}
@@ -462,10 +462,10 @@ export function BoardTabsView({
               onContextMenu={(event) => {
                 onItemContextMenu?.(event, { id, kind: item.kind })
               }}
-              className={`group relative flex max-w-[200px] items-center gap-1.5 rounded-t-md px-3 py-1.5 text-xs transition-colors ${
+              className={`group relative flex max-w-[200px] items-center gap-1.5 rounded-t-lg border -mb-px px-3 py-1.5 text-xs transition-colors ${
                 isSelected
-                  ? 'bg-background border border-border/60 border-b-background -mb-px z-10 font-medium'
-                  : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                  ? 'bg-background border-border/60 border-b-background z-10 font-medium'
+                  : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
               } ${isDragging ? 'opacity-40' : ''}`}
               onClick={() => handleSelectTab(id)}
               onDoubleClick={() => {
@@ -514,7 +514,7 @@ export function BoardTabsView({
           <button
             ref={newTabBtnRef}
             type="button"
-            className="flex items-center justify-center rounded-t-md px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
+            className="flex items-center justify-center rounded-t-lg px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
             onClick={() => {
               setNewTabMenuOpen(false)
               void handleCreateBrowserTab()
