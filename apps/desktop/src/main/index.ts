@@ -211,15 +211,28 @@ function setupAutoUpdater(): void {
     }
   })
 
+  autoUpdater.on('update-not-available', () => {
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('updater:update-not-available')
+    }
+  })
+
   autoUpdater.on('error', (error) => {
     console.warn('[updater] Error checking for updates:', error.message)
+    const windows = BrowserWindow.getAllWindows()
+    for (const win of windows) {
+      win.webContents.send('updater:error', error.message)
+    }
   })
 
   ipcMain.handle('app:setBadgeCount', (_e: Electron.IpcMainInvokeEvent, count: number) => {
     app.setBadgeCount(count)
   })
 
-  ipcMain.handle('updater:check', () => autoUpdater.checkForUpdates())
+  ipcMain.handle('updater:check', async () => {
+    await autoUpdater.checkForUpdates()
+  })
   ipcMain.handle('updater:download', () => autoUpdater.downloadUpdate())
   ipcMain.handle('updater:install', () => autoUpdater.quitAndInstall())
 }

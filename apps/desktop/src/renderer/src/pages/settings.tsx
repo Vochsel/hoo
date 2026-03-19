@@ -245,17 +245,19 @@ export function SettingsPage({
     const unsub3 = window.api.updater.onUpdateDownloaded(() => {
       setUpdateState({ status: 'ready' })
     })
-    return () => { unsub1(); unsub2(); unsub3() }
+    const unsub4 = window.api.updater.onUpdateNotAvailable(() => {
+      setUpdateState({ status: 'up-to-date' })
+    })
+    const unsub5 = window.api.updater.onError((message) => {
+      setUpdateState({ status: 'error', message })
+    })
+    return () => { unsub1(); unsub2(); unsub3(); unsub4(); unsub5() }
   }, [])
 
   const checkForUpdates = useCallback(async () => {
     setUpdateState({ status: 'checking' })
     try {
       await window.api.updater.check()
-      // If update-available event hasn't changed state after check resolves, we're up to date
-      setTimeout(() => {
-        setUpdateState((prev) => prev.status === 'checking' ? { status: 'up-to-date' } : prev)
-      }, 2000)
     } catch (err) {
       setUpdateState({ status: 'error', message: err instanceof Error ? err.message : String(err) })
     }
