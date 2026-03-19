@@ -360,10 +360,20 @@ function BrowserPageInner(): React.ReactElement {
     setBoardActiveView
   } = useWorkspace()
   const activeBoardId = workspace?.activeBoardId ?? null
-  const { tabs, refresh, createTab, updateTab, deleteTab, saveOrder: saveTabOrder, savePositions: saveTabPositions } = useBrowserTabs(activeBoardId)
+  const {
+    tabs,
+    loading: tabsLoading,
+    refresh,
+    createTab,
+    updateTab,
+    deleteTab,
+    saveOrder: saveTabOrder,
+    savePositions: saveTabPositions
+  } = useBrowserTabs(activeBoardId)
   const { getSetting, setSetting, loading: settingsLoading } = useSettings()
   const {
     graphNodes: gNodes,
+    loading: graphNodesLoading,
     createNode,
     updateNode,
     deleteNode,
@@ -698,6 +708,28 @@ function BrowserPageInner(): React.ReactElement {
     return map
   }, [workspace])
 
+  const allKnownBrowserTabs = useMemo(() => {
+    const tabsById = new Map<string, BrowserTab>()
+    for (const boardTabs of boardTabsMap.values()) {
+      for (const tab of boardTabs) {
+        tabsById.set(tab.id, tab)
+      }
+    }
+
+    const activeBoardTabs =
+      activeBoardId == null
+        ? []
+        : tabsLoading
+          ? (boardTabsMap.get(activeBoardId) ?? [])
+          : tabs
+
+    for (const tab of activeBoardTabs) {
+      tabsById.set(tab.id, tab)
+    }
+
+    return Array.from(tabsById.values())
+  }, [activeBoardId, boardTabsMap, tabs, tabsLoading])
+
   useEffect(() => {
     if (!workspace) return
     let cancelled = false
@@ -770,10 +802,24 @@ function BrowserPageInner(): React.ReactElement {
     return () => { cancelled = true }
   }, [workspace, activeBoardId])
 
+  // Keep active board's browser-tab entries in sync once that board's tabs are loaded.
+  useEffect(() => {
+    if (!activeBoardId || tabsLoading) return
+    setBoardTabsMap((prev) => {
+      const next = new Map(prev)
+      if (tabs.length > 0) {
+        next.set(activeBoardId, tabs)
+      } else {
+        next.delete(activeBoardId)
+      }
+      return next
+    })
+  }, [activeBoardId, tabs, tabsLoading])
+
   // Keep active board's terminal and file entries in sync from the already-loaded gNodes
   // (no IPC, no async — just a derived update).
   useEffect(() => {
-    if (!activeBoardId) return
+    if (!activeBoardId || graphNodesLoading) return
     const terminals = gNodes.filter((n) => n.nodeType === 'terminal')
     setBoardTerminalsMap((prev) => {
       const next = new Map(prev)
@@ -794,7 +840,7 @@ function BrowserPageInner(): React.ReactElement {
       }
       return next
     })
-  }, [activeBoardId, gNodes])
+  }, [activeBoardId, gNodes, graphNodesLoading])
 
   const toggleBoardCollapsed = useCallback((boardId: string) => {
     setCollapsedBoards((prev) => {
@@ -2612,6 +2658,7 @@ function BrowserPageInner(): React.ReactElement {
         setPendingTabSelect(null)
       }
       if (!activeBoardId) return
+      if (itemId == null && (tabsLoading || graphNodesLoading)) return
       void setSetting('lastSelectedBoardItems', (prevValue) => {
         const next = { ...((prevValue as Record<string, string> | null) ?? {}) }
         if (itemId) {
@@ -2622,7 +2669,7 @@ function BrowserPageInner(): React.ReactElement {
         return next
       })
     },
-    [activeBoardId, setSetting]
+    [activeBoardId, graphNodesLoading, setSetting, tabsLoading]
   )
 
 
@@ -3145,11 +3192,46 @@ function BrowserPageInner(): React.ReactElement {
     })
   }, [activeBoardId, boardItemOrderMap, createTab, fileNodes, requestTabSelect, saveBoardItemOrder, tabs, terminalNodes])
 
+  const getSidebarBoardCollections = useCallback(
+    (boardId: string): { tabs: BrowserTab[]; terminalNodes: GraphNode[]; fileNodes: GraphNode[] } => {
+      const cachedTabs = boardTabsMap.get(boardId) ?? []
+      const cachedTerminals = boardTerminalsMap.get(boardId) ?? []
+      const cachedFiles = boardFilesMap.get(boardId) ?? []
+
+      if (boardId !== activeBoardId) {
+        return {
+          tabs: cachedTabs,
+          terminalNodes: cachedTerminals,
+          fileNodes: cachedFiles
+        }
+      }
+
+      return {
+        tabs: tabsLoading ? cachedTabs : tabs,
+        terminalNodes: graphNodesLoading ? cachedTerminals : terminalNodes,
+        fileNodes: graphNodesLoading ? cachedFiles : fileNodes
+      }
+    },
+    [
+      activeBoardId,
+      boardFilesMap,
+      boardTabsMap,
+      boardTerminalsMap,
+      fileNodes,
+      graphNodesLoading,
+      tabs,
+      tabsLoading,
+      terminalNodes
+    ]
+  )
+
   const getOrderedSidebarBoardItems = useCallback(
     (boardId: string): SidebarBoardItem[] => {
-      const boardTabs = boardId === activeBoardId ? tabs : (boardTabsMap.get(boardId) ?? [])
-      const boardTerminals = boardId === activeBoardId ? terminalNodes : (boardTerminalsMap.get(boardId) ?? [])
-      const boardFiles = boardId === activeBoardId ? fileNodes : (boardFilesMap.get(boardId) ?? [])
+      const {
+        tabs: boardTabs,
+        terminalNodes: boardTerminals,
+        fileNodes: boardFiles
+      } = getSidebarBoardCollections(boardId)
       const itemsById = new Map<string, SidebarBoardItem>()
       for (const tab of boardTabs) {
         itemsById.set(tab.id, { id: tab.id, kind: 'browser', tab })
@@ -3186,7 +3268,16 @@ function BrowserPageInner(): React.ReactElement {
       }
       return orderedItems
     },
-    [activeBoardId, boardFilesMap, boardItemOrderMap, boardTabsMap, boardTerminalsMap, fileNodes, tabs, terminalNodes]
+    [boardItemOrderMap, getSidebarBoardCollections]
+  )
+
+  const activeBoardTabsViewCollections = useMemo(
+    () => (
+      activeBoardId
+        ? getSidebarBoardCollections(activeBoardId)
+        : { tabs, terminalNodes, fileNodes }
+    ),
+    [activeBoardId, fileNodes, getSidebarBoardCollections, tabs, terminalNodes]
   )
 
   const renderSidebarBoardItems = useCallback(
@@ -3389,8 +3480,12 @@ function BrowserPageInner(): React.ReactElement {
   const handleBoardItemRename = useCallback(() => {
     if (!boardItemMenu) return
     const { itemId, kind, boardId } = boardItemMenu
+    const {
+      tabs: sourceTabs,
+      terminalNodes: sourceTerminalNodes,
+      fileNodes: sourceFileNodes
+    } = getSidebarBoardCollections(boardId)
     if (kind === 'browser') {
-      const sourceTabs = boardId === activeBoardId ? tabs : (boardTabsMap.get(boardId) ?? [])
       const tab = sourceTabs.find((entry) => entry.id === itemId)
       if (tab) {
         const currentName = tab.title?.trim() || tab.url || 'New Tab'
@@ -3401,9 +3496,7 @@ function BrowserPageInner(): React.ReactElement {
       return
     }
 
-    const sourceNodes = boardId === activeBoardId
-      ? (kind === 'terminal' ? terminalNodes : fileNodes)
-      : ((kind === 'terminal' ? boardTerminalsMap.get(boardId) : boardFilesMap.get(boardId)) ?? [])
+    const sourceNodes = kind === 'terminal' ? sourceTerminalNodes : sourceFileNodes
     const node = sourceNodes.find((entry) => entry.id === itemId)
     if (node) {
       const fallbackName = kind === 'terminal' ? 'Terminal' : 'File'
@@ -3412,7 +3505,7 @@ function BrowserPageInner(): React.ReactElement {
       setRenameDialogValue(currentName)
     }
     setBoardItemMenu(null)
-  }, [activeBoardId, boardItemMenu, boardTabsMap, boardTerminalsMap, boardFilesMap, tabs, terminalNodes, fileNodes])
+  }, [boardItemMenu, getSidebarBoardCollections])
 
   const handleBoardItemReload = useCallback(() => {
     if (!boardItemMenu) return
@@ -4672,82 +4765,83 @@ function BrowserPageInner(): React.ReactElement {
           </FlowDirectionContext.Provider>
           )}
           {!isSettingsRoute && boardView === 'tabs' && (
-	            <BoardTabsView
-	              key={activeBoardId}
-	              tabs={tabs}
-	              terminalNodes={terminalNodes}
-	              fileNodes={fileNodes}
-	              activeBoardId={activeBoardId}
-	              inlineWithTrafficLights={sidebarCollapsed}
-	              tabBarLeading={
-	                sidebarCollapsed ? (
-	                  <button
-	                    type="button"
-	                    className="no-drag rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
-	                    onClick={() => setSidebarCollapsed(false)}
-	                    title="Expand sidebar"
-	                  >
-	                    <PanelLeftOpen className="h-4 w-4" />
-	                  </button>
-	                ) : undefined
-	              }
-	              tabBarTrailing={
-	                activeBoardId
-	                  ? renderBoardViewSwitcher('no-drag flex h-7 items-center gap-2 rounded-md border border-border/40 bg-background/80 px-2.5 text-[11px] font-medium text-foreground shadow-sm transition-colors hover:bg-accent/60')
-	                  : undefined
-	              }
-	              preferredOrderIds={activeBoardId ? (boardItemOrderMap.get(activeBoardId) ?? []) : []}
-	              pendingSelectId={
-	                pendingTabSelect?.boardId === activeBoardId
-	                  ? pendingTabSelect.itemId
-	                  : restoredBoardItemId
-	              }
-	              pendingSelectNonce={pendingTabSelect?.boardId === activeBoardId ? pendingTabSelect.nonce : 0}
-	              onTabUpdate={updateTab}
-	              onSaveViewOrder={async (orderedIds) => {
-	                if (!activeBoardId) return
-	                await saveBoardItemOrder(activeBoardId, orderedIds)
-	              }}
-	              onSaveTabOrder={saveTabOrder}
-	              onSaveNodeOrder={saveNodeOrder}
-	              onCreateTab={() => handleAddTab()}
-	              onCreateFile={() => handleAddFileTab()}
-	              onCreateAgent={async () => {
-	                if (!activeBoardId) return undefined
-	                try {
-	                  const agentId = getSetting('defaultAgent')
-	                  const command = getAgentCommand(agentId, workspace?.rootDir, workspaceAgentCommandOverrides)
-	                  const agentLabel = CLI_AGENTS.find((a) => a.id === agentId)?.label ?? 'Agent'
-	                  const node = await createNode({
-	                    nodeType: 'terminal',
-	                    label: agentLabel,
-	                    config: JSON.stringify({ command }),
-	                    flowX: 0,
-	                    flowY: 0
-	                  })
-	                  return node.id
-	                } catch (error) {
-	                  const message = error instanceof Error ? error.message : String(error)
-	                  console.error(`[browser] failed to create agent terminal:`, message)
-	                  return undefined
-	                }
-	              }}
-	              onCreateTerminal={async () => {
-	                if (!activeBoardId) return undefined
-	                try {
-	                  const node = await createNode({
-	                    nodeType: 'terminal',
-	                    label: 'Terminal',
-	                    flowX: 0,
-	                    flowY: 0
-	                  })
-	                  return node.id
-	                } catch (error) {
-	                  const message = error instanceof Error ? error.message : String(error)
-	                  console.error(`[browser] failed to create terminal:`, message)
-	                  return undefined
-	                }
-	              }}
+            <BoardTabsView
+              tabs={activeBoardTabsViewCollections.tabs}
+              allBrowserTabs={allKnownBrowserTabs}
+              terminalNodes={activeBoardTabsViewCollections.terminalNodes}
+              fileNodes={activeBoardTabsViewCollections.fileNodes}
+              loading={tabsLoading || graphNodesLoading}
+              activeBoardId={activeBoardId}
+              inlineWithTrafficLights={sidebarCollapsed}
+              tabBarLeading={
+                sidebarCollapsed ? (
+                  <button
+                    type="button"
+                    className="no-drag rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                    onClick={() => setSidebarCollapsed(false)}
+                    title="Expand sidebar"
+                  >
+                    <PanelLeftOpen className="h-4 w-4" />
+                  </button>
+                ) : undefined
+              }
+              tabBarTrailing={
+                activeBoardId
+                  ? renderBoardViewSwitcher('no-drag flex h-7 items-center gap-2 rounded-md border border-border/40 bg-background/80 px-2.5 text-[11px] font-medium text-foreground shadow-sm transition-colors hover:bg-accent/60')
+                  : undefined
+              }
+              preferredOrderIds={activeBoardId ? (boardItemOrderMap.get(activeBoardId) ?? []) : []}
+              pendingSelectId={
+                pendingTabSelect?.boardId === activeBoardId
+                  ? pendingTabSelect.itemId
+                  : restoredBoardItemId
+              }
+              pendingSelectNonce={pendingTabSelect?.boardId === activeBoardId ? pendingTabSelect.nonce : 0}
+              onTabUpdate={updateTab}
+              onSaveViewOrder={async (orderedIds) => {
+                if (!activeBoardId) return
+                await saveBoardItemOrder(activeBoardId, orderedIds)
+              }}
+              onSaveTabOrder={saveTabOrder}
+              onSaveNodeOrder={saveNodeOrder}
+              onCreateTab={() => handleAddTab()}
+              onCreateFile={() => handleAddFileTab()}
+              onCreateAgent={async () => {
+                if (!activeBoardId) return undefined
+                try {
+                  const agentId = getSetting('defaultAgent')
+                  const command = getAgentCommand(agentId, workspace?.rootDir, workspaceAgentCommandOverrides)
+                  const agentLabel = CLI_AGENTS.find((a) => a.id === agentId)?.label ?? 'Agent'
+                  const node = await createNode({
+                    nodeType: 'terminal',
+                    label: agentLabel,
+                    config: JSON.stringify({ command }),
+                    flowX: 0,
+                    flowY: 0
+                  })
+                  return node.id
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error)
+                  console.error(`[browser] failed to create agent terminal:`, message)
+                  return undefined
+                }
+              }}
+              onCreateTerminal={async () => {
+                if (!activeBoardId) return undefined
+                try {
+                  const node = await createNode({
+                    nodeType: 'terminal',
+                    label: 'Terminal',
+                    flowX: 0,
+                    flowY: 0
+                  })
+                  return node.id
+                } catch (error) {
+                  const message = error instanceof Error ? error.message : String(error)
+                  console.error(`[browser] failed to create terminal:`, message)
+                  return undefined
+                }
+              }}
               onDeleteTab={(id) => void deleteTab(id)}
               onDeleteNode={(id) => {
                 const gn = gNodes.find((n) => n.id === id)
@@ -4762,12 +4856,12 @@ function BrowserPageInner(): React.ReactElement {
                 if (!activeBoardId) return
                 handleBoardItemContextMenu(event, item.id, item.kind, activeBoardId, 'tab-strip')
               }}
-	              workspaceRootDir={workspace?.rootDir}
-	              boardRootDir={boardRootDir}
-	              pendingReloadId={pendingTabReload?.itemId ?? null}
-	              pendingReloadNonce={pendingTabReload?.nonce}
-	              onActiveItemChange={handleActiveBoardItemChange}
-	            />
+              workspaceRootDir={workspace?.rootDir}
+              boardRootDir={boardRootDir}
+              pendingReloadId={pendingTabReload?.itemId ?? null}
+              pendingReloadNonce={pendingTabReload?.nonce}
+              onActiveItemChange={handleActiveBoardItemChange}
+            />
           )}
           {!isSettingsRoute && boardView === 'document' && (
             <BoardDocumentView

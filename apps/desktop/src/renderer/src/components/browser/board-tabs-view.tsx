@@ -20,8 +20,10 @@ export type BoardTabsItemKind = TabItem['kind']
 
 interface BoardTabsViewProps {
   tabs: BrowserTab[]
+  allBrowserTabs?: BrowserTab[]
   terminalNodes: GraphNode[]
   fileNodes: GraphNode[]
+  loading?: boolean
   activeBoardId: string | null
   inlineWithTrafficLights?: boolean
   tabBarLeading?: React.ReactNode
@@ -113,8 +115,10 @@ function buildOrderedIds(
 
 export function BoardTabsView({
   tabs,
+  allBrowserTabs,
   terminalNodes,
   fileNodes,
+  loading = false,
   activeBoardId,
   inlineWithTrafficLights = false,
   tabBarLeading,
@@ -153,6 +157,13 @@ export function BoardTabsView({
 
   // Nonce-based pending selection tracking (handles same-board re-selections)
   const lastProcessedNonce = useRef(pendingSelectNonce ?? 0)
+  const lastActiveBoardIdRef = useRef(activeBoardId)
+  useEffect(() => {
+    if (activeBoardId === lastActiveBoardIdRef.current) return
+    lastActiveBoardIdRef.current = activeBoardId
+    setSelectedId(pendingSelectId ?? null)
+  }, [activeBoardId, pendingSelectId])
+
   useEffect(() => {
     if (pendingSelectId != null && pendingSelectNonce != null
         && pendingSelectNonce !== lastProcessedNonce.current) {
@@ -160,11 +171,6 @@ export function BoardTabsView({
       lastProcessedNonce.current = pendingSelectNonce
     }
   }, [pendingSelectId, pendingSelectNonce])
-
-  // Notify parent of active item changes
-  useEffect(() => {
-    onActiveItemChange?.(selectedId)
-  }, [selectedId, onActiveItemChange])
 
   // Build an unordered map of all tab items keyed by id
   const itemsById = useMemo(() => {
@@ -183,6 +189,13 @@ export function BoardTabsView({
   const [terminalInstanceRevisionById, setTerminalInstanceRevisionById] = useState<Map<string, number>>(new Map())
   const cachedBrowserTabIdsRef = useRef<string[]>([])
   const lastProcessedReloadNonce = useRef(pendingReloadNonce ?? 0)
+  const availableBrowserTabs = allBrowserTabs ?? tabs
+
+  // Notify parent only about items that exist in the current board's item set.
+  const activeItemId = selectedId != null && itemsById.has(selectedId) ? selectedId : null
+  useEffect(() => {
+    onActiveItemChange?.(activeItemId)
+  }, [activeItemId, onActiveItemChange])
 
   // Sync orderedIds from the saved mixed order, then append any new items.
   useEffect(() => {
@@ -302,7 +315,7 @@ export function BoardTabsView({
   }, [selectedBrowserTab, cachedBrowserTabIds])
 
   useEffect(() => {
-    const activeBrowserIds = new Set(tabs.map((tab) => tab.id))
+    const activeBrowserIds = new Set(availableBrowserTabs.map((tab) => tab.id))
     setCachedBrowserTabIds((prev) => {
       const next = prev.filter((id) => activeBrowserIds.has(id))
       return areStringArraysEqual(prev, next) ? prev : next
@@ -311,7 +324,7 @@ export function BoardTabsView({
       const next = prev.filter((id) => activeBrowserIds.has(id))
       return areStringArraysEqual(prev, next) ? prev : next
     })
-  }, [tabs])
+  }, [availableBrowserTabs])
 
   useEffect(() => {
     if (!pendingReloadId || pendingReloadNonce == null) return
@@ -354,9 +367,9 @@ export function BoardTabsView({
 
   const browserTabsById = useMemo(() => {
     const map = new Map<string, BrowserTab>()
-    for (const tab of tabs) map.set(tab.id, tab)
+    for (const tab of availableBrowserTabs) map.set(tab.id, tab)
     return map
-  }, [tabs])
+  }, [availableBrowserTabs])
 
   const mountedBrowserTabs = useMemo(() => {
     return mountedBrowserTabIds
@@ -364,13 +377,40 @@ export function BoardTabsView({
       .filter((tab): tab is BrowserTab => tab != null)
   }, [mountedBrowserTabIds, browserTabsById])
 
-  // Auto-select the first available item if the restored/pending selection no longer exists.
+  const firstAvailableItemId = useMemo(() => {
+    const first = allItems[0]
+    if (!first) return null
+    return first.kind === 'browser' ? first.tab.id : first.node.id
+  }, [allItems])
+  const shouldWaitForPendingSelection =
+    pendingSelectId != null &&
+    !itemsById.has(pendingSelectId) &&
+    loading
+
+  // Keep selection stable while a requested item is still loading, then fall
+  // back only once the current board's items are ready.
   useEffect(() => {
-    if (selectedId && !selectedItem && allItems.length > 0 && !itemsById.has(selectedId)) {
-      const first = allItems[0]
-      setSelectedId(first.kind === 'browser' ? first.tab.id : first.node.id)
+    if (selectedId == null) {
+      if (pendingSelectId != null && itemsById.has(pendingSelectId)) {
+        setSelectedId(pendingSelectId)
+        return
+      }
+      if (shouldWaitForPendingSelection || firstAvailableItemId == null) return
+      setSelectedId(firstAvailableItemId)
+      return
     }
-  }, [selectedId, selectedItem, allItems, itemsById])
+
+    if (selectedItem || itemsById.has(selectedId)) return
+    if (shouldWaitForPendingSelection && pendingSelectId === selectedId) return
+    setSelectedId(firstAvailableItemId)
+  }, [
+    firstAvailableItemId,
+    itemsById,
+    pendingSelectId,
+    selectedId,
+    selectedItem,
+    shouldWaitForPendingSelection
+  ])
 
   const handleSelectTab = useCallback((id: string) => {
     setSelectedId(id)
@@ -652,24 +692,7 @@ export function BoardTabsView({
     </div>
   )
 
-  if (allItems.length === 0) {
-    return (
-      <div className="flex flex-1 flex-col min-h-0">
-        {tabBar}
-        <div className="flex flex-1 flex-col items-center justify-center gap-3 text-muted-foreground">
-          <p className="text-sm">No tabs or terminals yet</p>
-          <button
-            type="button"
-            className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
-            onClick={() => void handleCreateBrowserTab()}
-          >
-            <Plus className="h-3.5 w-3.5" />
-            New browser tab
-          </button>
-        </div>
-      </div>
-    )
-  }
+  const isLoadingState = loading || shouldWaitForPendingSelection
 
   return (
     <div className="flex flex-1 flex-col min-h-0">
@@ -724,8 +747,23 @@ export function BoardTabsView({
             />
           </div>
         )}
-        {!selectedItem && (
-          <div className="absolute inset-0 flex items-center justify-center text-sm text-muted-foreground">
+        {!selectedItem && allItems.length === 0 && (
+          <div className="absolute inset-0 z-20 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+            <p className="text-sm">{isLoadingState ? 'Loading board items...' : 'No tabs or terminals yet'}</p>
+            {!isLoadingState && (
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs font-medium hover:bg-muted transition-colors"
+                onClick={() => void handleCreateBrowserTab()}
+              >
+                <Plus className="h-3.5 w-3.5" />
+                New browser tab
+              </button>
+            )}
+          </div>
+        )}
+        {!selectedItem && allItems.length > 0 && (
+          <div className="absolute inset-0 z-20 flex items-center justify-center text-sm text-muted-foreground">
             Select a tab to view
           </div>
         )}

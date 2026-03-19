@@ -86,6 +86,7 @@ export function useBrowserTabs(boardId: string | null): {
 } {
   const [tabs, setTabs] = useState<BrowserTab[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadedBoardId, setLoadedBoardId] = useState<string | null>(boardId)
   const boardIdRef = useRef<string | null>(boardId)
   const refreshVersionRef = useRef(0)
 
@@ -100,6 +101,7 @@ export function useBrowserTabs(boardId: string | null): {
     if (!targetBoardId) {
       if (refreshVersion === refreshVersionRef.current) {
         setTabs([])
+        setLoadedBoardId(null)
         setLoading(false)
       }
       return
@@ -111,6 +113,7 @@ export function useBrowserTabs(boardId: string | null): {
       if (refreshVersion !== refreshVersionRef.current) return
       if (boardIdRef.current !== targetBoardId) return
       setTabs(result)
+      setLoadedBoardId(targetBoardId)
     } finally {
       if (refreshVersion === refreshVersionRef.current && boardIdRef.current === targetBoardId) {
         setLoading(false)
@@ -130,6 +133,7 @@ export function useBrowserTabs(boardId: string | null): {
       }
       const tab = await window.api.browserTabs.create(data ?? {}, targetBoardId)
       if (boardIdRef.current === targetBoardId) {
+        setLoadedBoardId(targetBoardId)
         setTabs((prev) => [...prev, tab])
       }
       return tab
@@ -147,6 +151,7 @@ export function useBrowserTabs(boardId: string | null): {
       if (!tab) {
         const latest = await window.api.browserTabs.list(targetBoardId)
         if (boardIdRef.current === targetBoardId) {
+          setLoadedBoardId(targetBoardId)
           setTabs(latest)
         }
         const fallback = latest.find((entry) => entry.id === id)
@@ -156,6 +161,7 @@ export function useBrowserTabs(boardId: string | null): {
         return fallback
       }
       if (boardIdRef.current === targetBoardId) {
+        setLoadedBoardId(targetBoardId)
         setTabs((prev) => prev.map((entry) => (entry.id === id ? tab : entry)))
       }
       return tab
@@ -169,6 +175,7 @@ export function useBrowserTabs(boardId: string | null): {
       if (!targetBoardId) return
       await window.api.browserTabs.delete(id, targetBoardId)
       if (boardIdRef.current === targetBoardId) {
+        setLoadedBoardId(targetBoardId)
         setTabs((prev) => prev.filter((tab) => tab.id !== id))
       }
     },
@@ -180,6 +187,7 @@ export function useBrowserTabs(boardId: string | null): {
       const targetBoardId = boardId
       if (!targetBoardId) return
       if (boardIdRef.current === targetBoardId) {
+        setLoadedBoardId(targetBoardId)
         setTabs((prev) => orderTabsByIds(prev, orderedIds))
       }
       await window.api.browserTabs.saveOrder(orderedIds, targetBoardId)
@@ -195,6 +203,7 @@ export function useBrowserTabs(boardId: string | null): {
       if (boardIdRef.current !== targetBoardId || positions.length === 0) return
       const positionsById = new Map(positions.map((entry) => [entry.id, entry]))
       const updatedAt = new Date().toISOString()
+      setLoadedBoardId(targetBoardId)
       setTabs((prev) =>
         prev.map((tab) => {
           const nextPosition = positionsById.get(tab.id)
@@ -211,7 +220,10 @@ export function useBrowserTabs(boardId: string | null): {
     [boardId]
   )
 
-  return { tabs, loading, refresh, createTab, updateTab, deleteTab, saveOrder, savePositions }
+  const visibleTabs = loadedBoardId === boardId ? tabs : []
+  const visibleLoading = loading || loadedBoardId !== boardId
+
+  return { tabs: visibleTabs, loading: visibleLoading, refresh, createTab, updateTab, deleteTab, saveOrder, savePositions }
 }
 
 export function useBrowserTabChat(tabId: string | null, boardId: string | null): {

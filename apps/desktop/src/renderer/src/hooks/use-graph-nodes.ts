@@ -39,6 +39,7 @@ export function useGraphNodes(boardId: string | null): {
 } {
   const [graphNodes, setGraphNodes] = useState<GraphNode[]>([])
   const [loading, setLoading] = useState(true)
+  const [loadedBoardId, setLoadedBoardId] = useState<string | null>(boardId)
   const boardIdRef = useRef<string | null>(boardId)
   const refreshVersionRef = useRef(0)
 
@@ -53,6 +54,7 @@ export function useGraphNodes(boardId: string | null): {
     if (!targetBoardId) {
       if (refreshVersion === refreshVersionRef.current) {
         setGraphNodes([])
+        setLoadedBoardId(null)
         setLoading(false)
       }
       return
@@ -64,6 +66,7 @@ export function useGraphNodes(boardId: string | null): {
       if (refreshVersion !== refreshVersionRef.current) return
       if (boardIdRef.current !== targetBoardId) return
       setGraphNodes(result)
+      setLoadedBoardId(targetBoardId)
     } finally {
       if (refreshVersion === refreshVersionRef.current && boardIdRef.current === targetBoardId) {
         setLoading(false)
@@ -89,6 +92,7 @@ export function useGraphNodes(boardId: string | null): {
       }
       const node = await window.api.graphNodes.create(data, targetBoardId)
       if (boardIdRef.current === targetBoardId) {
+        setLoadedBoardId(targetBoardId)
         setGraphNodes((prev) => [...prev, node])
       }
       return node
@@ -106,6 +110,7 @@ export function useGraphNodes(boardId: string | null): {
       if (!node) {
         const latest = await window.api.graphNodes.list(targetBoardId)
         if (boardIdRef.current === targetBoardId) {
+          setLoadedBoardId(targetBoardId)
           setGraphNodes(latest)
         }
         const fallback = latest.find((entry) => entry.id === id)
@@ -115,6 +120,7 @@ export function useGraphNodes(boardId: string | null): {
         return fallback
       }
       if (boardIdRef.current === targetBoardId) {
+        setLoadedBoardId(targetBoardId)
         setGraphNodes((prev) => prev.map((entry) => (entry.id === id ? node : entry)))
       }
       return node
@@ -128,6 +134,7 @@ export function useGraphNodes(boardId: string | null): {
       if (!targetBoardId) return
       await window.api.graphNodes.delete(id, targetBoardId)
       if (boardIdRef.current === targetBoardId) {
+        setLoadedBoardId(targetBoardId)
         setGraphNodes((prev) => prev.filter((node) => node.id !== id))
       }
     },
@@ -139,6 +146,7 @@ export function useGraphNodes(boardId: string | null): {
       const targetBoardId = boardId
       if (!targetBoardId) return
       if (boardIdRef.current === targetBoardId) {
+        setLoadedBoardId(targetBoardId)
         setGraphNodes((prev) => orderNodesByIds(prev, orderedIds))
       }
       await window.api.graphNodes.saveOrder(orderedIds, targetBoardId)
@@ -154,6 +162,7 @@ export function useGraphNodes(boardId: string | null): {
       if (boardIdRef.current !== targetBoardId || positions.length === 0) return
       const positionsById = new Map(positions.map((entry) => [entry.id, entry]))
       const updatedAt = new Date().toISOString()
+      setLoadedBoardId(targetBoardId)
       setGraphNodes((prev) =>
         prev.map((node) => {
           const nextPosition = positionsById.get(node.id)
@@ -170,5 +179,17 @@ export function useGraphNodes(boardId: string | null): {
     [boardId]
   )
 
-  return { graphNodes, loading, refresh, createNode, updateNode, deleteNode, saveOrder, savePositions }
+  const visibleGraphNodes = loadedBoardId === boardId ? graphNodes : []
+  const visibleLoading = loading || loadedBoardId !== boardId
+
+  return {
+    graphNodes: visibleGraphNodes,
+    loading: visibleLoading,
+    refresh,
+    createNode,
+    updateNode,
+    deleteNode,
+    saveOrder,
+    savePositions
+  }
 }
