@@ -110,6 +110,9 @@ interface VillageState {
   persistedPlayerPos: PersistedPlayerPos | null
   persistPlayerPos: (pos: PersistedPlayerPos) => void
 
+  // Board items refresh (bumped when dialog closes to re-fetch screenshots)
+  boardItemsVersion: number
+
   folders: WorkspaceFolder[]
   boards: WorkspaceBoard[]
   onSelectBoard: (boardId: string) => void
@@ -161,6 +164,9 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
   const [grabbedObjectId, setGrabbedObjectId] = useState<string | null>(null)
   const villageDataRef = useRef<VillageData>({ objectPositions: {} })
 
+  // Board items version — bumped when dialog closes to trigger re-fetch of screenshots
+  const [boardItemsVersion, setBoardItemsVersion] = useState(0)
+
   // Persistent player position
   const [persistedPlayerPos, setPersistedPlayerPos] = useState<PersistedPlayerPos | null>(null)
   const playerPosSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -205,7 +211,11 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
     setActiveDialog({ kind, id, boardId })
   }, [])
 
-  const closeDialog = useCallback(() => setActiveDialog(null), [])
+  const closeDialog = useCallback(() => {
+    setActiveDialog(null)
+    // Bump version so useBoardItems re-fetches with updated screenshots
+    setBoardItemsVersion((v) => v + 1)
+  }, [])
   const toggleDecoMode = useCallback(() => setIsDecoMode((v) => !v), [])
 
   const addDecoration = useCallback((d: DecorationPlacement) => {
@@ -286,6 +296,7 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
     toggleDecoMode, addDecoration, moveDecoration, rotateDecoration, deleteDecoration,
     grabbedObjectId, objectPositions, grabObject, placeObject, updateGrabbedPosition,
     persistedPlayerPos, persistPlayerPos,
+    boardItemsVersion,
     folders, boards, onSelectBoard
   }), [
     neighborhoods, scenery, roads, location, cameraMode, hoveredId, activeDialog,
@@ -294,6 +305,7 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
     toggleDecoMode, addDecoration, moveDecoration, rotateDecoration, deleteDecoration,
     grabbedObjectId, objectPositions, grabObject, placeObject, updateGrabbedPosition,
     persistedPlayerPos, persistPlayerPos,
+    boardItemsVersion,
     folders, boards, onSelectBoard
   ])
 

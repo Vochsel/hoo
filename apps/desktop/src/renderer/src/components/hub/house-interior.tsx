@@ -44,7 +44,7 @@ interface BoardItem {
   screenshot?: string | null
 }
 
-function useBoardItems(boardId: string): BoardItem[] {
+function useBoardItems(boardId: string, version: number): BoardItem[] {
   const [items, setItems] = useState<BoardItem[]>([])
 
   useEffect(() => {
@@ -52,7 +52,7 @@ function useBoardItems(boardId: string): BoardItem[] {
     async function load() {
       try {
         const tabs = await window.api.browserTabs.list(boardId)
-        const nodes: { id: string; nodeType: string; label: string }[] = await window.api.graphNodes.list(boardId)
+        const nodes: { id: string; nodeType: string; label: string; config?: string }[] = await window.api.graphNodes.list(boardId)
 
         if (cancelled) return
 
@@ -62,7 +62,12 @@ function useBoardItems(boardId: string): BoardItem[] {
         }
         for (const node of nodes) {
           if (node.nodeType === 'terminal') {
-            result.push({ id: node.id, kind: 'terminal', label: node.label || 'Terminal' })
+            let termScreenshot: string | null = null
+            try {
+              const cfg = node.config ? JSON.parse(node.config) : {}
+              if (cfg.lastScreenshot) termScreenshot = cfg.lastScreenshot
+            } catch { /* ignore */ }
+            result.push({ id: node.id, kind: 'terminal', label: node.label || 'Terminal', screenshot: termScreenshot })
           }
         }
         setItems(result)
@@ -72,7 +77,7 @@ function useBoardItems(boardId: string): BoardItem[] {
     }
     load()
     return () => { cancelled = true }
-  }, [boardId])
+  }, [boardId, version])
 
   return items
 }
@@ -215,7 +220,7 @@ function ExitDoor() {
   const isHovered = hoveredId === 'exit-door'
 
   return (
-    <group position={[0, 0, HS - 1.5]}>
+    <group position={[0, 0, HS - 0.3]}>
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, 0]}>
         <ringGeometry args={[0.8, 1.1, 32]} />
         <meshStandardMaterial
@@ -304,9 +309,9 @@ function ComputerWithScreen({ item }: { item: BoardItem }) {
           })
         } else {
           mesh.material = new THREE.MeshStandardMaterial({
-            color: item.kind === 'terminal' ? '#001a00' : '#000d1a',
-            emissive: new THREE.Color(item.kind === 'terminal' ? '#00ff44' : '#4488ff'),
-            emissiveIntensity: 0.4,
+            color: '#0a0a12',
+            emissive: new THREE.Color(item.kind === 'terminal' ? '#1a1a2e' : '#0d1a2e'),
+            emissiveIntensity: 0.3,
           })
         }
       } else if (origMat?.type === 'MeshPhysicalMaterial') {
@@ -603,9 +608,9 @@ interface HouseInteriorProps {
 }
 
 export function HouseInterior({ boardId }: HouseInteriorProps) {
-  const { boards } = useVillage()
+  const { boards, boardItemsVersion } = useVillage()
   const board = boards.find((b) => b.id === boardId)
-  const boardItems = useBoardItems(boardId)
+  const boardItems = useBoardItems(boardId, boardItemsVersion)
 
   // Randomly place desks around the room using seeded positions
   const desks = useMemo(() => {

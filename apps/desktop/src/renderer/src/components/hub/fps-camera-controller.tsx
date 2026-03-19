@@ -79,7 +79,7 @@ export function FPSCameraController() {
       autoEnteredRef.current = null
     } else {
       const items: Interactable[] = [
-        { id: 'exit-door', pos: new THREE.Vector3(0, 0, 10.5), action: 'exit-house', boardId: '' },
+        { id: 'exit-door', pos: new THREE.Vector3(0, 0, 12), action: 'exit-house', boardId: '' },
         { id: 'interior-agent-0', pos: new THREE.Vector3(2, 0, 2), action: 'use-board', boardId: location.boardId },
       ]
       window.api.browserTabs.list(location.boardId).then((tabs: { id: string }[]) => {
@@ -160,7 +160,7 @@ export function FPSCameraController() {
           }
         }
         saveCameraPos({ x: doorX, y: PLAYER_HEIGHT, z: doorZ, yaw: doorYaw })
-        camera.position.set(0, PLAYER_HEIGHT, 12)
+        camera.position.set(0, PLAYER_HEIGHT, 9)
         yawRef.current = 0
         pitchRef.current = 0
       }
@@ -177,10 +177,14 @@ export function FPSCameraController() {
       }
       if (e.code === 'KeyE') {
         const cam2D = new THREE.Vector2(camera.position.x, camera.position.z)
+        const pos = objectPositionsRef.current
         let nearest: Interactable | null = null
         let nearestDist = INTERACTION_DISTANCE
         for (const ia of interactablesRef.current) {
-          const d = cam2D.distanceTo(new THREE.Vector2(ia.pos.x, ia.pos.z))
+          const ov = pos[ia.id]
+          const px = ov ? ov.position[0] : ia.pos.x
+          const pz = ov ? ov.position[2] : ia.pos.z
+          const d = cam2D.distanceTo(new THREE.Vector2(px, pz))
           if (d < nearestDist) { nearestDist = d; nearest = ia }
         }
         if (nearest) {
@@ -304,12 +308,16 @@ export function FPSCameraController() {
       updateGrabbedPosition(carryPos)
     }
 
-    // Highlight nearest interactable
+    // Highlight nearest interactable (use overridden positions for moved objects)
     const cam2D = new THREE.Vector2(camera.position.x, camera.position.z)
+    const positions = objectPositionsRef.current
     let nearestId: string | null = null
     let nearestDist = INTERACTION_DISTANCE
     for (const ia of interactablesRef.current) {
-      const d = cam2D.distanceTo(new THREE.Vector2(ia.pos.x, ia.pos.z))
+      const override = positions[ia.id]
+      const px = override ? override.position[0] : ia.pos.x
+      const pz = override ? override.position[2] : ia.pos.z
+      const d = cam2D.distanceTo(new THREE.Vector2(px, pz))
       if (d < nearestDist) { nearestDist = d; nearestId = ia.id }
     }
     setHoveredId(nearestId)
@@ -328,7 +336,7 @@ export function FPSCameraController() {
 
     // Auto-exit house when walking into the exit door circle
     if (location.type === 'indoor') {
-      const exitDoorPos = new THREE.Vector2(0, 6.5)
+      const exitDoorPos = new THREE.Vector2(0, 12)
       const d = cam2D.distanceTo(exitDoorPos)
       if (d < AUTO_ENTER_DISTANCE) {
         exitHouse()

@@ -82,7 +82,7 @@ export function VillageDialog() {
     // Re-acquire pointer lock for FPS after a short delay
     setTimeout(() => {
       const canvas = document.querySelector('canvas')
-      if (canvas) canvas.requestPointerLock()
+      if (canvas) try { canvas.requestPointerLock() } catch { /* ignore */ }
     }, 100)
   }, [closeDialog])
 
@@ -107,7 +107,13 @@ export function VillageDialog() {
           tab={tab}
           boardId={activeDialog.boardId}
           open={true}
-          onOpenChange={(open) => { if (!open) handleClose() }}
+          onOpenChange={async (open) => {
+            if (!open) {
+              // Small delay to ensure screenshot persist completes before re-fetch
+              await new Promise((r) => setTimeout(r, 200))
+              handleClose()
+            }
+          }}
           onTabUpdate={async (id, data) => {
             const result = await window.api.browserTabs.update(id, data, activeDialog.boardId)
             setTab((prev) => prev ? { ...prev, ...data } as BrowserTab : prev)
@@ -122,6 +128,7 @@ export function VillageDialog() {
   // Terminal — use TerminalDialog with portal contained inside our layout
   if (terminalNode) {
     const config: TerminalNodeConfig = terminalNode.config ? JSON.parse(terminalNode.config) : {}
+    const latestConfigRef = { current: config }
     return (
       <>
         <style>{`
@@ -143,11 +150,18 @@ export function VillageDialog() {
         {portalContainer && (
           <TerminalDialog
             open={true}
-            onOpenChange={(open) => { if (!open) handleClose() }}
+            onOpenChange={async (open) => {
+              if (!open) {
+                // Persist the latest config (including screenshot) before unmounting
+                await window.api.graphNodes.update(terminalNode.id, { config: JSON.stringify(latestConfigRef.current) })
+                handleClose()
+              }
+            }}
             sessionId={`pty-${terminalNode.id}`}
             label={terminalNode.label || 'Terminal'}
             config={config}
             onUpdateConfig={async (nextConfig) => {
+              latestConfigRef.current = nextConfig as TerminalNodeConfig
               await window.api.graphNodes.update(terminalNode.id, { config: JSON.stringify(nextConfig) })
             }}
             workspaceRootDir={workspaceRootDir}
