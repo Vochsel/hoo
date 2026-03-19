@@ -23,6 +23,7 @@ interface TerminalDialogProps {
   onUpdateConfig: (config: TerminalNodeConfig) => void
   workspaceRootDir?: string
   boardRootDir?: string | null
+  portalContainer?: HTMLElement | null
 }
 
 export function TerminalDialog({
@@ -34,7 +35,8 @@ export function TerminalDialog({
   onUpdateConfig,
   sessionId,
   workspaceRootDir,
-  boardRootDir
+  boardRootDir,
+  portalContainer
 }: TerminalDialogProps): React.ReactElement {
   const termRef = useRef<Terminal | null>(null)
   const fitRef = useRef<FitAddon | null>(null)
@@ -443,6 +445,7 @@ export function TerminalDialog({
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent
+        container={portalContainer}
         className="flex h-[80vh] max-w-[90vw] flex-row p-0 gap-0 overflow-hidden [&>button[class*='absolute']]:hidden"
         onPointerDown={(e) => e.stopPropagation()}
         onKeyDown={(e) => e.stopPropagation()}

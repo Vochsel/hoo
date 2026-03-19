@@ -713,7 +713,7 @@ export function BrowserTabDialog({
       <div
         role="dialog"
         aria-modal="true"
-        className="no-drag absolute left-[2.5vw] top-[5vh] flex h-[90vh] max-h-[90vh] w-[95vw] max-w-[95vw] flex-col gap-0 overflow-hidden rounded-xl border bg-background p-0 shadow-lg"
+        className="no-drag absolute inset-4 flex flex-col gap-0 overflow-hidden rounded-xl border bg-background p-0 shadow-lg"
         onMouseDown={(event) => event.stopPropagation()}
         onKeyDown={(event) => event.stopPropagation()}
       >

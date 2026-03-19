@@ -1,8 +1,19 @@
 import { useEffect, useState, useCallback, useMemo } from 'react'
-import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2, Sparkles, KeyRound, type LucideIcon } from 'lucide-react'
+import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2, Sparkles, KeyRound, Clock3, Home, type LucideIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/use-settings'
+import {
+  DEFAULT_HUB_WORLD_OVERRIDE_TIME,
+  HUB_WORLD_OVERRIDE_TIME_KEY,
+  HUB_WORLD_TIME_MODE_KEY,
+  formatHubWorldTimeLabel,
+  getHubWorldTimeMode,
+  getSystemClockMinutes,
+  parseHubWorldTime,
+  sanitizeHubWorldOverrideTime,
+  type HubWorldTimeMode
+} from '@/hooks/use-hub-world-lighting'
 import { useThemeContext } from '@/App'
 import type { RecentWorkspace, WorkspaceState } from '@/hooks/use-workspace'
 import {
@@ -24,7 +35,7 @@ const BROWSER_MODELS = [
 
 type FlowInteractionMode = 'design' | 'map'
 type NodeOpenClick = 'single' | 'double'
-export type SettingsSectionId = 'appearance' | 'agents' | 'interaction' | 'workspace' | 'updates' | 'api'
+export type SettingsSectionId = 'appearance' | 'hubWorld' | 'agents' | 'interaction' | 'workspace' | 'updates' | 'api'
 
 export const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId
@@ -37,6 +48,12 @@ export const SETTINGS_SECTIONS: Array<{
     label: 'Appearance',
     description: 'Theme and visual display preferences.',
     icon: Monitor
+  },
+  {
+    id: 'hubWorld',
+    label: 'Hub World',
+    description: 'Time-of-day controls for the 3D hub lighting and sky.',
+    icon: Home
   },
   {
     id: 'agents',
@@ -183,6 +200,7 @@ export function SettingsPage({
   const [savingWorkspace, setSavingWorkspace] = useState(false)
   const [savingAgentCommands, setSavingAgentCommands] = useState(false)
   const [resettingWorkspace, setResettingWorkspace] = useState(false)
+  const [hubWorldOverrideTime, setHubWorldOverrideTime] = useState(DEFAULT_HUB_WORLD_OVERRIDE_TIME)
   const [recentWorkspaces, setRecentWorkspaces] = useState<RecentWorkspace[]>([])
   const [showResetConfirm, setShowResetConfirm] = useState(false)
   const [restoringArchivedBoardId, setRestoringArchivedBoardId] = useState<string | null>(null)
@@ -206,6 +224,7 @@ export function SettingsPage({
     (getSetting('flowInteractionMode') as string) === 'map' ? 'map' : 'design'
   const nodeOpenClick: NodeOpenClick =
     (getSetting('nodeOpenClick') as string) === 'single' ? 'single' : 'double'
+  const hubWorldTimeMode: HubWorldTimeMode = getHubWorldTimeMode(getSetting(HUB_WORLD_TIME_MODE_KEY))
   const workspaceRootDir = workspace?.rootDir ?? ''
   const workspaceAgentCommandOverrides = useMemo(
     () => getWorkspaceAgentCommandOverrides(getSetting(WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY)),
@@ -219,6 +238,10 @@ export function SettingsPage({
   useEffect(() => {
     setOpenAiKey(((getSetting('openaiApiKey') as string) ?? '').trim())
     setAnthropicKey(((getSetting('anthropicApiKey') as string) ?? '').trim())
+  }, [settings, getSetting])
+
+  useEffect(() => {
+    setHubWorldOverrideTime(sanitizeHubWorldOverrideTime(getSetting(HUB_WORLD_OVERRIDE_TIME_KEY)))
   }, [settings, getSetting])
 
   useEffect(() => {
@@ -363,6 +386,15 @@ export function SettingsPage({
     }
   }
 
+  const hubWorldPreviewMinutes = useMemo(() => {
+    if (hubWorldTimeMode === 'override') {
+      return parseHubWorldTime(hubWorldOverrideTime)
+        ?? parseHubWorldTime(DEFAULT_HUB_WORLD_OVERRIDE_TIME)
+        ?? 12 * 60
+    }
+    return getSystemClockMinutes()
+  }, [hubWorldOverrideTime, hubWorldTimeMode])
+
   return (
     <div className="flex-1 overflow-auto bg-[linear-gradient(180deg,hsl(var(--background)/0.94),hsl(var(--background)))]">
       <div className="mx-auto max-w-3xl px-8 py-9">
@@ -412,6 +444,80 @@ export function SettingsPage({
                     </button>
                   )
                 })}
+              </div>
+            </SettingsPanel>
+          )}
+
+          {activeSection === 'hubWorld' && (
+            <SettingsPanel
+              title="Time of Day"
+              description="By default the hub world follows this machine’s local clock. Override it to lock the sun, sky, fog, and scene lighting to a specific time."
+            >
+              <div className="grid gap-3 sm:grid-cols-2">
+                {[
+                  {
+                    id: 'system',
+                    label: 'Use System Clock',
+                    description: 'Keep the hub synced to the current local time on this computer.',
+                    icon: Clock3,
+                    selected: hubWorldTimeMode === 'system'
+                  },
+                  {
+                    id: 'override',
+                    label: 'Override Time',
+                    description: 'Freeze the hub world to a specific time of day until you switch back.',
+                    icon: Sun,
+                    selected: hubWorldTimeMode === 'override'
+                  }
+                ].map((option) => {
+                  const Icon = option.icon
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      className={`rounded-[20px] border px-4 py-4 text-left transition-colors ${
+                        option.selected
+                          ? 'border-foreground bg-foreground text-background shadow-sm'
+                          : 'border-border/50 bg-muted/30 hover:bg-muted/50'
+                      }`}
+                      onClick={() => void setSetting(HUB_WORLD_TIME_MODE_KEY, option.id)}
+                    >
+                      <Icon className="h-4 w-4" />
+                      <p className="mt-3 text-sm font-medium">{option.label}</p>
+                      <p className={`mt-1 text-xs ${option.selected ? 'text-background/70' : 'text-muted-foreground'}`}>
+                        {option.description}
+                      </p>
+                    </button>
+                  )
+                })}
+              </div>
+
+              <div className="mt-5 space-y-2">
+                <label className="text-sm font-medium">Forced Time</label>
+                <Input
+                  type="time"
+                  step={60}
+                  className="h-11 rounded-2xl px-4"
+                  value={hubWorldOverrideTime}
+                  disabled={hubWorldTimeMode !== 'override'}
+                  onChange={(event) => {
+                    const value = event.target.value
+                    setHubWorldOverrideTime(value)
+                    if (parseHubWorldTime(value) !== null) {
+                      void setSetting(HUB_WORLD_OVERRIDE_TIME_KEY, value)
+                    }
+                  }}
+                  onBlur={() => {
+                    const nextValue = sanitizeHubWorldOverrideTime(hubWorldOverrideTime)
+                    setHubWorldOverrideTime(nextValue)
+                    void setSetting(HUB_WORLD_OVERRIDE_TIME_KEY, nextValue)
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {hubWorldTimeMode === 'override'
+                    ? `The hub world is locked to ${formatHubWorldTimeLabel(hubWorldPreviewMinutes)}.`
+                    : `Currently following your system clock: ${formatHubWorldTimeLabel(hubWorldPreviewMinutes)}.`}
+                </p>
               </div>
             </SettingsPanel>
           )}
