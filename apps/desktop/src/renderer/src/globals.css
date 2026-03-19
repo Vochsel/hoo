@@ -74,6 +74,15 @@
   height: 44px;
 }
 
+.traffic-light-tabs-row {
+  min-height: 44px;
+  padding-top: 14px;
+}
+
+.traffic-light-offset {
+  padding-left: 76px;
+}
+
 .sidebar-drag-region {
   height: 44px;
 }
@@ -90,6 +99,17 @@ html.platform-win32 .content-drag-region,
 html.platform-linux .content-drag-region {
   height: 0;
   padding-top: 0;
+}
+
+html.platform-win32 .traffic-light-tabs-row,
+html.platform-linux .traffic-light-tabs-row {
+  min-height: 0;
+  padding-top: 0;
+}
+
+html.platform-win32 .traffic-light-offset,
+html.platform-linux .traffic-light-offset {
+  padding-left: 12px;
 }
 
 /* macOS native vibrancy sidebar */

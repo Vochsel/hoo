@@ -23,6 +23,7 @@ interface BoardTabsViewProps {
   terminalNodes: GraphNode[]
   fileNodes: GraphNode[]
   activeBoardId: string | null
+  inlineWithTrafficLights?: boolean
   tabBarLeading?: React.ReactNode
   tabBarTrailing?: React.ReactNode
   preferredOrderIds?: string[]
@@ -114,6 +115,7 @@ export function BoardTabsView({
   terminalNodes,
   fileNodes,
   activeBoardId,
+  inlineWithTrafficLights = false,
   tabBarLeading,
   tabBarTrailing,
   preferredOrderIds = [],
@@ -482,9 +484,15 @@ export function BoardTabsView({
   }, [])
 
   const tabBar = (
-    <div className="flex items-end gap-2 border-b border-border/40 bg-muted/20 pl-3 pr-2 pt-1">
+    <div
+      className={
+        inlineWithTrafficLights
+          ? 'traffic-light-tabs-row traffic-light-offset drag-region flex items-center gap-2 border-b border-border/40 bg-muted/20 pr-2'
+          : 'flex items-end gap-2 border-b border-border/40 bg-muted/20 pl-3 pr-2 pt-1'
+      }
+    >
       {tabBarLeading ? (
-        <div className="flex shrink-0 items-center self-center pb-1">
+        <div className={`no-drag flex shrink-0 items-center ${inlineWithTrafficLights ? '' : 'self-center pb-1'}`}>
           {tabBarLeading}
         </div>
       ) : null}
@@ -505,6 +513,11 @@ export function BoardTabsView({
               key={id}
               type="button"
               draggable
+              className={`no-drag group relative flex max-w-[200px] items-center gap-1.5 rounded-t-lg border -mb-px px-3 py-1.5 text-xs transition-colors ${
+                isSelected
+                  ? 'bg-background border-border/60 border-b-background z-10 font-medium'
+                  : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+              } ${isDragging ? 'opacity-40' : ''}`}
               onDragStart={(e) => handleDragStart(e, id)}
               onDragOver={(e) => handleDragOver(e, id)}
               onDrop={(e) => handleDrop(e, id)}
@@ -513,11 +526,6 @@ export function BoardTabsView({
               onContextMenu={(event) => {
                 onItemContextMenu?.(event, { id, kind: item.kind })
               }}
-              className={`group relative flex max-w-[200px] items-center gap-1.5 rounded-t-lg border -mb-px px-3 py-1.5 text-xs transition-colors ${
-                isSelected
-                  ? 'bg-background border-border/60 border-b-background z-10 font-medium'
-                  : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-              } ${isDragging ? 'opacity-40' : ''}`}
               onClick={() => handleSelectTab(id)}
               onDoubleClick={() => {
                 if (item.kind === 'browser') onOpenTab(item.tab)
@@ -565,7 +573,7 @@ export function BoardTabsView({
           <button
             ref={newTabBtnRef}
             type="button"
-            className="flex items-center justify-center rounded-t-lg px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
+            className="no-drag flex items-center justify-center rounded-t-lg px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
             onClick={() => {
               setNewTabMenuOpen(false)
               void handleCreateBrowserTab()
@@ -618,7 +626,7 @@ export function BoardTabsView({
         </div>
       </div>
       {tabBarTrailing ? (
-        <div className="flex shrink-0 items-center self-center pb-1">
+        <div className={`no-drag flex shrink-0 items-center ${inlineWithTrafficLights ? '' : 'self-center pb-1'}`}>
           {tabBarTrailing}
         </div>
       ) : null}

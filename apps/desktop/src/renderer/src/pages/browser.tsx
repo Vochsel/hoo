@@ -3865,16 +3865,18 @@ function BrowserPageInner(): React.ReactElement {
     <div className="flex h-full min-h-0 bg-transparent" onClick={() => { closeContextMenu(); closeBoardItemMenu(); closeBoardContextMenu(); closeFolderContextMenu() }}>
       {!sidebarCollapsed && (
         <aside style={{ width: sidebarWidth }} className="shrink-0 sidebar-vibrancy flex flex-col min-h-0">
-          <div className="sidebar-traffic-row shrink-0 flex items-center justify-end pr-3">
+          <div className="sidebar-traffic-row shrink-0 flex items-center pr-3">
+            <div className="traffic-light-offset no-drag flex shrink-0 items-center">
+              <button
+                type="button"
+                className="shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
+                onClick={() => setSidebarCollapsed(true)}
+                title="Collapse sidebar"
+              >
+                <PanelLeftClose className="h-4 w-4" />
+              </button>
+            </div>
             <div className="drag-region flex-1 h-full" />
-            <button
-              type="button"
-              className="no-drag shrink-0 rounded p-1 text-muted-foreground hover:bg-accent/60 hover:text-foreground transition-colors"
-              onClick={() => setSidebarCollapsed(true)}
-              title="Collapse sidebar"
-            >
-              <PanelLeftClose className="h-4 w-4" />
-            </button>
           </div>
           {isSettingsRoute && (
             <>
@@ -4069,9 +4071,8 @@ function BrowserPageInner(): React.ReactElement {
                             })()}
                           </span>
                           <span className="truncate text-[13px] font-medium">{folder.name}</span>
-                          <span className="ml-auto text-[10px] text-muted-foreground">{folderBoards.length}</span>
                           {folderNotificationCount > 0 ? (
-                            <span className="shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">
+                            <span className="ml-auto shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">
                               {folderNotificationCount}
                             </span>
                           ) : null}
@@ -4410,7 +4411,9 @@ function BrowserPageInner(): React.ReactElement {
             : '-ml-3 rounded-l-2xl border border-border/50 shadow-[8px_18px_28px_rgba(15,23,42,0.08)]'
         ].join(' ')}
       >
-          <div className={`drag-region shrink-0 ${sidebarCollapsed ? 'sidebar-drag-region' : 'content-drag-region'}`} />
+          {!(sidebarCollapsed && isCompactTabsView) && (
+            <div className={`drag-region shrink-0 ${sidebarCollapsed ? 'sidebar-drag-region' : 'content-drag-region'}`} />
+          )}
           {!isCompactTabsView && (
             <div className="drag-region flex items-center justify-between gap-2 border-b border-border/40 pl-3 pr-2 py-1.5">
               <div className="flex items-center gap-2 min-w-0">
@@ -4516,6 +4519,7 @@ function BrowserPageInner(): React.ReactElement {
 	              terminalNodes={terminalNodes}
 	              fileNodes={fileNodes}
 	              activeBoardId={activeBoardId}
+	              inlineWithTrafficLights={sidebarCollapsed}
 	              tabBarLeading={
 	                sidebarCollapsed ? (
 	                  <button
