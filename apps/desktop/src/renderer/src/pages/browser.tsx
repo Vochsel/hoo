@@ -717,6 +717,28 @@ function BrowserPageInner(): React.ReactElement {
     return map
   }, [workspace])
 
+  const allKnownBrowserTabs = useMemo(() => {
+    const tabsById = new Map<string, BrowserTab>()
+    for (const boardTabs of boardTabsMap.values()) {
+      for (const tab of boardTabs) {
+        tabsById.set(tab.id, tab)
+      }
+    }
+
+    const activeBoardTabs =
+      activeBoardId == null
+        ? []
+        : tabsLoading
+          ? (boardTabsMap.get(activeBoardId) ?? [])
+          : tabs
+
+    for (const tab of activeBoardTabs) {
+      tabsById.set(tab.id, tab)
+    }
+
+    return Array.from(tabsById.values())
+  }, [activeBoardId, boardTabsMap, tabs, tabsLoading])
+
   useEffect(() => {
     if (!workspace) return
     let cancelled = false
@@ -4745,6 +4767,7 @@ function BrowserPageInner(): React.ReactElement {
           {!isSettingsRoute && boardView === 'tabs' && (
             <BoardTabsView
               tabs={activeBoardTabsViewCollections.tabs}
+              allBrowserTabs={allKnownBrowserTabs}
               terminalNodes={activeBoardTabsViewCollections.terminalNodes}
               fileNodes={activeBoardTabsViewCollections.fileNodes}
               loading={tabsLoading || graphNodesLoading}

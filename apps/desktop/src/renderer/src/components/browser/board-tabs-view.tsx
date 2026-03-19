@@ -207,15 +207,6 @@ export function BoardTabsView({
     cachedBrowserTabIdsRef.current = cachedBrowserTabIds
   }, [cachedBrowserTabIds])
 
-  useEffect(() => {
-    // Keep the per-board tab cache, but tear down browser guests when the
-    // board changes; retaining hidden webviews across boards is unstable in
-    // packaged builds and can keep heavy pages alive in the background.
-    setCachedBrowserTabIds((prev) => (prev.length === 0 ? prev : []))
-    setMountedBrowserTabIds((prev) => (prev.length === 0 ? prev : []))
-    setBrowserReloadNonceById((prev) => (prev.size === 0 ? prev : new Map()))
-  }, [activeBoardId])
-
   const allItems: TabItem[] = useMemo(
     () => orderedIds.map((id) => itemsById.get(id)).filter((item): item is TabItem => item != null),
     [orderedIds, itemsById]
