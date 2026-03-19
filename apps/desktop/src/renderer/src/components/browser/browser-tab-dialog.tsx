@@ -17,6 +17,7 @@ interface BrowserTabDialogProps {
 
 const TAG = '[browser-dialog]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
+const WEBVIEW_ALLOWPOPUPS_PROP = 'true' as unknown as boolean
 
 // Selector for interactive elements — broad enough for modern web apps (Gmail, etc.)
 const INTERACTIVE_SELECTOR =
@@ -737,7 +738,7 @@ export function BrowserTabDialog({
                 ref={setupWebview}
                 src={webviewSrc}
                 partition="persist:browser-tabs"
-                allowpopups="true"
+                allowpopups={WEBVIEW_ALLOWPOPUPS_PROP}
                 useragent={WEBVIEW_USER_AGENT}
                 style={{ width: '100%', height: '100%' }}
               />

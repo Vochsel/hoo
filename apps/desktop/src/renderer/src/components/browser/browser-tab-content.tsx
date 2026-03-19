@@ -13,6 +13,7 @@ interface BrowserTabContentProps {
 
 const TAG = '[browser-tab-content]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
+const WEBVIEW_ALLOWPOPUPS_PROP = 'true' as unknown as boolean
 
 export function BrowserTabContent({
   tab,
@@ -247,7 +248,7 @@ export function BrowserTabContent({
           ref={setupWebview}
           src={initialUrlRef.current}
           partition="persist:browser-tabs"
-          allowpopups="true"
+          allowpopups={WEBVIEW_ALLOWPOPUPS_PROP}
           useragent={WEBVIEW_USER_AGENT}
           style={{ width: '100%', height: '100%' }}
         />

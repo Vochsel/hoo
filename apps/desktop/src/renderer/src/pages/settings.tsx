@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
-import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2, Sparkles, KeyRound, ChevronDown, type LucideIcon } from 'lucide-react'
+import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2, Sparkles, KeyRound, ChevronDown, ScrollText, type LucideIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/use-settings'
@@ -16,6 +16,7 @@ import {
   getPresetById,
   type ThemeCustomization,
 } from '@/lib/theme-presets'
+import { CHANGELOG_ENTRIES } from '@/lib/changelog'
 
 const BROWSER_MODELS = [
   { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
@@ -29,7 +30,7 @@ const BROWSER_MODELS = [
 
 type FlowInteractionMode = 'design' | 'map'
 type NodeOpenClick = 'single' | 'double'
-export type SettingsSectionId = 'appearance' | 'agents' | 'interaction' | 'workspace' | 'updates' | 'api'
+export type SettingsSectionId = 'appearance' | 'agents' | 'interaction' | 'workspace' | 'updates' | 'changelog' | 'api'
 
 export const SETTINGS_SECTIONS: Array<{
   id: SettingsSectionId
@@ -66,6 +67,12 @@ export const SETTINGS_SECTIONS: Array<{
     label: 'Updates',
     description: 'App version and update installation.',
     icon: RefreshCw
+  },
+  {
+    id: 'changelog',
+    label: 'Changelog',
+    description: 'Version history and recent shipped changes.',
+    icon: ScrollText
   },
   {
     id: 'api',
@@ -814,6 +821,60 @@ export function SettingsPage({
                 {updateState.status === 'error' && (
                   <span className="text-sm text-destructive">{updateState.message}</span>
                 )}
+              </div>
+            </SettingsPanel>
+          )}
+
+          {activeSection === 'changelog' && (
+            <SettingsPanel
+              title="Changelog"
+              description="Recent tagged desktop releases, newest first."
+            >
+              <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-[20px] border border-border/50 bg-muted/25 px-4 py-3">
+                <div>
+                  <p className="text-sm font-medium">Current version</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    <code>{__APP_VERSION__}</code>
+                  </p>
+                </div>
+                <span className="rounded-full border border-border/60 bg-background/80 px-3 py-1 text-xs text-muted-foreground">
+                  {CHANGELOG_ENTRIES.length} releases listed
+                </span>
+              </div>
+
+              <div className="space-y-3">
+                {CHANGELOG_ENTRIES.map((entry) => (
+                  <section key={entry.version} className="rounded-[20px] border border-border/50 bg-muted/20 p-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="rounded-full bg-foreground px-2.5 py-1 text-[11px] font-medium text-background">
+                            {entry.version}
+                          </span>
+                          {entry.version === `v${__APP_VERSION__}` && (
+                            <span className="rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-1 text-[11px] font-medium text-emerald-600">
+                              Current
+                            </span>
+                          )}
+                        </div>
+                        <h3 className="mt-3 text-sm font-semibold">{entry.title}</h3>
+                      </div>
+                      <span className="text-[11px] text-muted-foreground">{entry.date}</span>
+                    </div>
+
+                    {entry.points.length > 0 ? (
+                      <ul className="mt-3 list-disc space-y-1 pl-4 text-sm text-foreground/90">
+                        {entry.points.map((point) => (
+                          <li key={`${entry.version}-${point}`}>{point}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="mt-3 text-sm text-muted-foreground">
+                        No detailed notes were recorded for this release.
+                      </p>
+                    )}
+                  </section>
+                ))}
               </div>
             </SettingsPanel>
           )}

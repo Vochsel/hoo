@@ -50,7 +50,7 @@ function ViewModeSwitcher() {
   const current = viewModes.find((m) => m.key === active)!
 
   return (
-    <div className="mt-24 w-full md:w-[200%] max-w-none flex flex-col items-center gap-6">
+    <div className="mt-24 w-full md:w-[140%] max-w-[1200px] flex flex-col items-center gap-6">
       <div className="flex gap-2 relative z-10 mb-[-12px]">
         {viewModes.map((mode) => (
           <button

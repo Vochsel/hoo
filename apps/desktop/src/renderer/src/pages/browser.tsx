@@ -21,8 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, ScrollText, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu, RotateCw } from 'lucide-react'
-import { useAppActions } from '@/App'
+import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu, RotateCw } from 'lucide-react'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -3836,7 +3835,6 @@ function BrowserPageInner(): React.ReactElement {
   }, [])
 
   const ungroupedBoards = workspace ? boardsByFolderId.get('__ungrouped__') ?? [] : []
-  const { openChangelog } = useAppActions()
 
   const startResize = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
@@ -4635,14 +4633,6 @@ function BrowserPageInner(): React.ReactElement {
               <Settings className="h-3.5 w-3.5" />
               Settings
             </NavLink>
-            <button
-              type="button"
-              onClick={openChangelog}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground transition-colors"
-            >
-              <ScrollText className="h-3.5 w-3.5" />
-              Changelog
-            </button>
           </div>
             </>
           )}
