@@ -37,7 +37,7 @@ import { DelayNode } from '@/components/browser/delay-node'
 import { AiPromptNode } from '@/components/browser/ai-prompt-node'
 import { TextNode } from '@/components/browser/text-node'
 import { OutputNode } from '@/components/browser/output-node'
-import { FileNode } from '@/components/browser/file-node'
+import { FileNode, type FileNodeConfig } from '@/components/browser/file-node'
 import { TerminalNode, type TerminalNodeConfig } from '@/components/browser/terminal-node'
 import { TerminalDialog } from '@/components/browser/terminal-dialog'
 import { BrowserTabDialog } from '@/components/browser/browser-tab-dialog'
@@ -206,6 +206,18 @@ function parseNodeConfig(rawConfig: string): Record<string, unknown> {
   } catch {
     return {}
   }
+}
+
+function getFileNameFromPath(filePath: string): string {
+  const lastForwardSlash = filePath.lastIndexOf('/')
+  const lastBackslash = filePath.lastIndexOf('\\')
+  const separatorIndex = Math.max(lastForwardSlash, lastBackslash)
+  return separatorIndex >= 0 ? filePath.slice(separatorIndex + 1) : filePath
+}
+
+function normalizeOptionalPath(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim()
+  return trimmed ? trimmed : undefined
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1870,10 +1882,16 @@ function BrowserPageInner(): React.ReactElement {
       mode: 'open' | 'save',
       defaultPath?: string
     ): Promise<string | null> => {
-      const selectedPath = await window.api.graphNodes.pickFile({ mode, defaultPath })
+      const selectedPath = await window.api.graphNodes.pickFile({
+        mode,
+        defaultPath:
+          normalizeOptionalPath(defaultPath)
+          ?? normalizeOptionalPath(boardRootDir)
+          ?? normalizeOptionalPath(workspace?.rootDir)
+      })
       return typeof selectedPath === 'string' ? selectedPath : null
     },
-    []
+    [boardRootDir, workspace?.rootDir]
   )
 
   const handleClose = useCallback(
@@ -2545,6 +2563,34 @@ function BrowserPageInner(): React.ReactElement {
     [activeBoardId, createNode, getSetting, workspace?.rootDir, workspaceAgentCommandOverrides]
   )
 
+  const handleAddFileTab = useCallback(
+    async (flowX?: number, flowY?: number): Promise<string | undefined> => {
+      if (!activeBoardId) return undefined
+
+      const selectedPath = await handlePickFile('new-file-tab', 'open')
+      if (!selectedPath) return undefined
+
+      try {
+        const cx = (flowX ?? 100 + Math.random() * 200) - 120
+        const cy = (flowY ?? 100 + Math.random() * 200) - 84
+        const node = await createNode({
+          nodeType: 'file',
+          label: getFileNameFromPath(selectedPath) || 'File',
+          config: JSON.stringify({ filePath: selectedPath } satisfies FileNodeConfig),
+          flowX: cx,
+          flowY: cy
+        })
+        return node.id
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to create file tab:`, error)
+        window.alert(`Failed to create file tab: ${message}`)
+        return undefined
+      }
+    },
+    [activeBoardId, createNode, handlePickFile]
+  )
+
   const handleSidebarItemClick = useCallback(
     (itemId: string, boardId: string) => {
       if (boardId !== activeBoardId) {
@@ -2680,6 +2726,7 @@ function BrowserPageInner(): React.ReactElement {
       // Determine the kind of the currently active item so we create the same type
       const currentId = activeItemIdRef.current
       const isTerminal = currentId != null && terminalNodes.some((n) => n.id === currentId)
+      const isFile = currentId != null && fileNodes.some((n) => n.id === currentId)
 
       if (boardView === 'whiteboard') {
         const flowRect = flowContainerRef.current?.getBoundingClientRect()
@@ -2708,12 +2755,22 @@ function BrowserPageInner(): React.ReactElement {
           void handleAddAgent(flowPosition.x, flowPosition.y).then((nodeId) => {
             if (nodeId) requestTabSelect(nodeId)
           })
+        } else if (isFile) {
+          void handleAddFileTab(flowPosition.x, flowPosition.y).then((nodeId) => {
+            if (nodeId) requestTabSelect(nodeId)
+          })
         } else {
           void handleAddTab(flowPosition.x, flowPosition.y)
         }
       } else {
         if (isTerminal) {
           void handleAddAgent().then((nodeId) => {
+            if (nodeId && boardView === 'tabs') {
+              requestTabSelect(nodeId)
+            }
+          })
+        } else if (isFile) {
+          void handleAddFileTab().then((nodeId) => {
             if (nodeId && boardView === 'tabs') {
               requestTabSelect(nodeId)
             }
@@ -2732,7 +2789,7 @@ function BrowserPageInner(): React.ReactElement {
     return (): void => {
       window.removeEventListener('keydown', onKeyDown)
     }
-  }, [reactFlowInstance, handleAddTab, handleAddAgent, boardView, terminalNodes])
+  }, [reactFlowInstance, handleAddTab, handleAddAgent, handleAddFileTab, boardView, terminalNodes, fileNodes, requestTabSelect])
 
   useEffect(() => {
     const onPaste = (event: ClipboardEvent): void => {
@@ -3371,6 +3428,49 @@ function BrowserPageInner(): React.ReactElement {
     setPendingTabReload({ itemId: boardItemMenu.itemId, nonce: pendingReloadNonceRef.current })
     setBoardItemMenu(null)
   }, [boardItemMenu])
+
+  const handleBoardItemPickDifferentFile = useCallback(async () => {
+    if (!boardItemMenu || boardItemMenu.source !== 'tab-strip' || boardItemMenu.kind !== 'file') {
+      setBoardItemMenu(null)
+      return
+    }
+
+    const fileNode = fileNodes.find((node) => node.id === boardItemMenu.itemId)
+    if (!fileNode) {
+      setBoardItemMenu(null)
+      return
+    }
+
+    const currentConfig = parseNodeConfig(fileNode.config) as FileNodeConfig
+    const currentFilePath = normalizeOptionalPath(currentConfig.filePath)
+
+    try {
+      const selectedPath = await handlePickFile(fileNode.id, 'open', currentFilePath)
+      if (!selectedPath) return
+
+      const currentLabel = fileNode.label?.trim() || ''
+      const currentFileName = currentFilePath ? getFileNameFromPath(currentFilePath) : ''
+      const nextFileName = getFileNameFromPath(selectedPath) || 'File'
+      const nextLabel =
+        !currentLabel || currentLabel === 'File' || (currentFileName.length > 0 && currentLabel === currentFileName)
+          ? nextFileName
+          : currentLabel
+
+      await updateNode(fileNode.id, {
+        label: nextLabel,
+        config: JSON.stringify({
+          ...currentConfig,
+          filePath: selectedPath
+        } satisfies FileNodeConfig)
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to switch file tab path id=${fileNode.id}:`, error)
+      window.alert(`Failed to open file: ${message}`)
+    } finally {
+      setBoardItemMenu(null)
+    }
+  }, [boardItemMenu, fileNodes, handlePickFile, updateNode])
 
   const deleteBoardItem = useCallback(
     async (itemId: string, kind: 'browser' | 'graph' | 'terminal' | 'file', boardId: string | null) => {
@@ -4611,6 +4711,7 @@ function BrowserPageInner(): React.ReactElement {
 	              onSaveTabOrder={saveTabOrder}
 	              onSaveNodeOrder={saveNodeOrder}
 	              onCreateTab={() => handleAddTab()}
+	              onCreateFile={() => handleAddFileTab()}
 	              onCreateAgent={async () => {
 	                if (!activeBoardId) return undefined
 	                try {
@@ -4945,6 +5046,15 @@ function BrowserPageInner(): React.ReactElement {
             >
               <RotateCw className="h-4 w-4" />
               {boardItemMenu.kind === 'browser' ? 'Reload Webview' : 'Restart Terminal'}
+            </button>
+          )}
+          {boardItemMenu.source === 'tab-strip' && boardItemMenu.kind === 'file' && (
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+              onClick={() => void handleBoardItemPickDifferentFile()}
+            >
+              <FolderOpen className="h-4 w-4" />
+              Open Different File
             </button>
           )}
           <button

@@ -32,6 +32,7 @@ interface BoardTabsViewProps {
   onSaveTabOrder: (orderedIds: string[]) => Promise<void>
   onSaveNodeOrder: (orderedIds: string[]) => Promise<void>
   onCreateTab: () => Promise<BrowserTab | void>
+  onCreateFile: () => Promise<string | void>
   onCreateTerminal: () => Promise<string | void>
   onCreateAgent: () => Promise<string | void>
   onDeleteTab: (id: string) => void
@@ -124,6 +125,7 @@ export function BoardTabsView({
   onSaveTabOrder,
   onSaveNodeOrder,
   onCreateTab,
+  onCreateFile,
   onCreateTerminal,
   onCreateAgent,
   onDeleteTab,
@@ -252,6 +254,12 @@ export function BoardTabsView({
     if (!nodeId) return
     appendCreatedItemToEnd(nodeId, 'terminal')
   }, [onCreateAgent, appendCreatedItemToEnd])
+
+  const handleCreateFileTab = useCallback(async () => {
+    const nodeId = await onCreateFile()
+    if (!nodeId) return
+    appendCreatedItemToEnd(nodeId, 'file')
+  }, [onCreateFile, appendCreatedItemToEnd])
 
   const handleCreateTerminalTab = useCallback(async () => {
     const nodeId = await onCreateTerminal()
@@ -496,7 +504,7 @@ export function BoardTabsView({
           {tabBarLeading}
         </div>
       ) : null}
-      <div className="flex min-w-0 flex-1 items-end gap-0 overflow-x-auto">
+      <div className="scrollbar-hidden flex min-w-0 flex-1 items-end gap-0 overflow-x-auto">
         {allItems.map((item) => {
           const id = item.kind === 'browser' ? item.tab.id : item.node.id
           const isSelected = id === selectedId
@@ -609,6 +617,17 @@ export function BoardTabsView({
               >
                 <Sparkles className="h-3.5 w-3.5" />
                 Agent
+              </button>
+              <button
+                type="button"
+                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
+                onClick={() => {
+                  setNewTabMenuOpen(false)
+                  void handleCreateFileTab()
+                }}
+              >
+                <File className="h-3.5 w-3.5" />
+                File
               </button>
               <button
                 type="button"

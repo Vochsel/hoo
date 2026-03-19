@@ -14,12 +14,16 @@ interface ThemeContextValue {
   theme: Theme
   resolved: 'light' | 'dark'
   setTheme: (theme: Theme) => Promise<void>
+  customization: import('@/lib/theme-presets').ThemeCustomization
+  setCustomization: (c: import('@/lib/theme-presets').ThemeCustomization) => Promise<void>
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
   theme: 'system',
   resolved: 'dark',
-  setTheme: async () => {}
+  setTheme: async () => {},
+  customization: { preset: 'default', colors: { light: { accent: '', background: '', foreground: '' }, dark: { accent: '', background: '', foreground: '' } }, uiFont: '', codeFont: '' },
+  setCustomization: async () => {},
 })
 
 export const useThemeContext = (): ThemeContextValue => useContext(ThemeContext)

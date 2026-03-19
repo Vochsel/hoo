@@ -1,4 +1,9 @@
 import { useState, useEffect, useCallback } from 'react'
+import {
+  type ThemeCustomization,
+  applyThemeCustomization,
+  makeDefaultCustomization,
+} from '@/lib/theme-presets'
 
 export type Theme = 'light' | 'dark' | 'system'
 
@@ -6,7 +11,7 @@ function getSystemTheme(): 'light' | 'dark' {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
-function applyTheme(theme: Theme): void {
+function applyThemeMode(theme: Theme): void {
   const resolved = theme === 'system' ? getSystemTheme() : theme
   document.documentElement.classList.toggle('dark', resolved === 'dark')
 }
@@ -15,15 +20,28 @@ export function useTheme(): {
   theme: Theme
   resolved: 'light' | 'dark'
   setTheme: (theme: Theme) => Promise<void>
+  customization: ThemeCustomization
+  setCustomization: (c: ThemeCustomization) => Promise<void>
 } {
   const [theme, setThemeState] = useState<Theme>('system')
+  const [customization, setCustomizationState] = useState<ThemeCustomization>(makeDefaultCustomization)
 
-  // Load saved theme on mount
+  // Load saved theme + customization on mount
   useEffect(() => {
-    window.api.settings.get('theme').then((saved) => {
-      const t = (saved as Theme) ?? 'system'
+    Promise.all([
+      window.api.settings.get('theme'),
+      window.api.settings.get('themeCustomization'),
+    ]).then(([savedTheme, savedCustomization]) => {
+      const t = (savedTheme as Theme) ?? 'system'
       setThemeState(t)
-      applyTheme(t)
+      applyThemeMode(t)
+
+      if (savedCustomization) {
+        const c = savedCustomization as ThemeCustomization
+        setCustomizationState(c)
+        const resolved = t === 'system' ? getSystemTheme() : t
+        applyThemeCustomization(c, resolved)
+      }
     })
   }, [])
 
@@ -31,19 +49,31 @@ export function useTheme(): {
   useEffect(() => {
     const mq = window.matchMedia('(prefers-color-scheme: dark)')
     const handler = (): void => {
-      if (theme === 'system') applyTheme('system')
+      if (theme === 'system') {
+        applyThemeMode('system')
+        applyThemeCustomization(customization, getSystemTheme())
+      }
     }
     mq.addEventListener('change', handler)
     return () => mq.removeEventListener('change', handler)
-  }, [theme])
+  }, [theme, customization])
 
   const setTheme = useCallback(async (t: Theme) => {
     setThemeState(t)
-    applyTheme(t)
+    applyThemeMode(t)
+    const resolved = t === 'system' ? getSystemTheme() : t
+    applyThemeCustomization(customization, resolved)
     await window.api.settings.set('theme', t)
-  }, [])
+  }, [customization])
+
+  const setCustomization = useCallback(async (c: ThemeCustomization) => {
+    setCustomizationState(c)
+    const resolved = theme === 'system' ? getSystemTheme() : theme
+    applyThemeCustomization(c, resolved)
+    await window.api.settings.set('themeCustomization', c)
+  }, [theme])
 
   const resolved = theme === 'system' ? getSystemTheme() : theme
 
-  return { theme, resolved, setTheme }
+  return { theme, resolved, setTheme, customization, setCustomization }
 }

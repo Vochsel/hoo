@@ -1,5 +1,5 @@
-import { useEffect, useState, useCallback, useMemo } from 'react'
-import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2, Sparkles, KeyRound, type LucideIcon } from 'lucide-react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
+import { RotateCcw, Save, Moon, Sun, Monitor, MousePointer2, Map, Folder, MousePointerClick, MousePointer, Download, RefreshCw, CheckCircle2, Loader2, Trash2, Sparkles, KeyRound, ChevronDown, type LucideIcon } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { useSettings } from '@/hooks/use-settings'
@@ -11,6 +11,11 @@ import {
   getWorkspaceAgentCommandOverrides,
   type AgentId
 } from '@/lib/cli-agents'
+import {
+  THEME_PRESETS,
+  getPresetById,
+  type ThemeCustomization,
+} from '@/lib/theme-presets'
 
 const BROWSER_MODELS = [
   { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6' },
@@ -80,7 +85,7 @@ function SettingsPanel({
   children: React.ReactNode
 }): React.ReactElement {
   return (
-    <section className="rounded-[24px] border border-border/50 bg-background/80 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.06)] backdrop-blur-sm">
+    <section className="relative overflow-visible rounded-[24px] border border-border/50 bg-background/80 p-6 shadow-[0_20px_50px_rgba(15,23,42,0.06)] backdrop-blur-sm">
       <div className="mb-5 space-y-1">
         <h3 className="text-base font-semibold tracking-tight">{title}</h3>
         <p className="text-sm text-muted-foreground">{description}</p>
@@ -174,7 +179,7 @@ export function SettingsPage({
   unarchiveBoard: (boardId: string) => Promise<void>
 }): React.ReactElement {
   const { settings, getSetting, setSetting } = useSettings()
-  const { theme, setTheme } = useThemeContext()
+  const { theme, resolved, setTheme, customization, setCustomization } = useThemeContext()
 
   const [openAiKey, setOpenAiKey] = useState('')
   const [anthropicKey, setAnthropicKey] = useState('')
@@ -378,42 +383,55 @@ export function SettingsPage({
 
         <div className="space-y-4">
           {activeSection === 'appearance' && (
-            <SettingsPanel
-              title="Theme"
-              description="Choose how Hoo should look on this machine."
-            >
-              <div className="grid gap-3 sm:grid-cols-3">
-                {[
-                  { id: 'system', label: 'System', icon: Monitor, selected: theme === 'system' },
-                  { id: 'light', label: 'Light', icon: Sun, selected: theme === 'light' },
-                  { id: 'dark', label: 'Dark', icon: Moon, selected: theme === 'dark' }
-                ].map((option) => {
-                  const Icon = option.icon
-                  return (
-                    <button
-                      key={option.id}
-                      type="button"
-                      className={`rounded-[20px] border px-4 py-4 text-left transition-colors ${
-                        option.selected
-                          ? 'border-foreground bg-foreground text-background shadow-sm'
-                          : 'border-border/50 bg-muted/30 hover:bg-muted/50'
-                      }`}
-                      onClick={() => void setTheme(option.id as 'system' | 'light' | 'dark')}
-                    >
-                      <Icon className="h-4 w-4" />
-                      <p className="mt-3 text-sm font-medium">{option.label}</p>
-                      <p className={`mt-1 text-xs ${option.selected ? 'text-background/70' : 'text-muted-foreground'}`}>
-                        {option.id === 'system'
-                          ? 'Follow macOS or system theme.'
-                          : option.id === 'light'
-                            ? 'Bright interface with softer contrast.'
-                            : 'Dark surfaces for lower-light use.'}
-                      </p>
-                    </button>
-                  )
-                })}
-              </div>
-            </SettingsPanel>
+            <>
+              <SettingsPanel
+                title="Theme"
+                description="Choose how Hoo should look on this machine."
+              >
+                <div className="grid gap-3 sm:grid-cols-3">
+                  {[
+                    { id: 'system', label: 'System', icon: Monitor, selected: theme === 'system' },
+                    { id: 'light', label: 'Light', icon: Sun, selected: theme === 'light' },
+                    { id: 'dark', label: 'Dark', icon: Moon, selected: theme === 'dark' }
+                  ].map((option) => {
+                    const Icon = option.icon
+                    return (
+                      <button
+                        key={option.id}
+                        type="button"
+                        className={`rounded-[20px] border px-4 py-4 text-left transition-colors ${
+                          option.selected
+                            ? 'border-foreground bg-foreground text-background shadow-sm'
+                            : 'border-border/50 bg-muted/30 hover:bg-muted/50'
+                        }`}
+                        onClick={() => void setTheme(option.id as 'system' | 'light' | 'dark')}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <p className="mt-3 text-sm font-medium">{option.label}</p>
+                        <p className={`mt-1 text-xs ${option.selected ? 'text-background/70' : 'text-muted-foreground'}`}>
+                          {option.id === 'system'
+                            ? 'Follow macOS or system theme.'
+                            : option.id === 'light'
+                              ? 'Bright interface with softer contrast.'
+                              : 'Dark surfaces for lower-light use.'}
+                        </p>
+                      </button>
+                    )
+                  })}
+                </div>
+              </SettingsPanel>
+
+              <SettingsPanel
+                title="Color Theme"
+                description="Select a preset or customize colors and fonts."
+              >
+                <ThemeCustomizer
+                  resolved={resolved}
+                  customization={customization}
+                  onChange={(next) => void setCustomization(next)}
+                />
+              </SettingsPanel>
+            </>
           )}
 
           {activeSection === 'agents' && (
@@ -841,6 +859,186 @@ export function SettingsPage({
               </div>
             </SettingsPanel>
           )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Color Swatch Input ──────────────────────────────────────────────────
+
+function ColorRow({
+  label,
+  value,
+  onChange,
+}: {
+  label: string
+  value: string
+  onChange: (hex: string) => void
+}): React.ReactElement {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2">
+      <label className="text-sm font-medium">{label}</label>
+      <div className="flex items-center gap-2">
+        <div className="relative">
+          <input
+            type="color"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          />
+          <span
+            className="block h-6 w-6 rounded-full border border-border/60 shadow-sm"
+            style={{ backgroundColor: value }}
+          />
+        </div>
+        <Input
+          className="w-[100px] text-center font-mono text-xs uppercase"
+          value={value}
+          onChange={(e) => {
+            const v = e.target.value
+            if (/^#[0-9a-fA-F]{0,6}$/.test(v)) onChange(v)
+          }}
+          maxLength={7}
+        />
+      </div>
+    </div>
+  )
+}
+
+// ─── Theme Customizer ────────────────────────────────────────────────────
+
+function ThemeCustomizer({
+  resolved,
+  customization,
+  onChange,
+}: {
+  resolved: 'light' | 'dark'
+  customization: ThemeCustomization
+  onChange: (next: ThemeCustomization) => void
+}): React.ReactElement {
+  const [presetOpen, setPresetOpen] = useState(false)
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
+
+  const activeColors = resolved === 'dark' ? customization.colors.dark : customization.colors.light
+  const modeLabel = resolved === 'dark' ? 'Dark' : 'Light'
+  const currentPreset = getPresetById(customization.preset)
+
+  const togglePresetMenu = (): void => {
+    if (presetOpen) {
+      setPresetOpen(false)
+      return
+    }
+    if (triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect()
+      setMenuPos({ top: rect.bottom + 4, left: rect.right - 220 })
+    }
+    setPresetOpen(true)
+  }
+
+  const updateColor = (field: keyof typeof activeColors, hex: string): void => {
+    const nextColors = { ...customization.colors }
+    if (resolved === 'dark') {
+      nextColors.dark = { ...nextColors.dark, [field]: hex }
+    } else {
+      nextColors.light = { ...nextColors.light, [field]: hex }
+    }
+    onChange({ ...customization, colors: nextColors })
+  }
+
+  const selectPreset = (presetId: string): void => {
+    const preset = getPresetById(presetId)
+    if (!preset) return
+    onChange({
+      preset: preset.id,
+      colors: { light: { ...preset.light }, dark: { ...preset.dark } },
+      uiFont: preset.uiFont ?? '',
+      codeFont: preset.codeFont ?? '',
+    })
+    setPresetOpen(false)
+  }
+
+  return (
+    <div className="space-y-1">
+      {/* Preset selector + preview */}
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <span className="text-sm text-muted-foreground">{modeLabel} theme</span>
+        <div className="relative">
+          <button
+            ref={triggerRef}
+            type="button"
+            className="flex h-9 items-center gap-2 rounded-xl border border-border/50 bg-muted/30 px-3 text-sm font-medium transition-colors hover:bg-muted/50"
+            onClick={togglePresetMenu}
+          >
+            {/* Mini color preview dots */}
+            <span className="flex gap-1">
+              <span className="h-3 w-3 rounded-full border border-border/40" style={{ backgroundColor: activeColors.accent }} />
+              <span className="h-3 w-3 rounded-full border border-border/40" style={{ backgroundColor: activeColors.background }} />
+              <span className="h-3 w-3 rounded-full border border-border/40" style={{ backgroundColor: activeColors.foreground }} />
+            </span>
+            <span>{currentPreset?.name ?? 'Custom'}</span>
+            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+
+          {presetOpen && (
+            <>
+              <div className="fixed inset-0 z-40" onClick={() => setPresetOpen(false)} />
+              <div className="fixed z-50 w-[220px] max-h-[320px] overflow-y-auto rounded-xl border border-border/50 bg-popover p-1 shadow-lg" style={menuPos ? { top: menuPos.top, left: menuPos.left } : undefined}>
+                {THEME_PRESETS.map((preset) => {
+                  const previewColors = resolved === 'dark' ? preset.dark : preset.light
+                  return (
+                    <button
+                      key={preset.id}
+                      type="button"
+                      className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
+                        customization.preset === preset.id
+                          ? 'bg-accent text-foreground font-medium'
+                          : 'hover:bg-accent/60'
+                      }`}
+                      onClick={() => selectPreset(preset.id)}
+                    >
+                      <span className="flex gap-0.5">
+                        <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.accent }} />
+                        <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.background }} />
+                        <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.foreground }} />
+                      </span>
+                      <span className="flex-1 truncate">{preset.name}</span>
+                    </button>
+                  )
+                })}
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+
+      {/* Color rows */}
+      <div className="divide-y divide-border/30">
+        <ColorRow label="Accent" value={activeColors.accent} onChange={(hex) => updateColor('accent', hex)} />
+        <ColorRow label="Background" value={activeColors.background} onChange={(hex) => updateColor('background', hex)} />
+        <ColorRow label="Foreground" value={activeColors.foreground} onChange={(hex) => updateColor('foreground', hex)} />
+      </div>
+
+      {/* Font rows */}
+      <div className="mt-4 divide-y divide-border/30">
+        <div className="flex items-center justify-between gap-4 py-2">
+          <label className="text-sm font-medium">UI Font</label>
+          <Input
+            className="max-w-[200px] text-right text-sm"
+            value={customization.uiFont}
+            onChange={(e) => onChange({ ...customization, uiFont: e.target.value })}
+            placeholder="System default"
+          />
+        </div>
+        <div className="flex items-center justify-between gap-4 py-2">
+          <label className="text-sm font-medium">Code Font</label>
+          <Input
+            className="max-w-[200px] text-right text-sm"
+            value={customization.codeFont}
+            onChange={(e) => onChange({ ...customization, codeFont: e.target.value })}
+            placeholder="System default"
+          />
         </div>
       </div>
     </div>
