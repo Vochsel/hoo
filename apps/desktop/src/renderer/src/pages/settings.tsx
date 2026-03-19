@@ -918,24 +918,23 @@ function ThemeCustomizer({
   onChange: (next: ThemeCustomization) => void
 }): React.ReactElement {
   const [presetOpen, setPresetOpen] = useState(false)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
 
   const activeColors = resolved === 'dark' ? customization.colors.dark : customization.colors.light
   const modeLabel = resolved === 'dark' ? 'Dark' : 'Light'
   const currentPreset = getPresetById(customization.preset)
 
-  const togglePresetMenu = (): void => {
-    if (presetOpen) {
-      setPresetOpen(false)
-      return
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!presetOpen) return
+    const handleClick = (e: MouseEvent): void => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setPresetOpen(false)
+      }
     }
-    if (triggerRef.current) {
-      const rect = triggerRef.current.getBoundingClientRect()
-      setMenuPos({ top: rect.bottom + 4, left: rect.right - 220 })
-    }
-    setPresetOpen(true)
-  }
+    document.addEventListener('mousedown', handleClick)
+    return () => document.removeEventListener('mousedown', handleClick)
+  }, [presetOpen])
 
   const updateColor = (field: keyof typeof activeColors, hex: string): void => {
     const nextColors = { ...customization.colors }
@@ -964,14 +963,12 @@ function ThemeCustomizer({
       {/* Preset selector + preview */}
       <div className="mb-4 flex items-center justify-between gap-3">
         <span className="text-sm text-muted-foreground">{modeLabel} theme</span>
-        <div className="relative">
+        <div ref={containerRef} className="relative">
           <button
-            ref={triggerRef}
             type="button"
             className="flex h-9 items-center gap-2 rounded-xl border border-border/50 bg-muted/30 px-3 text-sm font-medium transition-colors hover:bg-muted/50"
-            onClick={togglePresetMenu}
+            onClick={() => setPresetOpen(!presetOpen)}
           >
-            {/* Mini color preview dots */}
             <span className="flex gap-1">
               <span className="h-3 w-3 rounded-full border border-border/40" style={{ backgroundColor: activeColors.accent }} />
               <span className="h-3 w-3 rounded-full border border-border/40" style={{ backgroundColor: activeColors.background }} />
@@ -982,33 +979,30 @@ function ThemeCustomizer({
           </button>
 
           {presetOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setPresetOpen(false)} />
-              <div className="fixed z-50 w-[220px] max-h-[320px] overflow-y-auto rounded-xl border border-border/50 bg-popover p-1 shadow-lg" style={menuPos ? { top: menuPos.top, left: menuPos.left } : undefined}>
-                {THEME_PRESETS.map((preset) => {
-                  const previewColors = resolved === 'dark' ? preset.dark : preset.light
-                  return (
-                    <button
-                      key={preset.id}
-                      type="button"
-                      className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
-                        customization.preset === preset.id
-                          ? 'bg-accent text-foreground font-medium'
-                          : 'hover:bg-accent/60'
-                      }`}
-                      onClick={() => selectPreset(preset.id)}
-                    >
-                      <span className="flex gap-0.5">
-                        <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.accent }} />
-                        <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.background }} />
-                        <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.foreground }} />
-                      </span>
-                      <span className="flex-1 truncate">{preset.name}</span>
-                    </button>
-                  )
-                })}
-              </div>
-            </>
+            <div className="absolute right-0 top-full z-50 mt-1 w-[220px] max-h-[320px] overflow-y-auto rounded-xl border border-border/50 bg-popover p-1 shadow-lg">
+              {THEME_PRESETS.map((preset) => {
+                const previewColors = resolved === 'dark' ? preset.dark : preset.light
+                return (
+                  <button
+                    key={preset.id}
+                    type="button"
+                    className={`flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm transition-colors ${
+                      customization.preset === preset.id
+                        ? 'bg-accent text-foreground font-medium'
+                        : 'hover:bg-accent/60'
+                    }`}
+                    onClick={() => selectPreset(preset.id)}
+                  >
+                    <span className="flex gap-0.5">
+                      <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.accent }} />
+                      <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.background }} />
+                      <span className="h-3.5 w-3.5 rounded-full border border-border/40" style={{ backgroundColor: previewColors.foreground }} />
+                    </span>
+                    <span className="flex-1 truncate">{preset.name}</span>
+                  </button>
+                )
+              })}
+            </div>
           )}
         </div>
       </div>
