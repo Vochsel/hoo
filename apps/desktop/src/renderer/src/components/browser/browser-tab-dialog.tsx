@@ -737,7 +737,7 @@ export function BrowserTabDialog({
                 ref={setupWebview}
                 src={webviewSrc}
                 partition="persist:browser-tabs"
-                allowpopups
+                allowpopups="true"
                 useragent={WEBVIEW_USER_AGENT}
                 style={{ width: '100%', height: '100%' }}
               />

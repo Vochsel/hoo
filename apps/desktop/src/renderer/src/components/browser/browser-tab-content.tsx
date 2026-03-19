@@ -247,7 +247,7 @@ export function BrowserTabContent({
           ref={setupWebview}
           src={initialUrlRef.current}
           partition="persist:browser-tabs"
-          allowpopups
+          allowpopups="true"
           useragent={WEBVIEW_USER_AGENT}
           style={{ width: '100%', height: '100%' }}
         />
