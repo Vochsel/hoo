@@ -5,6 +5,8 @@ import type { AssetDef } from './hub-assets'
 /*  Village world model                                                */
 /* ------------------------------------------------------------------ */
 
+export const TOWN_CAR_ID = 'town-car'
+
 export interface VillageNeighborhood {
   id: string
   folder: WorkspaceFolder
@@ -69,8 +71,18 @@ export interface ObjectPositionOverride {
   rotation: number
 }
 
+export interface DrivableCarData {
+  position: [number, number, number]
+  rotation: number
+}
+
+export interface DrivableCarState extends DrivableCarData {
+  speed: number
+}
+
 export interface VillageData {
   objectPositions: Record<string, ObjectPositionOverride>
+  car?: DrivableCarData
 }
 
 /* ------------------------------------------------------------------ */

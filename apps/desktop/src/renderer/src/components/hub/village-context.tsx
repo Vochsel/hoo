@@ -1,9 +1,9 @@
-import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef, type MutableRefObject } from 'react'
 import type { WorkspaceFolder, WorkspaceBoard } from '@/hooks/use-workspace'
 import type {
   VillageNeighborhood, VillageLocation, CameraMode,
   ActiveDialog, DecorationPlacement, SceneProp,
-  ObjectPositionOverride, VillageData
+  ObjectPositionOverride, VillageData, DrivableCarData, DrivableCarState
 } from './village-types'
 import { useVillageLayout, type RoadSegment } from './use-village-layout'
 
@@ -34,6 +34,26 @@ async function saveVillageData(data: VillageData): Promise<void> {
     await window.api.graphNodes.writeFile(path, JSON.stringify(data, null, 2), 'overwrite')
   } catch (e) {
     console.warn('Failed to save village data:', e)
+  }
+}
+
+function getDefaultCarData(roads: RoadSegment[]): DrivableCarData {
+  const firstRoad = roads[0]
+  if (!firstRoad) {
+    return { position: [2, 0, 12], rotation: 0 }
+  }
+
+  const rotation = firstRoad.angle - Math.PI
+  const rightX = Math.cos(rotation)
+  const rightZ = -Math.sin(rotation)
+
+  return {
+    position: [
+      firstRoad.cx + rightX * 1.7,
+      0,
+      firstRoad.cz + rightZ * 1.7
+    ],
+    rotation
   }
 }
 
@@ -110,6 +130,13 @@ interface VillageState {
   persistedPlayerPos: PersistedPlayerPos | null
   persistPlayerPos: (pos: PersistedPlayerPos) => void
 
+  // Drivable car
+  carStateRef: MutableRefObject<DrivableCarState>
+  isDriving: boolean
+  enterCar: () => void
+  exitCar: () => void
+  persistCarTransform: () => void
+
   // Board items refresh (bumped when dialog closes to re-fetch screenshots)
   boardItemsVersion: number
 
@@ -171,11 +198,24 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
   const [persistedPlayerPos, setPersistedPlayerPos] = useState<PersistedPlayerPos | null>(null)
   const playerPosSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Drivable car
+  const defaultCarData = useMemo(() => getDefaultCarData(roads), [roads])
+  const carStateRef = useRef<DrivableCarState>({ ...defaultCarData, speed: 0 })
+  const [isDriving, setIsDriving] = useState(false)
+  const hasLoadedSavedCar = useRef(false)
+  const carSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
   // Load village data on mount
   useEffect(() => {
     loadVillageData().then((data) => {
       villageDataRef.current = data
       setObjectPositions(data.objectPositions)
+      if (data.car) {
+        hasLoadedSavedCar.current = true
+        carStateRef.current.position = [...data.car.position] as [number, number, number]
+        carStateRef.current.rotation = data.car.rotation
+        carStateRef.current.speed = 0
+      }
     })
     loadPlayerPosition().then((pos) => {
       if (pos) {
@@ -186,6 +226,18 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
         }
       }
     })
+  }, [])
+
+  useEffect(() => {
+    if (hasLoadedSavedCar.current) return
+    carStateRef.current.position = [...defaultCarData.position] as [number, number, number]
+    carStateRef.current.rotation = defaultCarData.rotation
+    carStateRef.current.speed = 0
+  }, [defaultCarData])
+
+  useEffect(() => () => {
+    if (playerPosSaveTimer.current) clearTimeout(playerPosSaveTimer.current)
+    if (carSaveTimer.current) clearTimeout(carSaveTimer.current)
   }, [])
 
   const saveCameraPos = useCallback((pos: { x: number; y: number; z: number; yaw: number }) => {
@@ -205,6 +257,26 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
 
   const exitHouse = useCallback(() => {
     setLocation({ type: 'outdoor' })
+  }, [])
+
+  const enterCar = useCallback(() => {
+    if (location.type !== 'outdoor') return
+    carStateRef.current.speed = 0
+    setIsDriving(true)
+  }, [location.type])
+
+  const exitCar = useCallback(() => {
+    carStateRef.current.speed = 0
+    setIsDriving(false)
+    if (carSaveTimer.current) clearTimeout(carSaveTimer.current)
+    villageDataRef.current = {
+      ...villageDataRef.current,
+      car: {
+        position: [...carStateRef.current.position] as [number, number, number],
+        rotation: carStateRef.current.rotation
+      }
+    }
+    saveVillageData(villageDataRef.current)
   }, [])
 
   const interact = useCallback((id: string, kind: ActiveDialog['kind'], boardId: string) => {
@@ -289,6 +361,26 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
     }, 2000)
   }, [])
 
+  const persistCarTransform = useCallback(() => {
+    if (carSaveTimer.current) clearTimeout(carSaveTimer.current)
+    carSaveTimer.current = setTimeout(() => {
+      villageDataRef.current = {
+        ...villageDataRef.current,
+        car: {
+          position: [...carStateRef.current.position] as [number, number, number],
+          rotation: carStateRef.current.rotation
+        }
+      }
+      saveVillageData(villageDataRef.current)
+    }, 300)
+  }, [])
+
+  useEffect(() => {
+    if (location.type === 'outdoor' || !isDriving) return
+    carStateRef.current.speed = 0
+    setIsDriving(false)
+  }, [isDriving, location.type])
+
   const value = useMemo<VillageState>(() => ({
     neighborhoods, scenery, roads, location, cameraMode, hoveredId, activeDialog,
     decorations, isDecoMode, savedCameraPos, saveCameraPos,
@@ -296,6 +388,7 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
     toggleDecoMode, addDecoration, moveDecoration, rotateDecoration, deleteDecoration,
     grabbedObjectId, objectPositions, grabObject, placeObject, updateGrabbedPosition,
     persistedPlayerPos, persistPlayerPos,
+    carStateRef, isDriving, enterCar, exitCar, persistCarTransform,
     boardItemsVersion,
     folders, boards, onSelectBoard
   }), [
@@ -305,6 +398,7 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
     toggleDecoMode, addDecoration, moveDecoration, rotateDecoration, deleteDecoration,
     grabbedObjectId, objectPositions, grabObject, placeObject, updateGrabbedPosition,
     persistedPlayerPos, persistPlayerPos,
+    carStateRef, isDriving, enterCar, exitCar, persistCarTransform,
     boardItemsVersion,
     folders, boards, onSelectBoard
   ])

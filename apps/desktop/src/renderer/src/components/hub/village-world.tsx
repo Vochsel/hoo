@@ -4,7 +4,7 @@ import { Text, Billboard } from '@react-three/drei'
 import * as THREE from 'three'
 import { useVillage } from './village-context'
 import { GlbModel, seededRandom, type AssetDef } from './hub-assets'
-import type { VillageNeighborhood, VillageHouse, SceneProp } from './village-types'
+import { TOWN_CAR_ID, type VillageNeighborhood, type VillageHouse, type SceneProp } from './village-types'
 import type { RoadSegment } from './use-village-layout'
 import { FluffyGrass } from './fluffy-grass'
 
@@ -369,6 +369,148 @@ function GrabbableScenery({
   )
 }
 
+const CAR_BODY_COLOR = '#c74b33'
+const CAR_TRIM_COLOR = '#f6d481'
+const CAR_WINDOW_COLOR = '#b8dcf2'
+const CAR_WHEEL_COLOR = '#1d1d24'
+const CAR_WHEEL_RADIUS = 0.42
+const CAR_WHEEL_POSITIONS: [number, number, number][] = [
+  [-1.15, CAR_WHEEL_RADIUS, -1.45],
+  [1.15, CAR_WHEEL_RADIUS, -1.45],
+  [-1.15, CAR_WHEEL_RADIUS, 1.45],
+  [1.15, CAR_WHEEL_RADIUS, 1.45],
+]
+
+function TownCar() {
+  const { hoveredId, isDriving, carStateRef } = useVillage()
+  const groupRef = useRef<THREE.Group>(null)
+  const wheelRefs = useRef<(THREE.Group | null)[]>([])
+  const isHighlighted = hoveredId === TOWN_CAR_ID
+  const showPrompt = isHighlighted || isDriving
+
+  useFrame((_, delta) => {
+    if (!groupRef.current) return
+    const car = carStateRef.current
+    groupRef.current.position.set(car.position[0], car.position[1], car.position[2])
+    groupRef.current.rotation.y = car.rotation
+
+    const wheelSpin = (car.speed * delta) / CAR_WHEEL_RADIUS
+    wheelRefs.current.forEach((wheel) => {
+      if (!wheel) return
+      wheel.rotation.x -= wheelSpin
+    })
+  })
+
+  return (
+    <group ref={groupRef}>
+      <mesh position={[0, 0.38, 0]} castShadow receiveShadow>
+        <boxGeometry args={[2.35, 0.65, 4.7]} />
+        <meshStandardMaterial color={CAR_BODY_COLOR} metalness={0.15} roughness={0.62} />
+      </mesh>
+
+      <mesh position={[0, 0.96, -0.1]} castShadow receiveShadow>
+        <boxGeometry args={[1.85, 0.88, 2.5]} />
+        <meshStandardMaterial color={CAR_BODY_COLOR} metalness={0.12} roughness={0.6} />
+      </mesh>
+
+      <mesh position={[0, 1.02, -0.12]} castShadow>
+        <boxGeometry args={[1.7, 0.72, 2.15]} />
+        <meshStandardMaterial color={CAR_WINDOW_COLOR} metalness={0.08} roughness={0.14} transparent opacity={0.72} />
+      </mesh>
+
+      <mesh position={[0, 0.72, -2.16]} castShadow receiveShadow>
+        <boxGeometry args={[2.1, 0.3, 0.35]} />
+        <meshStandardMaterial color={CAR_TRIM_COLOR} metalness={0.2} roughness={0.42} />
+      </mesh>
+
+      <mesh position={[0, 0.72, 2.16]} castShadow receiveShadow>
+        <boxGeometry args={[2.05, 0.22, 0.28]} />
+        <meshStandardMaterial color="#e8d0b0" metalness={0.1} roughness={0.48} />
+      </mesh>
+
+      <mesh position={[-0.75, 0.63, -2.38]} castShadow>
+        <sphereGeometry args={[0.14, 12, 12]} />
+        <meshStandardMaterial color="#fff4c7" emissive="#fff1a6" emissiveIntensity={showPrompt ? 1.1 : 0.5} />
+      </mesh>
+      <mesh position={[0.75, 0.63, -2.38]} castShadow>
+        <sphereGeometry args={[0.14, 12, 12]} />
+        <meshStandardMaterial color="#fff4c7" emissive="#fff1a6" emissiveIntensity={showPrompt ? 1.1 : 0.5} />
+      </mesh>
+
+      <mesh position={[-0.72, 0.62, 2.38]} castShadow>
+        <sphereGeometry args={[0.12, 12, 12]} />
+        <meshStandardMaterial color="#ff8a66" emissive="#ff5a33" emissiveIntensity={isDriving ? 1.2 : 0.55} />
+      </mesh>
+      <mesh position={[0.72, 0.62, 2.38]} castShadow>
+        <sphereGeometry args={[0.12, 12, 12]} />
+        <meshStandardMaterial color="#ff8a66" emissive="#ff5a33" emissiveIntensity={isDriving ? 1.2 : 0.55} />
+      </mesh>
+
+      {CAR_WHEEL_POSITIONS.map(([x, y, z], index) => (
+        <group
+          key={`car-wheel-${index}`}
+          ref={(node) => {
+            wheelRefs.current[index] = node
+          }}
+          position={[x, y, z]}
+        >
+          <mesh rotation={[0, 0, Math.PI / 2]} castShadow receiveShadow>
+            <cylinderGeometry args={[CAR_WHEEL_RADIUS, CAR_WHEEL_RADIUS, 0.42, 18]} />
+            <meshStandardMaterial color={CAR_WHEEL_COLOR} roughness={0.92} />
+          </mesh>
+          <mesh rotation={[0, 0, Math.PI / 2]} castShadow>
+            <cylinderGeometry args={[0.18, 0.18, 0.45, 12]} />
+            <meshStandardMaterial color="#b9c0c8" metalness={0.65} roughness={0.3} />
+          </mesh>
+        </group>
+      ))}
+
+      {showPrompt && (
+        <>
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+            <ringGeometry args={[3.1, 3.8, 40]} />
+            <meshStandardMaterial
+              color={isDriving ? '#ffd84d' : '#4cc4ff'}
+              emissive={isDriving ? '#ffd84d' : '#4cc4ff'}
+              emissiveIntensity={0.55}
+              transparent
+              opacity={0.65}
+            />
+          </mesh>
+
+          <Billboard position={[0, 3.3, 0]}>
+            <group>
+              <Text
+                position={[0, 0.34, 0]}
+                fontSize={0.34}
+                color="#fff8da"
+                anchorX="center"
+                anchorY="bottom"
+                outlineWidth={0.03}
+                outlineColor="#000000"
+                fontWeight="bold"
+              >
+                Town Car
+              </Text>
+              <Text
+                position={[0, 0, 0]}
+                fontSize={0.24}
+                color={isDriving ? '#ffe077' : '#aee4ff'}
+                anchorX="center"
+                anchorY="bottom"
+                outlineWidth={0.025}
+                outlineColor="#000000"
+              >
+                {isDriving ? '[E] Exit car' : '[E] Drive'}
+              </Text>
+            </group>
+          </Billboard>
+        </>
+      )}
+    </group>
+  )
+}
+
 export function VillageWorld({ nightFactor }: { nightFactor: number }) {
   const { neighborhoods, scenery, roads } = useVillage()
 
@@ -392,6 +534,7 @@ export function VillageWorld({ nightFactor }: { nightFactor: number }) {
       ))}
 
       <VillagerCrowd minZ={roadExtents.minZ} maxZ={roadExtents.maxZ} />
+      <TownCar />
 
       {neighborhoods.map((n) => (
         <Neighborhood key={n.id} data={n} nightFactor={nightFactor} />

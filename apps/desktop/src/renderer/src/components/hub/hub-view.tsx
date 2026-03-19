@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { LayoutGrid, Footprints, Home } from 'lucide-react'
 import { HubReactFlowView } from './hub-reactflow-view'
-import { VillageProvider } from './village-context'
+import { VillageProvider, useVillage } from './village-context'
 import { VillageScene } from './village-scene'
 import { VillageDialog } from './village-dialog'
 import type { WorkspaceFolder, WorkspaceBoard } from '@/hooks/use-workspace'
@@ -13,6 +13,27 @@ interface HubViewProps {
   folders: WorkspaceFolder[]
   boards: WorkspaceBoard[]
   onSelectBoard: (boardId: string) => void
+}
+
+function FPSHud() {
+  const { isDriving } = useVillage()
+
+  return (
+    <div className="absolute bottom-4 left-4 rounded-lg bg-black/60 px-4 py-2 text-xs text-white/80 backdrop-blur-sm">
+      {isDriving ? (
+        <>
+          <p>W/S to accelerate and reverse · A/D to steer · Shift to boost · Space to brake</p>
+          <p><span className="font-bold text-white">E</span> to hop back out of the car</p>
+        </>
+      ) : (
+        <>
+          <p>Click to lock mouse · WASD to move · Shift to run · Space to jump</p>
+          <p>Walk into door circles to enter · <span className="font-bold text-white">E</span> to interact · <span className="font-bold text-white">G</span> to grab/place · <span className="font-bold text-white">Esc</span> to exit house</p>
+          <p>Find the town car and press <span className="font-bold text-white">E</span> to drive it</p>
+        </>
+      )}
+    </div>
+  )
 }
 
 export function HubView({ folders, boards, onSelectBoard }: HubViewProps) {
@@ -90,10 +111,7 @@ export function HubView({ folders, boards, onSelectBoard }: HubViewProps) {
                 <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
                   <div className="h-1 w-1 rounded-full bg-white/60" />
                 </div>
-                <div className="absolute bottom-4 left-4 rounded-lg bg-black/60 px-4 py-2 text-xs text-white/80 backdrop-blur-sm">
-                  <p>Click to lock mouse · WASD to move · Shift to run · Space to jump</p>
-                  <p>Walk into door circles to enter · <span className="font-bold text-white">E</span> to interact · <span className="font-bold text-white">G</span> to grab/place · <span className="font-bold text-white">Esc</span> to exit house</p>
-                </div>
+                <FPSHud />
               </>
             )}
 
