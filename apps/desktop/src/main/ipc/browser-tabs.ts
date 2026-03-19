@@ -40,6 +40,15 @@ interface ChatPageContext {
 
 const liveTabWebContentsById = new Map<string, number>()
 
+export function findLiveTabIdByWebContentsId(webContentsId: number): string | undefined {
+  for (const [tabId, mappedWebContentsId] of liveTabWebContentsById) {
+    if (mappedWebContentsId === webContentsId) {
+      return tabId
+    }
+  }
+  return undefined
+}
+
 type UrlParts = {
   full: string
   noHash: string
@@ -770,6 +779,7 @@ export function registerBrowserTabHandlers(): void {
       board.edges = board.edges.filter((edge) => edge.sourceNodeId !== id && edge.targetNodeId !== id)
       removeBoardViewOrderId(board, id)
     })
+    liveTabWebContentsById.delete(id)
     const appDb = getAppDb()
     appDb.delete(browserTabs).where(eq(browserTabs.id, id)).run()
     appDb.delete(browserTabMessages).where(eq(browserTabMessages.tabId, id)).run()

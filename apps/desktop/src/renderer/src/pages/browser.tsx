@@ -3029,6 +3029,65 @@ function BrowserPageInner(): React.ReactElement {
     [updateBoardItemOrder]
   )
 
+  useEffect(() => {
+    return window.api.browserTabs.onOpenLinkInNewTabRequested(({ sourceTabId, url, disposition }) => {
+      if (!activeBoardId || !url) return
+
+      const sourceTab = tabs.find((tab) => tab.id === sourceTabId)
+      if (!sourceTab) return
+      const flowX = sourceTab.flowX + 280
+      const flowY = sourceTab.flowY + 20
+      const preferredOrderIds = boardItemOrderMap.get(activeBoardId) ?? []
+      const availableItemIds = new Set([
+        ...tabs.map((tab) => tab.id),
+        ...terminalNodes.map((node) => node.id),
+        ...fileNodes.map((node) => node.id)
+      ])
+      const currentOrder: string[] = []
+      const seen = new Set<string>()
+      for (const id of preferredOrderIds) {
+        if (!id || seen.has(id) || !availableItemIds.has(id)) continue
+        seen.add(id)
+        currentOrder.push(id)
+      }
+      for (const tab of tabs) {
+        if (seen.has(tab.id)) continue
+        seen.add(tab.id)
+        currentOrder.push(tab.id)
+      }
+      for (const node of terminalNodes) {
+        if (seen.has(node.id)) continue
+        seen.add(node.id)
+        currentOrder.push(node.id)
+      }
+      for (const node of fileNodes) {
+        if (seen.has(node.id)) continue
+        seen.add(node.id)
+        currentOrder.push(node.id)
+      }
+
+      void createTab({ url, flowX, flowY })
+        .then((tab) => {
+          const sourceIndex = currentOrder.indexOf(sourceTabId)
+          const nextOrder =
+            sourceIndex === -1
+              ? [...currentOrder, tab.id]
+              : [
+                  ...currentOrder.slice(0, sourceIndex + 1),
+                  tab.id,
+                  ...currentOrder.slice(sourceIndex + 1)
+                ]
+          void saveBoardItemOrder(activeBoardId, nextOrder)
+          if (disposition !== 'foreground-tab') return
+          setBoardView('tabs')
+          requestTabSelect(tab.id)
+        })
+        .catch((error) => {
+          console.error(`${FLOW_TAG} failed to open link in new tab from source=${sourceTabId}:`, error)
+        })
+    })
+  }, [activeBoardId, boardItemOrderMap, createTab, fileNodes, requestTabSelect, saveBoardItemOrder, tabs, terminalNodes])
+
   const getOrderedSidebarBoardItems = useCallback(
     (boardId: string): SidebarBoardItem[] => {
       const boardTabs = boardId === activeBoardId ? tabs : (boardTabsMap.get(boardId) ?? [])

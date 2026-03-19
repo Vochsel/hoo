@@ -48,7 +48,27 @@ const api = {
     ) => ipcRenderer.invoke('browserTabs:executeActions', webContentsId, actions),
     abortChat: (tabId: string, boardId?: string) => ipcRenderer.invoke('browserTabs:abortChat', tabId, boardId),
     generateMonitorRule: (condition: string, pageHtml: string, pageUrl: string) =>
-      ipcRenderer.invoke('browserTabs:generateMonitorRule', condition, pageHtml, pageUrl)
+      ipcRenderer.invoke('browserTabs:generateMonitorRule', condition, pageHtml, pageUrl),
+    onOpenLinkInNewTabRequested: (
+      callback: (payload: {
+        sourceTabId: string
+        url: string
+        disposition: 'foreground-tab' | 'background-tab'
+      }) => void
+    ) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        payload: {
+          sourceTabId: string
+          url: string
+          disposition: 'foreground-tab' | 'background-tab'
+        }
+      ): void => {
+        callback(payload)
+      }
+      ipcRenderer.on('browserTabs:openLinkInNewTabRequested', listener)
+      return () => { ipcRenderer.removeListener('browserTabs:openLinkInNewTabRequested', listener) }
+    }
   },
 
   graphNodes: {

@@ -70,13 +70,13 @@
 
 /* macOS: sidebar and content drag regions */
 .sidebar-traffic-row {
-  padding-top: 14px;
+  padding-top: 9px;
   height: 44px;
 }
 
 .traffic-light-tabs-row {
   min-height: 44px;
-  padding-top: 14px;
+  padding-top: 9px;
 }
 
 .traffic-light-offset {

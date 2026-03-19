@@ -5,7 +5,7 @@ import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { autoUpdater } from 'electron-updater'
 import { getDb } from './db/client'
 import { registerSettingsHandlers } from './ipc/settings'
-import { registerBrowserTabHandlers } from './ipc/browser-tabs'
+import { findLiveTabIdByWebContentsId, registerBrowserTabHandlers } from './ipc/browser-tabs'
 import { registerWorkspaceHandlers } from './ipc/workspace'
 import { registerTerminalHandlers, cleanupTerminalSessions } from './ipc/terminal'
 
@@ -71,11 +71,34 @@ function trackPopupWindow(popupWindow: BrowserWindow): void {
   })
 }
 
-function attachPopupSupport(sourceContents: WebContents, iconPath: string | null): void {
+function attachPopupSupport(
+  sourceContents: WebContents,
+  iconPath: string | null,
+  hostContents?: WebContents,
+  sourceTabId?: string
+): void {
   sourceContents.setWindowOpenHandler((details) => {
+    const openerTabId = sourceTabId ?? findLiveTabIdByWebContentsId(sourceContents.id)
     console.log(
-      `[main] popup requested opener=${sourceContents.id} disposition=${details.disposition} url=${details.url}`
+      `[main] popup requested opener=${sourceContents.id} tab=${openerTabId ?? 'unknown'} disposition=${details.disposition} url=${details.url}`
     )
+
+    if (
+      (details.disposition === 'foreground-tab' || details.disposition === 'background-tab') &&
+      openerTabId &&
+      hostContents &&
+      !hostContents.isDestroyed()
+    ) {
+      hostContents.send('browserTabs:openLinkInNewTabRequested', {
+        sourceTabId: openerTabId,
+        url: details.url,
+        disposition: details.disposition
+      })
+      console.log(
+        `[main] routed tab-open opener=${sourceContents.id} tab=${openerTabId} disposition=${details.disposition} url=${details.url}`
+      )
+      return { action: 'deny' }
+    }
 
     return {
       action: 'allow',
@@ -103,7 +126,7 @@ function attachPopupSupport(sourceContents: WebContents, iconPath: string | null
           )
         })
 
-        attachPopupSupport(popupWindow.webContents, iconPath)
+        attachPopupSupport(popupWindow.webContents, iconPath, hostContents, openerTabId)
         return popupWindow.webContents
       }
     }
@@ -143,7 +166,7 @@ function createWindow(iconPath: string | null): void {
   })
 
   mainWindow.webContents.on('did-attach-webview', (_event, guestContents) => {
-    attachPopupSupport(guestContents, iconPath)
+    attachPopupSupport(guestContents, iconPath, mainWindow.webContents)
   })
 
   mainWindow.webContents.setWindowOpenHandler((details) => {

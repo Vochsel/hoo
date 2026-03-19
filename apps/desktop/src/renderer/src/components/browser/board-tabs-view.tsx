@@ -513,7 +513,7 @@ export function BoardTabsView({
               key={id}
               type="button"
               draggable
-              className={`no-drag group relative flex max-w-[200px] items-center gap-1.5 rounded-t-lg border -mb-px px-3 py-1.5 text-xs transition-colors ${
+              className={`no-drag group relative flex max-w-[200px] items-center gap-1.5 ${isSelected ? 'rounded-t-xl' : 'rounded-t-lg'} border -mb-px px-3 py-1.5 text-xs transition-colors ${
                 isSelected
                   ? 'bg-background border-border/60 border-b-background z-10 font-medium'
                   : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
