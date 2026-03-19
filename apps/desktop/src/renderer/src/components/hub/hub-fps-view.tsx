@@ -3,6 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Text, Sky, ContactShadows } from '@react-three/drei'
 import * as THREE from 'three'
 import type { WorkspaceFolder, WorkspaceBoard } from '@/hooks/use-workspace'
+import { useHubWorldLighting } from '@/hooks/use-hub-world-lighting'
 import {
   GlbModel, HOUSE_ASSETS, TREE_ASSETS, OUTDOOR_PROPS, SMALL_PROPS,
   seededRandom, pickAsset, type AssetDef
@@ -290,6 +291,7 @@ interface HubFpsViewProps {
 
 export function HubFpsView({ folders, boards, onSelectBoard }: HubFpsViewProps) {
   const [hoveredBoard, setHoveredBoard] = useState<string | null>(null)
+  const lighting = useHubWorldLighting()
 
   // Build houses with assigned GLB models
   const houses = useMemo(() => {
@@ -412,14 +414,22 @@ export function HubFpsView({ folders, boards, onSelectBoard }: HubFpsViewProps) 
       <Canvas
         shadows
         camera={{ fov: 75, near: 0.1, far: 500 }}
-        style={{ background: '#87CEEB' }}
+        style={{ background: lighting.backgroundColor }}
       >
         <Suspense fallback={null}>
-          <Sky sunPosition={[100, 20, 100]} />
-          <ambientLight intensity={0.35} />
+          <color attach="background" args={[lighting.backgroundColor]} />
+          <Sky
+            sunPosition={lighting.sunPosition}
+            turbidity={lighting.skyTurbidity}
+            rayleigh={lighting.skyRayleigh}
+            mieCoefficient={lighting.skyMieCoefficient}
+            mieDirectionalG={lighting.skyMieDirectionalG}
+          />
+          <ambientLight intensity={lighting.ambientIntensity} />
           <directionalLight
-            position={[50, 50, 25]}
-            intensity={1.2}
+            position={lighting.directionalPosition}
+            intensity={lighting.directionalIntensity}
+            color={lighting.directionalColor}
             castShadow
             shadow-mapSize-width={2048}
             shadow-mapSize-height={2048}
@@ -428,8 +438,14 @@ export function HubFpsView({ folders, boards, onSelectBoard }: HubFpsViewProps) 
             shadow-camera-top={50}
             shadow-camera-bottom={-50}
           />
-          <hemisphereLight args={['#87CEEB', '#4a7c59', 0.3]} />
-          <fog attach="fog" args={['#87CEEB', 60, 180]} />
+          <hemisphereLight
+            args={[
+              lighting.hemisphereSkyColor,
+              lighting.hemisphereGroundColor,
+              lighting.hemisphereIntensity
+            ]}
+          />
+          <fog attach="fog" args={[lighting.fogColor, 60, 180]} />
 
           <FPSController personPositions={personPositions} onInteract={handleInteract} />
           <Ground />
@@ -437,7 +453,7 @@ export function HubFpsView({ folders, boards, onSelectBoard }: HubFpsViewProps) 
 
           <ContactShadows
             position={[((Math.min(houses.length, HOUSES_PER_ROW) - 1) * HOUSE_SPACING) / 2, 0.01, 0]}
-            opacity={0.35}
+            opacity={lighting.shadowOpacity}
             scale={120}
             blur={2.5}
             far={15}

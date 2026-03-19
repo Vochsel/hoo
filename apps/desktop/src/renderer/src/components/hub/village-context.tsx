@@ -1,10 +1,78 @@
-import { createContext, useContext, useState, useCallback, useMemo, useRef } from 'react'
+import { createContext, useContext, useState, useCallback, useMemo, useEffect, useRef } from 'react'
 import type { WorkspaceFolder, WorkspaceBoard } from '@/hooks/use-workspace'
 import type {
   VillageNeighborhood, VillageLocation, CameraMode,
-  ActiveDialog, DecorationPlacement, SceneProp
+  ActiveDialog, DecorationPlacement, SceneProp,
+  ObjectPositionOverride, VillageData
 } from './village-types'
 import { useVillageLayout, type RoadSegment } from './use-village-layout'
+
+/* ------------------------------------------------------------------ */
+/*  Persistent village data (workspace JSON file)                      */
+/* ------------------------------------------------------------------ */
+
+const VILLAGE_DATA_FILE = '.village-data.json'
+
+async function getVillageDataPath(): Promise<string> {
+  const state = await window.api.workspace.getState()
+  return state.rootDir + '/' + VILLAGE_DATA_FILE
+}
+
+async function loadVillageData(): Promise<VillageData> {
+  try {
+    const path = await getVillageDataPath()
+    const raw = await window.api.graphNodes.readFile(path)
+    return JSON.parse(raw) as VillageData
+  } catch {
+    return { objectPositions: {} }
+  }
+}
+
+async function saveVillageData(data: VillageData): Promise<void> {
+  try {
+    const path = await getVillageDataPath()
+    await window.api.graphNodes.writeFile(path, JSON.stringify(data, null, 2), 'overwrite')
+  } catch (e) {
+    console.warn('Failed to save village data:', e)
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Persistent player position (Electron settings)                     */
+/* ------------------------------------------------------------------ */
+
+const PLAYER_POS_KEY = 'hub-player-position'
+
+export interface PersistedPlayerPos {
+  x: number
+  y: number
+  z: number
+  yaw: number
+  pitch: number
+  locationType: 'outdoor' | 'indoor'
+  boardId?: string
+}
+
+async function loadPlayerPosition(): Promise<PersistedPlayerPos | null> {
+  try {
+    const val = await window.api.settings.get(PLAYER_POS_KEY)
+    return val as PersistedPlayerPos | null
+  } catch {
+    return null
+  }
+}
+
+async function savePlayerPosition(pos: PersistedPlayerPos): Promise<void> {
+  try {
+    await window.api.settings.set(PLAYER_POS_KEY, pos)
+  } catch {
+    // ignore
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  Context shape                                                      */
+/* ------------------------------------------------------------------ */
 
 interface VillageState {
   neighborhoods: VillageNeighborhood[]
@@ -30,6 +98,17 @@ interface VillageState {
 
   savedCameraPos: { x: number; y: number; z: number; yaw: number } | null
   saveCameraPos: (pos: { x: number; y: number; z: number; yaw: number }) => void
+
+  // Grab system
+  grabbedObjectId: string | null
+  objectPositions: Record<string, ObjectPositionOverride>
+  grabObject: (id: string) => void
+  placeObject: (position: [number, number, number], rotation: number) => void
+  updateGrabbedPosition: (position: [number, number, number]) => void
+
+  // Persistent player position
+  persistedPlayerPos: PersistedPlayerPos | null
+  persistPlayerPos: (pos: PersistedPlayerPos) => void
 
   folders: WorkspaceFolder[]
   boards: WorkspaceBoard[]
@@ -77,12 +156,37 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
   const [isDecoMode, setIsDecoMode] = useState(false)
   const [savedCameraPos, setSavedCameraPos] = useState<{ x: number; y: number; z: number; yaw: number } | null>(null)
 
+  // Object position overrides
+  const [objectPositions, setObjectPositions] = useState<Record<string, ObjectPositionOverride>>({})
+  const [grabbedObjectId, setGrabbedObjectId] = useState<string | null>(null)
+  const villageDataRef = useRef<VillageData>({ objectPositions: {} })
+
+  // Persistent player position
+  const [persistedPlayerPos, setPersistedPlayerPos] = useState<PersistedPlayerPos | null>(null)
+  const playerPosSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Load village data on mount
+  useEffect(() => {
+    loadVillageData().then((data) => {
+      villageDataRef.current = data
+      setObjectPositions(data.objectPositions)
+    })
+    loadPlayerPosition().then((pos) => {
+      if (pos) {
+        setPersistedPlayerPos(pos)
+        // Restore location if player was indoors
+        if (pos.locationType === 'indoor' && pos.boardId) {
+          setLocation({ type: 'indoor', boardId: pos.boardId, houseWorldPos: [0, 0, 0] })
+        }
+      }
+    })
+  }, [])
+
   const saveCameraPos = useCallback((pos: { x: number; y: number; z: number; yaw: number }) => {
     setSavedCameraPos(pos)
   }, [])
 
   const enterHouse = useCallback((boardId: string) => {
-    // Find house world position
     for (const n of neighborhoods) {
       for (const h of n.houses) {
         if (h.id === boardId) {
@@ -136,17 +240,60 @@ export function VillageProvider({ folders, boards, cameraMode: cameraModeFromPro
     })
   }, [])
 
+  // Grab system
+  const grabObject = useCallback((id: string) => {
+    setGrabbedObjectId(id)
+  }, [])
+
+  const placeObject = useCallback((position: [number, number, number], rotation: number) => {
+    setGrabbedObjectId((currentId) => {
+      if (!currentId) return null
+      setObjectPositions((prev) => {
+        const next = { ...prev, [currentId]: { position, rotation } }
+        // Save to file
+        villageDataRef.current = { ...villageDataRef.current, objectPositions: next }
+        saveVillageData(villageDataRef.current)
+        return next
+      })
+      return null
+    })
+  }, [])
+
+  const updateGrabbedPosition = useCallback((position: [number, number, number]) => {
+    setGrabbedObjectId((currentId) => {
+      if (!currentId) return null
+      setObjectPositions((prev) => ({
+        ...prev,
+        [currentId]: { position, rotation: prev[currentId]?.rotation ?? 0 }
+      }))
+      return currentId
+    })
+  }, [])
+
+  // Persist player position (debounced)
+  const persistPlayerPos = useCallback((pos: PersistedPlayerPos) => {
+    setPersistedPlayerPos(pos)
+    if (playerPosSaveTimer.current) clearTimeout(playerPosSaveTimer.current)
+    playerPosSaveTimer.current = setTimeout(() => {
+      savePlayerPosition(pos)
+    }, 2000)
+  }, [])
+
   const value = useMemo<VillageState>(() => ({
     neighborhoods, scenery, roads, location, cameraMode, hoveredId, activeDialog,
     decorations, isDecoMode, savedCameraPos, saveCameraPos,
     enterHouse, exitHouse, setHoveredId, interact, closeDialog,
     toggleDecoMode, addDecoration, moveDecoration, rotateDecoration, deleteDecoration,
+    grabbedObjectId, objectPositions, grabObject, placeObject, updateGrabbedPosition,
+    persistedPlayerPos, persistPlayerPos,
     folders, boards, onSelectBoard
   }), [
     neighborhoods, scenery, roads, location, cameraMode, hoveredId, activeDialog,
     decorations, isDecoMode, savedCameraPos, saveCameraPos,
     enterHouse, exitHouse, interact, closeDialog, setHoveredId,
     toggleDecoMode, addDecoration, moveDecoration, rotateDecoration, deleteDecoration,
+    grabbedObjectId, objectPositions, grabObject, placeObject, updateGrabbedPosition,
+    persistedPlayerPos, persistPlayerPos,
     folders, boards, onSelectBoard
   ])
 

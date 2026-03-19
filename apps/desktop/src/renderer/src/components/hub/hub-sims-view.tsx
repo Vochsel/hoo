@@ -3,6 +3,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Text, ContactShadows } from '@react-three/drei'
 import * as THREE from 'three'
 import type { WorkspaceFolder, WorkspaceBoard } from '@/hooks/use-workspace'
+import { useHubWorldLighting } from '@/hooks/use-hub-world-lighting'
 import { GlbModel, INDOOR_PROPS, SMALL_PROPS, seededRandom, pickAsset, type AssetDef } from './hub-assets'
 
 /* ------------------------------------------------------------------ */
@@ -438,6 +439,7 @@ export function HubSimsView({ folders, boards, onSelectBoard }: HubSimsViewProps
   const [hoveredBoard, setHoveredBoard] = useState<string | null>(null)
   const [selectedWall, setSelectedWall] = useState<string | null>(null)
   const [wallColors, setWallColors] = useState<Record<string, string>>({})
+  const lighting = useHubWorldLighting()
 
   const rooms = useMemo(() => {
     const boardsByFolder = new Map<string | null, WorkspaceBoard[]>()
@@ -496,63 +498,65 @@ export function HubSimsView({ folders, boards, onSelectBoard }: HubSimsViewProps
       <Canvas
         shadows
         camera={{ fov: 50, near: 0.1, far: 200 }}
-        style={{ background: '#1a1a2e' }}
+        style={{ background: lighting.backgroundColor }}
       >
         <Suspense fallback={null}>
-        <ambientLight intensity={0.4} />
-        <directionalLight
-          position={[20, 30, 10]}
-          intensity={0.9}
-          castShadow
-          shadow-mapSize-width={2048}
-          shadow-mapSize-height={2048}
-          shadow-camera-left={-30}
-          shadow-camera-right={30}
-          shadow-camera-top={30}
-          shadow-camera-bottom={-30}
-        />
-
-        <SimsCameraController roomCount={rooms.length} />
-
-        {/* Ground plane - at y=0 */}
-        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[
-          ((Math.min(rooms.length, ROOMS_PER_ROW) - 1) * (ROOM_SIZE + ROOM_GAP)) / 2,
-          0,
-          ((Math.ceil(rooms.length / ROOMS_PER_ROW) - 1) * (ROOM_SIZE + ROOM_GAP)) / 2
-        ]} receiveShadow>
-          <planeGeometry args={[
-            Math.min(rooms.length, ROOMS_PER_ROW) * (ROOM_SIZE + ROOM_GAP) + 4,
-            Math.ceil(rooms.length / ROOMS_PER_ROW) * (ROOM_SIZE + ROOM_GAP) + 4
-          ]} />
-          <meshStandardMaterial color="#3d5c3a" />
-        </mesh>
-
-        {/* Contact shadows for nice soft AO on the ground */}
-        <ContactShadows
-          position={[
-            ((Math.min(rooms.length, ROOMS_PER_ROW) - 1) * (ROOM_SIZE + ROOM_GAP)) / 2,
-            0.02,
-            ((Math.ceil(rooms.length / ROOMS_PER_ROW) - 1) * (ROOM_SIZE + ROOM_GAP)) / 2
-          ]}
-          opacity={0.4}
-          scale={60}
-          blur={2}
-          far={10}
-        />
-
-        {rooms.map((room, i) => (
-          <Room
-            key={room.folder.id}
-            data={room}
-            roomIndex={i}
-            hoveredBoard={hoveredBoard}
-            selectedWall={selectedWall}
-            onHoverBoard={setHoveredBoard}
-            onClickBoard={handleClickBoard}
-            onClickWall={handleClickWall}
-            wallColors={wallColors}
+          <color attach="background" args={[lighting.backgroundColor]} />
+          <ambientLight intensity={lighting.ambientIntensity + 0.08} />
+          <directionalLight
+            position={lighting.directionalPosition}
+            intensity={lighting.directionalIntensity}
+            color={lighting.directionalColor}
+            castShadow
+            shadow-mapSize-width={2048}
+            shadow-mapSize-height={2048}
+            shadow-camera-left={-30}
+            shadow-camera-right={30}
+            shadow-camera-top={30}
+            shadow-camera-bottom={-30}
           />
-        ))}
+
+          <SimsCameraController roomCount={rooms.length} />
+
+          {/* Ground plane - at y=0 */}
+          <mesh rotation={[-Math.PI / 2, 0, 0]} position={[
+            ((Math.min(rooms.length, ROOMS_PER_ROW) - 1) * (ROOM_SIZE + ROOM_GAP)) / 2,
+            0,
+            ((Math.ceil(rooms.length / ROOMS_PER_ROW) - 1) * (ROOM_SIZE + ROOM_GAP)) / 2
+          ]} receiveShadow>
+            <planeGeometry args={[
+              Math.min(rooms.length, ROOMS_PER_ROW) * (ROOM_SIZE + ROOM_GAP) + 4,
+              Math.ceil(rooms.length / ROOMS_PER_ROW) * (ROOM_SIZE + ROOM_GAP) + 4
+            ]} />
+            <meshStandardMaterial color="#3d5c3a" />
+          </mesh>
+
+          {/* Contact shadows for nice soft AO on the ground */}
+          <ContactShadows
+            position={[
+              ((Math.min(rooms.length, ROOMS_PER_ROW) - 1) * (ROOM_SIZE + ROOM_GAP)) / 2,
+              0.02,
+              ((Math.ceil(rooms.length / ROOMS_PER_ROW) - 1) * (ROOM_SIZE + ROOM_GAP)) / 2
+            ]}
+            opacity={lighting.shadowOpacity}
+            scale={60}
+            blur={2}
+            far={10}
+          />
+
+          {rooms.map((room, i) => (
+            <Room
+              key={room.folder.id}
+              data={room}
+              roomIndex={i}
+              hoveredBoard={hoveredBoard}
+              selectedWall={selectedWall}
+              onHoverBoard={setHoveredBoard}
+              onClickBoard={handleClickBoard}
+              onClickWall={handleClickWall}
+              wallColors={wallColors}
+            />
+          ))}
 
         </Suspense>
       </Canvas>

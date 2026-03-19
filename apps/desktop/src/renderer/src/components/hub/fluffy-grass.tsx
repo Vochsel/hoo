@@ -5,6 +5,7 @@ import { useVillage } from './village-context'
 import { seededRandom } from './hub-assets'
 import type { RoadSegment } from './use-village-layout'
 import type { VillageNeighborhood } from './village-types'
+import { useHubWorldLighting } from '@/hooks/use-hub-world-lighting'
 
 /* ------------------------------------------------------------------ */
 /*  Procedural textures                                                */
@@ -203,9 +204,12 @@ const grassFragmentShader = /* glsl */ `
   uniform vec3 uBaseColor;
   uniform vec3 uTipColor1;
   uniform vec3 uTipColor2;
+  uniform vec3 uLightDir;
   uniform sampler2D uGrassAlphaTexture;
   uniform sampler2D uNoiseTexture;
   uniform float uNoiseScale;
+  uniform float uDaylight;
+  uniform float uNightFactor;
 
   varying vec2 vUv;
   varying vec2 vGlobalUV;
@@ -221,13 +225,17 @@ const grassFragmentShader = /* glsl */ `
     vec3 tipColor = mix(uTipColor1, uTipColor2, variation);
     vec3 color = mix(uBaseColor, tipColor, vUv.y);
 
-    // Approximate scene lighting to match MeshStandardMaterial ground
-    // Scene has: ambient 0.4, directional 1.1 from (50,50,25), hemisphere 0.25
-    vec3 lightDir = normalize(vec3(50.0, 50.0, 25.0));
+    // Shift grass toward a cooler, desaturated moonlit palette at night.
+    vec3 nightColor = color * vec3(0.34, 0.42, 0.58);
+    color = mix(nightColor, color, uDaylight);
+
+    // Approximate the current scene lighting instead of a fixed daytime sun.
+    vec3 lightDir = normalize(uLightDir);
     float NdotL = max(dot(vNormal, lightDir), 0.0);
     // Blend front and back face lighting for double-sided grass
     float diffuse = max(NdotL, max(dot(-vNormal, lightDir), 0.0) * 0.6);
-    float lighting = 0.55 + diffuse * 0.55;
+    float lighting = mix(0.34, 0.55, uDaylight) + diffuse * mix(0.16, 0.55, uDaylight);
+    lighting += vUv.y * uNightFactor * 0.06;
 
     gl_FragColor = vec4(color * lighting, 1.0);
 
@@ -246,6 +254,7 @@ const GRASS_COUNT = 20000
 export function FluffyGrass() {
   const { roads, neighborhoods } = useVillage()
   const meshRef = useRef<THREE.InstancedMesh>(null)
+  const lighting = useHubWorldLighting()
 
   const noiseTexture = useMemo(() => createNoiseTexture(), [])
   const grassAlphaTexture = useMemo(() => createGrassAlphaTexture(), [])
@@ -260,7 +269,10 @@ export function FluffyGrass() {
       uBaseColor: { value: new THREE.Color('#3d6b45') },
       uTipColor1: { value: new THREE.Color('#6aad5e') },
       uTipColor2: { value: new THREE.Color('#4a7c59') },
+      uLightDir: { value: new THREE.Vector3(0.65, 0.7, 0.3).normalize() },
       uNoiseScale: { value: 1.5 },
+      uDaylight: { value: 1 },
+      uNightFactor: { value: 0 },
     }),
     [noiseTexture, grassAlphaTexture]
   )
@@ -329,6 +341,12 @@ export function FluffyGrass() {
   useFrame((_, delta) => {
     uniforms.uTime.value += delta
   })
+
+  useEffect(() => {
+    uniforms.uLightDir.value.set(...lighting.directionalPosition).normalize()
+    uniforms.uDaylight.value = lighting.daylightFactor
+    uniforms.uNightFactor.value = lighting.nightFactor
+  }, [lighting.daylightFactor, lighting.directionalPosition, lighting.nightFactor, uniforms])
 
   return (
     <instancedMesh

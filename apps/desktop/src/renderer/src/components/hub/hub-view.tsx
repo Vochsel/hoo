@@ -92,7 +92,7 @@ export function HubView({ folders, boards, onSelectBoard }: HubViewProps) {
                 </div>
                 <div className="absolute bottom-4 left-4 rounded-lg bg-black/60 px-4 py-2 text-xs text-white/80 backdrop-blur-sm">
                   <p>Click to lock mouse · WASD to move · Shift to run · Space to jump</p>
-                  <p>Walk into door circles to enter · <span className="font-bold text-white">E</span> to interact · <span className="font-bold text-white">Esc</span> to exit house</p>
+                  <p>Walk into door circles to enter · <span className="font-bold text-white">E</span> to interact · <span className="font-bold text-white">G</span> to grab/place · <span className="font-bold text-white">Esc</span> to exit house</p>
                 </div>
               </>
             )}

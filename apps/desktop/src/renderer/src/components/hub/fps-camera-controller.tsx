@@ -8,8 +8,10 @@ const RUN_SPEED = 14
 const LOOK_SPEED = 0.002
 const PLAYER_HEIGHT = 1.7
 const INTERACTION_DISTANCE = 3.5
-const AUTO_ENTER_DISTANCE = 1.5 // walk into circle to auto-enter
+const GRAB_DISTANCE = 6
+const AUTO_ENTER_DISTANCE = 1.5
 const DOOR_OFFSET_Z = 5
+const GRAB_CARRY_DISTANCE = 6
 
 type Interactable = {
   id: string
@@ -18,19 +20,44 @@ type Interactable = {
   boardId: string
 }
 
+function tryRequestPointerLock(el: HTMLElement) {
+  try { el.requestPointerLock() } catch { /* ignore in Electron */ }
+}
+
 export function FPSCameraController() {
   const { camera, gl } = useThree()
-  const { neighborhoods, location, enterHouse, exitHouse, interact, activeDialog, setHoveredId, savedCameraPos, saveCameraPos } = useVillage()
+  const {
+    neighborhoods, scenery, location, enterHouse, exitHouse, interact,
+    setHoveredId, savedCameraPos, saveCameraPos,
+    grabbedObjectId, objectPositions, grabObject, placeObject, updateGrabbedPosition,
+    persistedPlayerPos, persistPlayerPos
+  } = useVillage()
   const keysRef = useRef(new Set<string>())
   const yawRef = useRef(0)
   const pitchRef = useRef(0)
   const isLockedRef = useRef(false)
   const velocityYRef = useRef(0)
   const isGroundedRef = useRef(true)
-  const autoEnteredRef = useRef<string | null>(null) // prevent re-entry loop
+  const autoEnteredRef = useRef<string | null>(null)
+  const initializedRef = useRef(false)
+  const persistFrameCounter = useRef(0)
 
   const interactablesRef = useRef<Interactable[]>([])
   const doorPositionsRef = useRef<{ boardId: string; pos: THREE.Vector3 }[]>([])
+
+  // Keep refs for values accessed by event handlers to avoid re-registering effects
+  const grabbedObjectIdRef = useRef(grabbedObjectId)
+  grabbedObjectIdRef.current = grabbedObjectId
+  const objectPositionsRef = useRef(objectPositions)
+  objectPositionsRef.current = objectPositions
+  const sceneryRef = useRef(scenery)
+  sceneryRef.current = scenery
+  const locationRef = useRef(location)
+  locationRef.current = location
+  const grabObjectRef = useRef(grabObject)
+  grabObjectRef.current = grabObject
+  const placeObjectRef = useRef(placeObject)
+  placeObjectRef.current = placeObject
 
   useEffect(() => {
     if (location.type === 'outdoor') {
@@ -51,22 +78,16 @@ export function FPSCameraController() {
       doorPositionsRef.current = doorPositions
       autoEnteredRef.current = null
     } else {
-      // Interior: exit door + agent. Desks are added dynamically via proximity.
-      // We use a generic 'scan area' approach — the interior is 30x30, so we
-      // register the exit door and the agent. Desk interaction is handled by
-      // the house-interior component's layout which we mirror here at runtime.
       const items: Interactable[] = [
         { id: 'exit-door', pos: new THREE.Vector3(0, 0, 6.5), action: 'exit-house', boardId: '' },
         { id: 'interior-agent-0', pos: new THREE.Vector3(2, 0, 2), action: 'use-board', boardId: location.boardId },
       ]
-      // Scan for desk positions dynamically from board items
       window.api.browserTabs.list(location.boardId).then((tabs: { id: string }[]) => {
         window.api.graphNodes.list(location.boardId).then((nodes: { id: string; nodeType: string }[]) => {
           const allIds = [
             ...tabs.map((t: { id: string }) => t.id),
             ...nodes.filter((n: { nodeType: string }) => n.nodeType === 'terminal').map((n: { id: string }) => n.id)
           ]
-          // Match the random placement in house-interior.tsx
           let seed = 0
           for (let ci = 0; ci < location.boardId.length; ci++) seed = ((seed << 5) - seed + location.boardId.charCodeAt(ci)) | 0
           seed = Math.abs(seed)
@@ -84,7 +105,7 @@ export function FPSCameraController() {
                 break
               }
             }
-            rng() // consume rotation value to stay in sync
+            rng()
           })
           interactablesRef.current = items
         }).catch(() => {})
@@ -95,46 +116,58 @@ export function FPSCameraController() {
   }, [neighborhoods, location])
 
   useEffect(() => {
-    if (location.type === 'outdoor') {
-      // Place player outside the house they just exited
-      if (savedCameraPos) {
-        // savedCameraPos stores the door world position when we entered
-        camera.position.set(savedCameraPos.x, PLAYER_HEIGHT, savedCameraPos.z)
-        yawRef.current = savedCameraPos.yaw
-      } else {
-        camera.position.set(0, PLAYER_HEIGHT, 20)
-        yawRef.current = 0
+    // Position setup — never return early, event listeners must always be registered below
+    let positionSet = false
+
+    // Restore persisted player position on first mount
+    if (!initializedRef.current && persistedPlayerPos) {
+      if (location.type === 'outdoor' && persistedPlayerPos.locationType === 'outdoor') {
+        camera.position.set(persistedPlayerPos.x, persistedPlayerPos.y, persistedPlayerPos.z)
+        yawRef.current = persistedPlayerPos.yaw
+        pitchRef.current = persistedPlayerPos.pitch
+        positionSet = true
+      } else if (location.type === 'indoor' && persistedPlayerPos.locationType === 'indoor') {
+        camera.position.set(persistedPlayerPos.x, persistedPlayerPos.y, persistedPlayerPos.z)
+        yawRef.current = persistedPlayerPos.yaw
+        pitchRef.current = persistedPlayerPos.pitch
+        positionSet = true
       }
-      pitchRef.current = 0
-      autoEnteredRef.current = null // allow re-entering after cooldown
-      // Re-acquire pointer lock after transition
-      setTimeout(() => { gl.domElement.requestPointerLock() }, 50)
-    } else {
-      // Save the door world position so we can place player there on exit
-      // Find the house to get its door position
-      let doorX = camera.position.x, doorZ = camera.position.z, doorYaw = yawRef.current
-      for (const n of neighborhoods) {
-        for (const h of n.houses) {
-          if (h.id === location.boardId) {
-            const cos = Math.cos(h.worldRotation)
-            const sin = Math.sin(h.worldRotation)
-            // Door is DOOR_OFFSET_Z in front of house, plus a bit more to stand clear
-            const standoff = DOOR_OFFSET_Z + 2
-            doorX = h.worldPosition[0] + sin * standoff
-            doorZ = h.worldPosition[2] + cos * standoff
-            // Face away from house (opposite of house facing direction)
-            doorYaw = h.worldRotation + Math.PI
+    }
+
+    if (!positionSet) {
+      if (location.type === 'outdoor') {
+        if (savedCameraPos) {
+          camera.position.set(savedCameraPos.x, PLAYER_HEIGHT, savedCameraPos.z)
+          yawRef.current = savedCameraPos.yaw
+        } else if (!initializedRef.current) {
+          camera.position.set(0, PLAYER_HEIGHT, 20)
+          yawRef.current = 0
+        }
+        pitchRef.current = 0
+        autoEnteredRef.current = null
+      } else {
+        let doorX = camera.position.x, doorZ = camera.position.z, doorYaw = yawRef.current
+        for (const n of neighborhoods) {
+          for (const h of n.houses) {
+            if (h.id === location.boardId) {
+              const cos = Math.cos(h.worldRotation)
+              const sin = Math.sin(h.worldRotation)
+              const standoff = DOOR_OFFSET_Z + 2
+              doorX = h.worldPosition[0] + sin * standoff
+              doorZ = h.worldPosition[2] + cos * standoff
+              doorYaw = h.worldRotation + Math.PI
+            }
           }
         }
+        saveCameraPos({ x: doorX, y: PLAYER_HEIGHT, z: doorZ, yaw: doorYaw })
+        camera.position.set(0, PLAYER_HEIGHT, 5)
+        yawRef.current = 0
+        pitchRef.current = 0
       }
-      saveCameraPos({ x: doorX, y: PLAYER_HEIGHT, z: doorZ, yaw: doorYaw })
-      // Enter house: face INTO the room (toward back wall = -Z = yaw 0)
-      camera.position.set(0, PLAYER_HEIGHT, 5)
-      yawRef.current = 0
-      pitchRef.current = 0
-      // Re-acquire pointer lock after transition
-      setTimeout(() => { gl.domElement.requestPointerLock() }, 50)
     }
+
+    initializedRef.current = true
+    setTimeout(() => tryRequestPointerLock(gl.domElement), 50)
 
     const handleKeyDown = (e: KeyboardEvent) => {
       keysRef.current.add(e.code)
@@ -155,7 +188,50 @@ export function FPSCameraController() {
           else if (nearest.action === 'exit-house') exitHouse()
           else if (nearest.action === 'use-board') interact(nearest.id, 'board', nearest.boardId)
         }
-        if (isLockedRef.current) document.exitPointerLock()
+        try { if (isLockedRef.current) document.exitPointerLock() } catch { /* ignore */ }
+      }
+      // G key: grab/place objects
+      if (e.code === 'KeyG') {
+        if (grabbedObjectIdRef.current) {
+          // Place the object
+          const forward = new THREE.Vector3(-Math.sin(yawRef.current), 0, -Math.cos(yawRef.current))
+          const placePos: [number, number, number] = [
+            camera.position.x + forward.x * GRAB_CARRY_DISTANCE,
+            0,
+            camera.position.z + forward.z * GRAB_CARRY_DISTANCE
+          ]
+          placeObjectRef.current(placePos, yawRef.current)
+        } else {
+          // Find nearest grabbable object
+          const cam2D = new THREE.Vector2(camera.position.x, camera.position.z)
+          let nearestId: string | null = null
+          let nearestDist = GRAB_DISTANCE
+          const loc = locationRef.current
+          const positions = objectPositionsRef.current
+          const scn = sceneryRef.current
+
+          if (loc.type === 'indoor') {
+            for (const ia of interactablesRef.current) {
+              if (!ia.id.startsWith('desk-')) continue
+              const override = positions[ia.id]
+              const pos = override ? new THREE.Vector2(override.position[0], override.position[2]) : new THREE.Vector2(ia.pos.x, ia.pos.z)
+              const d = cam2D.distanceTo(pos)
+              if (d < nearestDist) { nearestDist = d; nearestId = ia.id }
+            }
+          } else {
+            for (let i = 0; i < scn.length; i++) {
+              const id = `scenery-${i}`
+              const override = positions[id]
+              const pos = override
+                ? new THREE.Vector2(override.position[0], override.position[2])
+                : new THREE.Vector2(scn[i].position[0], scn[i].position[2])
+              const d = cam2D.distanceTo(pos)
+              if (d < nearestDist) { nearestDist = d; nearestId = id }
+            }
+          }
+
+          if (nearestId) grabObjectRef.current(nearestId)
+        }
       }
     }
     const handleKeyUp = (e: KeyboardEvent) => keysRef.current.delete(e.code)
@@ -169,7 +245,7 @@ export function FPSCameraController() {
       isLockedRef.current = document.pointerLockElement === gl.domElement
     }
     const handleClick = () => {
-      if (!isLockedRef.current) gl.domElement.requestPointerLock()
+      if (!isLockedRef.current) tryRequestPointerLock(gl.domElement)
     }
 
     window.addEventListener('keydown', handleKeyDown)
@@ -183,7 +259,7 @@ export function FPSCameraController() {
       document.removeEventListener('mousemove', handleMouseMove)
       document.removeEventListener('pointerlockchange', handlePointerLockChange)
       gl.domElement.removeEventListener('click', handleClick)
-      if (document.pointerLockElement === gl.domElement) document.exitPointerLock()
+      try { if (document.pointerLockElement === gl.domElement) document.exitPointerLock() } catch { /* ignore */ }
     }
   }, [camera, gl, location, enterHouse, exitHouse, interact])
 
@@ -218,6 +294,16 @@ export function FPSCameraController() {
     }
     camera.quaternion.setFromEuler(new THREE.Euler(pitchRef.current, yawRef.current, 0, 'YXZ'))
 
+    // Update grabbed object position to follow player
+    if (grabbedObjectId) {
+      const carryPos: [number, number, number] = [
+        camera.position.x + forward.x * GRAB_CARRY_DISTANCE,
+        0,
+        camera.position.z + forward.z * GRAB_CARRY_DISTANCE
+      ]
+      updateGrabbedPosition(carryPos)
+    }
+
     // Highlight nearest interactable
     const cam2D = new THREE.Vector2(camera.position.x, camera.position.z)
     let nearestId: string | null = null
@@ -247,6 +333,21 @@ export function FPSCameraController() {
       if (d < AUTO_ENTER_DISTANCE) {
         exitHouse()
       }
+    }
+
+    // Persist player position every ~60 frames (~1s at 60fps)
+    persistFrameCounter.current++
+    if (persistFrameCounter.current >= 60) {
+      persistFrameCounter.current = 0
+      persistPlayerPos({
+        x: camera.position.x,
+        y: camera.position.y,
+        z: camera.position.z,
+        yaw: yawRef.current,
+        pitch: pitchRef.current,
+        locationType: location.type,
+        boardId: location.type === 'indoor' ? location.boardId : undefined
+      })
     }
   })
 

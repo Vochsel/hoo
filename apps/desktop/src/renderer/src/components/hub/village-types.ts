@@ -61,6 +61,19 @@ export interface SceneProp {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Object position overrides (persisted to workspace JSON)            */
+/* ------------------------------------------------------------------ */
+
+export interface ObjectPositionOverride {
+  position: [number, number, number]
+  rotation: number
+}
+
+export interface VillageData {
+  objectPositions: Record<string, ObjectPositionOverride>
+}
+
+/* ------------------------------------------------------------------ */
 /*  State                                                              */
 /* ------------------------------------------------------------------ */
 

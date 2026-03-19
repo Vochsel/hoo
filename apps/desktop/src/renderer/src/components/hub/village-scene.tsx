@@ -6,27 +6,38 @@ import { VillageWorld } from './village-world'
 import { HouseInterior } from './house-interior'
 import { FPSCameraController } from './fps-camera-controller'
 import { SimsCameraController } from './sims-camera-controller'
+import { ProceduralClouds } from './procedural-clouds'
+import { useHubWorldLighting } from '@/hooks/use-hub-world-lighting'
 
 export function VillageScene() {
   const { location, cameraMode } = useVillage()
+  const lighting = useHubWorldLighting()
 
   return (
     <Canvas
       shadows
       camera={{ fov: 70, near: 0.1, far: 500 }}
-      style={{ background: '#87CEEB' }}
+      style={{ background: lighting.backgroundColor }}
     >
       <Suspense fallback={null}>
-        <Sky sunPosition={[100, 20, 100]} />
+        <color attach="background" args={[lighting.backgroundColor]} />
+        <Sky
+          sunPosition={lighting.sunPosition}
+          turbidity={lighting.skyTurbidity}
+          rayleigh={lighting.skyRayleigh}
+          mieCoefficient={lighting.skyMieCoefficient}
+          mieDirectionalG={lighting.skyMieDirectionalG}
+        />
         <Environment
           files="/hub-assets/suburban_garden_1k.hdr"
           background={false}
-          environmentIntensity={0.6}
+          environmentIntensity={lighting.environmentIntensity}
         />
-        <ambientLight intensity={0.2} />
+        <ambientLight intensity={lighting.ambientIntensity} />
         <directionalLight
-          position={[50, 50, 25]}
-          intensity={1.0}
+          position={lighting.directionalPosition}
+          intensity={lighting.directionalIntensity}
+          color={lighting.directionalColor}
           castShadow
           shadow-mapSize-width={2048}
           shadow-mapSize-height={2048}
@@ -35,14 +46,32 @@ export function VillageScene() {
           shadow-camera-top={60}
           shadow-camera-bottom={-60}
         />
-        <hemisphereLight args={['#87CEEB', '#4a7c59', 0.15]} />
-        <fog attach="fog" args={['#87CEEB', 30, 120]} />
+        <hemisphereLight
+          args={[
+            lighting.hemisphereSkyColor,
+            lighting.hemisphereGroundColor,
+            lighting.hemisphereIntensity
+          ]}
+        />
+        <fog attach="fog" args={[lighting.fogColor, 30, 120]} />
 
-        <ContactShadows position={[0, 0.01, 0]} opacity={0.3} scale={150} blur={2.5} far={15} />
+        <ContactShadows
+          position={[0, 0.01, 0]}
+          opacity={lighting.shadowOpacity}
+          scale={150}
+          blur={2.5}
+          far={15}
+        />
+
+        {/* Procedural cloud dome */}
+        <ProceduralClouds
+          sunPosition={lighting.sunPosition}
+          daylight={lighting.daylightFactor}
+        />
 
         {/* Outdoor village - hidden when indoors */}
         <group visible={location.type === 'outdoor'}>
-          <VillageWorld />
+          <VillageWorld nightFactor={lighting.nightFactor} />
         </group>
 
         {/* Indoor house - shown when entered */}

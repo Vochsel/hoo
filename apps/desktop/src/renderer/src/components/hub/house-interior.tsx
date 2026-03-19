@@ -176,11 +176,15 @@ interface ComputerDeskProps {
 }
 
 function ComputerDesk({ position, rotation, item, id }: ComputerDeskProps) {
-  const { hoveredId } = useVillage()
+  const { hoveredId, objectPositions, grabbedObjectId } = useVillage()
   const isHovered = hoveredId === id
+  const isGrabbed = grabbedObjectId === id
+  const override = objectPositions[id]
+  const finalPosition = override?.position ?? position
+  const finalRotation = override?.rotation ?? rotation
 
   return (
-    <group position={position} rotation={[0, rotation, 0]}>
+    <group position={finalPosition} rotation={[0, finalRotation, 0]}>
       <GlbModel asset={DESK_ASSET} />
       <group position={[0, 1.3, 0]}>
         <GlbModel asset={COMPUTER_ASSET} />
@@ -191,24 +195,32 @@ function ComputerDesk({ position, rotation, item, id }: ComputerDeskProps) {
         <planeGeometry args={[0.5, 0.35]} />
         <meshStandardMaterial
           color={item.kind === 'terminal' ? '#001a00' : '#000d1a'}
-          emissive={item.kind === 'terminal' ? '#00ff44' : '#4488ff'}
-          emissiveIntensity={isHovered ? 0.8 : 0.3}
+          emissive={isGrabbed ? '#ffaa00' : item.kind === 'terminal' ? '#00ff44' : '#4488ff'}
+          emissiveIntensity={isGrabbed ? 1.0 : isHovered ? 0.8 : 0.3}
         />
       </mesh>
+
+      {/* Grab indicator ring */}
+      {isGrabbed && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.05, 0]}>
+          <ringGeometry args={[1.2, 1.5, 32]} />
+          <meshStandardMaterial color="#ffaa00" emissive="#ffaa00" emissiveIntensity={0.5} transparent opacity={0.6} />
+        </mesh>
+      )}
 
       <Billboard position={[0, 2.2, 0]}>
         <Text
           fontSize={0.22}
-          color={isHovered ? '#ffffff' : '#aaaaaa'}
+          color={isGrabbed ? '#ffcc44' : isHovered ? '#ffffff' : '#aaaaaa'}
           anchorX="center"
           anchorY="bottom"
           outlineWidth={0.012}
           outlineColor="#000000"
           maxWidth={3}
         >
-          {item.label}
+          {isGrabbed ? 'Carrying...' : item.label}
         </Text>
-        {isHovered && (
+        {isHovered && !isGrabbed && (
           <Text
             position={[0, -0.15, 0]}
             fontSize={0.16}
@@ -216,7 +228,18 @@ function ComputerDesk({ position, rotation, item, id }: ComputerDeskProps) {
             anchorX="center"
             anchorY="top"
           >
-            [E] Open
+            [E] Open · [G] Grab
+          </Text>
+        )}
+        {isGrabbed && (
+          <Text
+            position={[0, -0.15, 0]}
+            fontSize={0.16}
+            color="#ffcc44"
+            anchorX="center"
+            anchorY="top"
+          >
+            [G] Place
           </Text>
         )}
       </Billboard>

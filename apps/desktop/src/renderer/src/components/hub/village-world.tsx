@@ -4,12 +4,13 @@ import { Text, Billboard } from '@react-three/drei'
 import * as THREE from 'three'
 import { useVillage } from './village-context'
 import { GlbModel, seededRandom, type AssetDef } from './hub-assets'
-import type { VillageNeighborhood, VillageHouse } from './village-types'
+import type { VillageNeighborhood, VillageHouse, SceneProp } from './village-types'
 import type { RoadSegment } from './use-village-layout'
 import { FluffyGrass } from './fluffy-grass'
 
 const ARCH_ASSET: AssetDef = { file: 'arch.glb', scale: 5.0 }
 const FOUNTAIN_ASSET: AssetDef = { file: 'fountain.glb', scale: 3.5 }
+const HOUSE_LIGHT_COLOR = '#ffd39a'
 
 /* ------------------------------------------------------------------ */
 /*  Ground                                                             */
@@ -98,20 +99,79 @@ function NeighborhoodArch({ archPosition, archRotation, name }: { archPosition: 
 
 const DOOR_OFFSET_Z = 5
 
-function HouseExterior({ house }: { house: VillageHouse }) {
+function HouseWindowGlow({
+  position,
+  rotation = [0, 0, 0],
+  size,
+  opacity
+}: {
+  position: [number, number, number]
+  rotation?: [number, number, number]
+  size: [number, number]
+  opacity: number
+}) {
+  return (
+    <mesh position={position} rotation={rotation}>
+      <planeGeometry args={size} />
+      <meshBasicMaterial
+        color={HOUSE_LIGHT_COLOR}
+        transparent
+        opacity={opacity}
+        toneMapped={false}
+        side={THREE.DoubleSide}
+      />
+    </mesh>
+  )
+}
+
+function HouseExterior({ house, nightFactor }: { house: VillageHouse; nightFactor: number }) {
   const { hoveredId } = useVillage()
   const isHovered = hoveredId === `door-${house.id}`
+  const scaleFactor = house.houseAsset.scale / 3.5
+  const houseGlow = nightFactor > 0.02 ? 0.18 + nightFactor * 0.72 : 0
+  const frontWindowY = 2.1 * scaleFactor + 0.9
+  const sideWindowY = 2.0 * scaleFactor + 0.9
+  const frontWindowZ = 4.05 * scaleFactor
+  const sideWindowX = 3.7 * scaleFactor
+  const sideWindowZ = 0.75 * scaleFactor
 
   return (
     <group position={house.worldPosition} rotation={[0, house.worldRotation, 0]}>
       <GlbModel asset={house.houseAsset} />
 
+      {houseGlow > 0 && (
+        <>
+          <HouseWindowGlow
+            position={[-1.45 * scaleFactor, frontWindowY, frontWindowZ]}
+            size={[0.9 * scaleFactor, 1.1 * scaleFactor]}
+            opacity={houseGlow * 1.15}
+          />
+          <HouseWindowGlow
+            position={[1.45 * scaleFactor, frontWindowY, frontWindowZ]}
+            size={[0.9 * scaleFactor, 1.1 * scaleFactor]}
+            opacity={houseGlow * 1.15}
+          />
+          <HouseWindowGlow
+            position={[sideWindowX, sideWindowY, sideWindowZ]}
+            rotation={[0, -Math.PI / 2, 0]}
+            size={[0.75 * scaleFactor, 1.0 * scaleFactor]}
+            opacity={houseGlow}
+          />
+          <HouseWindowGlow
+            position={[-sideWindowX, sideWindowY, sideWindowZ]}
+            rotation={[0, Math.PI / 2, 0]}
+            size={[0.75 * scaleFactor, 1.0 * scaleFactor]}
+            opacity={houseGlow}
+          />
+        </>
+      )}
+
       <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.04, DOOR_OFFSET_Z]}>
         <ringGeometry args={[0.6, 0.9, 32]} />
         <meshStandardMaterial
           color={isHovered ? '#44aaff' : '#aa8855'}
-          emissive={isHovered ? '#2266cc' : '#000000'}
-          emissiveIntensity={isHovered ? 0.8 : 0}
+          emissive={isHovered ? '#2266cc' : HOUSE_LIGHT_COLOR}
+          emissiveIntensity={isHovered ? 0.8 : nightFactor * 0.25}
           transparent
           opacity={isHovered ? 0.9 : 0.4}
         />
@@ -138,7 +198,7 @@ function HouseExterior({ house }: { house: VillageHouse }) {
 /*  Neighborhood group                                                 */
 /* ------------------------------------------------------------------ */
 
-function Neighborhood({ data }: { data: VillageNeighborhood }) {
+function Neighborhood({ data, nightFactor }: { data: VillageNeighborhood; nightFactor: number }) {
   return (
     <group>
       <CulDeSacCircle position={data.position} />
@@ -154,7 +214,7 @@ function Neighborhood({ data }: { data: VillageNeighborhood }) {
       />
 
       {data.houses.map((h) => (
-        <HouseExterior key={h.id} house={h} />
+        <HouseExterior key={h.id} house={h} nightFactor={nightFactor} />
       ))}
     </group>
   )
@@ -279,7 +339,37 @@ function VillagerCrowd({ minZ, maxZ }: { minZ: number; maxZ: number }) {
 /*  Full outdoor world                                                 */
 /* ------------------------------------------------------------------ */
 
-export function VillageWorld() {
+function GrabbableScenery({
+  prop,
+  index
+}: {
+  prop: SceneProp
+  index: number
+}) {
+  const { objectPositions, grabbedObjectId } = useVillage()
+  const id = `scenery-${index}`
+  const override = objectPositions[id]
+  const isGrabbed = grabbedObjectId === id
+  const position = override?.position ?? prop.position
+
+  return (
+    <group>
+      <GlbModel
+        asset={prop.asset}
+        position={position}
+        rotation={prop.rotation}
+      />
+      {isGrabbed && (
+        <mesh rotation={[-Math.PI / 2, 0, 0]} position={[position[0], 0.06, position[2]]}>
+          <ringGeometry args={[1.5, 2.0, 32]} />
+          <meshStandardMaterial color="#ffaa00" emissive="#ffaa00" emissiveIntensity={0.5} transparent opacity={0.6} />
+        </mesh>
+      )}
+    </group>
+  )
+}
+
+export function VillageWorld({ nightFactor }: { nightFactor: number }) {
   const { neighborhoods, scenery, roads } = useVillage()
 
   const roadExtents = useMemo(() => {
@@ -304,15 +394,14 @@ export function VillageWorld() {
       <VillagerCrowd minZ={roadExtents.minZ} maxZ={roadExtents.maxZ} />
 
       {neighborhoods.map((n) => (
-        <Neighborhood key={n.id} data={n} />
+        <Neighborhood key={n.id} data={n} nightFactor={nightFactor} />
       ))}
 
       {scenery.map((prop, i) => (
-        <GlbModel
+        <GrabbableScenery
           key={`scenery-${i}`}
-          asset={prop.asset}
-          position={prop.position}
-          rotation={prop.rotation}
+          prop={prop}
+          index={i}
         />
       ))}
     </>
