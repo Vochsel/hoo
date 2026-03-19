@@ -79,7 +79,7 @@ export function FPSCameraController() {
       autoEnteredRef.current = null
     } else {
       const items: Interactable[] = [
-        { id: 'exit-door', pos: new THREE.Vector3(0, 0, 6.5), action: 'exit-house', boardId: '' },
+        { id: 'exit-door', pos: new THREE.Vector3(0, 0, 10.5), action: 'exit-house', boardId: '' },
         { id: 'interior-agent-0', pos: new THREE.Vector3(2, 0, 2), action: 'use-board', boardId: location.boardId },
       ]
       window.api.browserTabs.list(location.boardId).then((tabs: { id: string }[]) => {
@@ -160,7 +160,7 @@ export function FPSCameraController() {
           }
         }
         saveCameraPos({ x: doorX, y: PLAYER_HEIGHT, z: doorZ, yaw: doorYaw })
-        camera.position.set(0, PLAYER_HEIGHT, 5)
+        camera.position.set(0, PLAYER_HEIGHT, 12)
         yawRef.current = 0
         pitchRef.current = 0
       }
@@ -281,8 +281,8 @@ export function FPSCameraController() {
     }
 
     if (location.type === 'indoor') {
-      camera.position.x = Math.max(-7.5, Math.min(7.5, camera.position.x))
-      camera.position.z = Math.max(-7.5, Math.min(7.5, camera.position.z))
+      camera.position.x = Math.max(-11.5, Math.min(11.5, camera.position.x))
+      camera.position.z = Math.max(-11.5, Math.min(11.5, camera.position.z))
     }
 
     velocityYRef.current -= 15 * delta

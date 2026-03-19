@@ -1,11 +1,22 @@
 import { useRef, useState, useEffect, useMemo } from 'react'
-import { useFrame } from '@react-three/fiber'
+import { useFrame, useLoader } from '@react-three/fiber'
 import { Text, Billboard } from '@react-three/drei'
+import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader'
 import * as THREE from 'three'
 import { useVillage } from './village-context'
-import { GlbModel, COMPUTER_ASSET, type AssetDef } from './hub-assets'
+import { GlbModel, type AssetDef } from './hub-assets'
 
-const DESK_ASSET: AssetDef = { file: 'picnic_table.glb', scale: 3.0 }
+// Desk dimensions (base, scaled by FURNITURE_SCALE on the group)
+const FURNITURE_SCALE = 1.35
+const DESK_W = 1.6
+const DESK_D = 0.8
+const DESK_H = 0.82
+const DESK_TOP_T = 0.04
+const LEG_T = 0.05
+
+const PLANT_ASSETS: AssetDef[] = [
+  { file: 'potted_bush.glb', scale: 3.5 },
+]
 
 function hashStr(s: string): number {
   let h = 0
@@ -13,12 +24,14 @@ function hashStr(s: string): number {
   return Math.abs(h)
 }
 
-const ROOM_SIZE = 16
-const WALL_HEIGHT = 4.5
+const ROOM_SIZE = 24
+const WALL_HEIGHT = 5
 const HS = ROOM_SIZE / 2
-const WT = 0.25
-const DOOR_WIDTH = 2.5
-const DOOR_HEIGHT = 3.5
+const WT = 0.15
+const DOOR_WIDTH = 3
+const DOOR_HEIGHT = 3.8
+const BASEBOARD_H = 0.25
+const TRIM_DEPTH = 0.04
 
 /* ------------------------------------------------------------------ */
 /*  Fetch board items on demand                                        */
@@ -28,6 +41,7 @@ interface BoardItem {
   id: string
   kind: 'browser' | 'terminal' | 'agent'
   label: string
+  screenshot?: string | null
 }
 
 function useBoardItems(boardId: string): BoardItem[] {
@@ -44,7 +58,7 @@ function useBoardItems(boardId: string): BoardItem[] {
 
         const result: BoardItem[] = []
         for (const tab of tabs) {
-          result.push({ id: tab.id, kind: 'browser', label: tab.title || tab.url || 'Tab' })
+          result.push({ id: tab.id, kind: 'browser', label: tab.title || tab.url || 'Tab', screenshot: tab.screenshot })
         }
         for (const node of nodes) {
           if (node.nodeType === 'terminal') {
@@ -64,66 +78,130 @@ function useBoardItems(boardId: string): BoardItem[] {
 }
 
 /* ------------------------------------------------------------------ */
-/*  Room shell                                                         */
+/*  Room shell — procedural white modern room                          */
 /* ------------------------------------------------------------------ */
 
+
+function Wall({ position, size }: { position: [number, number, number]; size: [number, number, number] }) {
+  return (
+    <mesh position={position} castShadow receiveShadow>
+      <boxGeometry args={size} />
+      <meshStandardMaterial color="#f5f2ee" roughness={0.9} metalness={0} />
+    </mesh>
+  )
+}
+
+function Baseboard({ position, size }: { position: [number, number, number]; size: [number, number, number] }) {
+  return (
+    <mesh position={position}>
+      <boxGeometry args={size} />
+      <meshStandardMaterial color="#e8e4de" roughness={0.6} metalness={0} />
+    </mesh>
+  )
+}
+
+function CeilingLight({ position }: { position: [number, number, number] }) {
+  return (
+    <group position={position}>
+      {/* Fixture disc */}
+      <mesh position={[0, -0.02, 0]}>
+        <cylinderGeometry args={[0.4, 0.4, 0.04, 24]} />
+        <meshStandardMaterial color="#ffffff" roughness={0.3} metalness={0.1} />
+      </mesh>
+      {/* Glow bulb */}
+      <mesh position={[0, -0.08, 0]}>
+        <sphereGeometry args={[0.15, 16, 16]} />
+        <meshStandardMaterial color="#fffdf5" emissive="#fffdf5" emissiveIntensity={2} />
+      </mesh>
+      <pointLight position={[0, -0.3, 0]} intensity={1.2} distance={ROOM_SIZE * 0.7} color="#fffaf0" />
+    </group>
+  )
+}
+
 function RoomShell() {
-  const wallColor = '#e8dcc8'
-  const floorColor = '#c4a882'
-  const doorGapLeft = -(HS - (HS - DOOR_WIDTH / 2) / 2)
-  const doorGapRight = (HS - (HS - DOOR_WIDTH / 2) / 2)
+  const floorColor = '#d4c4a8' // light oak
+  const ceilingColor = '#faf8f5'
   const sideWidth = (ROOM_SIZE - DOOR_WIDTH) / 2
+  const doorGapLeft = -(HS - sideWidth / 2)
+  const doorGapRight = (HS - sideWidth / 2)
 
   return (
     <group>
-      {/* Floor */}
-      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
+      {/* ── Floor ── */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.0, 0]} receiveShadow>
         <planeGeometry args={[ROOM_SIZE, ROOM_SIZE]} />
-        <meshStandardMaterial color={floorColor} />
+        <meshStandardMaterial color={floorColor} roughness={0.55} metalness={0.05} />
       </mesh>
 
-      {/* Ceiling */}
+      {/* ── Ceiling ── */}
       <mesh rotation={[Math.PI / 2, 0, 0]} position={[0, WALL_HEIGHT, 0]}>
         <planeGeometry args={[ROOM_SIZE, ROOM_SIZE]} />
-        <meshStandardMaterial color="#f5f0e8" />
+        <meshStandardMaterial color={ceilingColor} roughness={0.95} metalness={0} />
       </mesh>
 
-      {/* Back wall */}
-      <mesh position={[0, WALL_HEIGHT / 2, -HS]} castShadow receiveShadow>
-        <boxGeometry args={[ROOM_SIZE, WALL_HEIGHT, WT]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>
+      {/* ── Back wall ── */}
+      <Wall position={[0, WALL_HEIGHT / 2, -HS]} size={[ROOM_SIZE, WALL_HEIGHT, WT]} />
+      <Baseboard position={[0, BASEBOARD_H / 2, -HS + TRIM_DEPTH]} size={[ROOM_SIZE, BASEBOARD_H, TRIM_DEPTH * 2]} />
 
-      {/* Left wall */}
-      <mesh position={[-HS, WALL_HEIGHT / 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[WT, WALL_HEIGHT, ROOM_SIZE]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>
+      {/* ── Left wall ── */}
+      <Wall position={[-HS, WALL_HEIGHT / 2, 0]} size={[WT, WALL_HEIGHT, ROOM_SIZE]} />
+      <Baseboard position={[-HS + TRIM_DEPTH, BASEBOARD_H / 2, 0]} size={[TRIM_DEPTH * 2, BASEBOARD_H, ROOM_SIZE]} />
 
-      {/* Right wall */}
-      <mesh position={[HS, WALL_HEIGHT / 2, 0]} castShadow receiveShadow>
-        <boxGeometry args={[WT, WALL_HEIGHT, ROOM_SIZE]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>
+      {/* ── Right wall ── */}
+      <Wall position={[HS, WALL_HEIGHT / 2, 0]} size={[WT, WALL_HEIGHT, ROOM_SIZE]} />
+      <Baseboard position={[HS - TRIM_DEPTH, BASEBOARD_H / 2, 0]} size={[TRIM_DEPTH * 2, BASEBOARD_H, ROOM_SIZE]} />
 
-      {/* Front wall with door gap */}
-      <mesh position={[doorGapLeft, WALL_HEIGHT / 2, HS]} castShadow>
-        <boxGeometry args={[sideWidth, WALL_HEIGHT, WT]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>
-      <mesh position={[doorGapRight, WALL_HEIGHT / 2, HS]} castShadow>
-        <boxGeometry args={[sideWidth, WALL_HEIGHT, WT]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>
-      <mesh position={[0, DOOR_HEIGHT + (WALL_HEIGHT - DOOR_HEIGHT) / 2, HS]} castShadow>
-        <boxGeometry args={[DOOR_WIDTH, WALL_HEIGHT - DOOR_HEIGHT, WT]} />
-        <meshStandardMaterial color={wallColor} />
-      </mesh>
+      {/* ── Front wall with door gap ── */}
+      <Wall position={[doorGapLeft, WALL_HEIGHT / 2, HS]} size={[sideWidth, WALL_HEIGHT, WT]} />
+      <Wall position={[doorGapRight, WALL_HEIGHT / 2, HS]} size={[sideWidth, WALL_HEIGHT, WT]} />
+      <Wall position={[0, DOOR_HEIGHT + (WALL_HEIGHT - DOOR_HEIGHT) / 2, HS]} size={[DOOR_WIDTH, WALL_HEIGHT - DOOR_HEIGHT, WT]} />
+      {/* Door frame trim */}
+      <Baseboard position={[-DOOR_WIDTH / 2 - 0.06, DOOR_HEIGHT / 2, HS - TRIM_DEPTH]} size={[0.08, DOOR_HEIGHT, TRIM_DEPTH * 3]} />
+      <Baseboard position={[DOOR_WIDTH / 2 + 0.06, DOOR_HEIGHT / 2, HS - TRIM_DEPTH]} size={[0.08, DOOR_HEIGHT, TRIM_DEPTH * 3]} />
+      <Baseboard position={[0, DOOR_HEIGHT + 0.04, HS - TRIM_DEPTH]} size={[DOOR_WIDTH + 0.2, 0.08, TRIM_DEPTH * 3]} />
+      {/* Front baseboards (beside door) */}
+      <Baseboard position={[doorGapLeft, BASEBOARD_H / 2, HS - TRIM_DEPTH]} size={[sideWidth, BASEBOARD_H, TRIM_DEPTH * 2]} />
+      <Baseboard position={[doorGapRight, BASEBOARD_H / 2, HS - TRIM_DEPTH]} size={[sideWidth, BASEBOARD_H, TRIM_DEPTH * 2]} />
 
-      {/* Lights */}
-      <pointLight position={[-5, WALL_HEIGHT - 0.5, -5]} intensity={0.6} distance={ROOM_SIZE} color="#fff8ee" />
-      <pointLight position={[5, WALL_HEIGHT - 0.5, 5]} intensity={0.6} distance={ROOM_SIZE} color="#fff8ee" />
-      <pointLight position={[0, WALL_HEIGHT - 0.5, 0]} intensity={0.4} distance={ROOM_SIZE} color="#fff8ee" />
+      {/* ── Crown moulding (top trim) ── */}
+      <Baseboard position={[0, WALL_HEIGHT - 0.06, -HS + TRIM_DEPTH]} size={[ROOM_SIZE, 0.1, TRIM_DEPTH * 2]} />
+      <Baseboard position={[-HS + TRIM_DEPTH, WALL_HEIGHT - 0.06, 0]} size={[TRIM_DEPTH * 2, 0.1, ROOM_SIZE]} />
+      <Baseboard position={[HS - TRIM_DEPTH, WALL_HEIGHT - 0.06, 0]} size={[TRIM_DEPTH * 2, 0.1, ROOM_SIZE]} />
+
+      {/* ── Ceiling lights ── */}
+      <CeilingLight position={[-5, WALL_HEIGHT, -4]} />
+      <CeilingLight position={[5, WALL_HEIGHT, -4]} />
+      <CeilingLight position={[0, WALL_HEIGHT, 4]} />
+
+      {/* ── Corner plants ── */}
+      <GlbModel asset={PLANT_ASSETS[0]} position={[-HS + 1.5, 0, -HS + 1.5]} rotation={[0, 0.4, 0]} />
+      <GlbModel asset={PLANT_ASSETS[0]} position={[HS - 1.5, 0, -HS + 1.5]} rotation={[0, -0.6, 0]} />
+      <GlbModel asset={PLANT_ASSETS[0]} position={[-HS + 1.2, 0, HS - 2.5]} rotation={[0, 1.2, 0]} />
+      <GlbModel asset={PLANT_ASSETS[0]} position={[HS - 1.2, 0, HS - 2.5]} rotation={[0, -1.0, 0]} />
+
+      {/* ── Wall shelf on back wall ── */}
+      <mesh position={[-6, 2.8, -HS + 0.2]} castShadow>
+        <boxGeometry args={[3, 0.08, 0.35]} />
+        <meshStandardMaterial color="#c9b896" roughness={0.5} metalness={0.05} />
+      </mesh>
+      <mesh position={[6, 2.8, -HS + 0.2]} castShadow>
+        <boxGeometry args={[3, 0.08, 0.35]} />
+        <meshStandardMaterial color="#c9b896" roughness={0.5} metalness={0.05} />
+      </mesh>
+      {/* Small plants on shelves */}
+      <GlbModel asset={PLANT_ASSETS[0]} position={[-6.5, 2.84, -HS + 0.2]} scale={1.0} />
+      <GlbModel asset={PLANT_ASSETS[0]} position={[5.5, 2.84, -HS + 0.2]} scale={1.0} />
+
+      {/* ── Rug in center ── */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.01, 0]} receiveShadow>
+        <planeGeometry args={[10, 8]} />
+        <meshStandardMaterial color="#c8b99a" roughness={0.95} metalness={0} />
+      </mesh>
+      {/* Rug border */}
+      <mesh rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.008, 0]} receiveShadow>
+        <planeGeometry args={[10.6, 8.6]} />
+        <meshStandardMaterial color="#b5a486" roughness={0.95} metalness={0} />
+      </mesh>
     </group>
   )
 }
@@ -165,6 +243,148 @@ function ExitDoor() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  Screenshot texture hook                                            */
+/* ------------------------------------------------------------------ */
+
+function useScreenshotTexture(screenshot?: string | null): THREE.Texture | null {
+  const [texture, setTexture] = useState<THREE.Texture | null>(null)
+
+  useEffect(() => {
+    if (!screenshot) { setTexture(null); return }
+    const img = new Image()
+    img.onload = () => {
+      const tex = new THREE.Texture(img)
+      tex.needsUpdate = true
+      tex.colorSpace = THREE.SRGBColorSpace
+      tex.minFilter = THREE.LinearFilter
+      tex.magFilter = THREE.LinearFilter
+      tex.flipY = false
+      // UVs are 0,0 to 1,1 — fill width, top-align, clip overflow
+      const imgAspect = img.width / img.height
+      const screenAspect = 1920 / 1080
+      const scaleY = screenAspect / imgAspect
+      tex.repeat.set(1, Math.min(1, scaleY))
+      tex.offset.set(0, Math.max(0, 1 - Math.min(1, scaleY)))
+      tex.wrapS = THREE.ClampToEdgeWrapping
+      tex.wrapT = THREE.ClampToEdgeWrapping
+      setTexture(tex)
+    }
+    img.src = screenshot
+    return () => { img.onload = null }
+  }, [screenshot])
+
+  return texture
+}
+
+/* ------------------------------------------------------------------ */
+/*  Computer with screenshot on ScreenMaterial                         */
+/* ------------------------------------------------------------------ */
+
+const COMPUTER_NEW_PATH = '/hub-assets/computer_new.glb'
+
+function ComputerWithScreen({ item }: { item: BoardItem }) {
+  const gltf = useLoader(GLTFLoader, COMPUTER_NEW_PATH)
+  const screenshotTex = useScreenshotTexture(item.screenshot)
+
+  const scene = useMemo(() => {
+    const cloned = gltf.scene.clone(true)
+    cloned.traverse((child) => {
+      if (!(child as THREE.Mesh).isMesh) return
+      const mesh = child as THREE.Mesh
+      // Check original material name before any conversion
+      const origMat = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material
+      const matName = origMat?.name ?? ''
+
+      if (matName === 'ScreenMaterial') {
+        // Apply screenshot or fallback
+        if (screenshotTex) {
+          mesh.material = new THREE.MeshBasicMaterial({
+            map: screenshotTex,
+            toneMapped: false,
+          })
+        } else {
+          mesh.material = new THREE.MeshStandardMaterial({
+            color: item.kind === 'terminal' ? '#001a00' : '#000d1a',
+            emissive: new THREE.Color(item.kind === 'terminal' ? '#00ff44' : '#4488ff'),
+            emissiveIntensity: 0.4,
+          })
+        }
+      } else if (origMat?.type === 'MeshPhysicalMaterial') {
+        // Downgrade physical -> standard to avoid Three.js crash
+        const phys = origMat as THREE.MeshPhysicalMaterial
+        const std = new THREE.MeshStandardMaterial()
+        std.name = phys.name
+        std.color.copy(phys.color)
+        std.map = phys.map
+        std.normalMap = phys.normalMap
+        std.roughness = phys.roughness
+        std.roughnessMap = phys.roughnessMap
+        std.metalness = phys.metalness
+        std.metalnessMap = phys.metalnessMap
+        std.aoMap = phys.aoMap
+        std.emissive.copy(phys.emissive)
+        std.emissiveMap = phys.emissiveMap
+        std.emissiveIntensity = phys.emissiveIntensity
+        std.side = phys.side
+        std.transparent = phys.transparent
+        std.opacity = phys.opacity
+        mesh.material = std
+      }
+      mesh.castShadow = true
+      mesh.receiveShadow = true
+    })
+    // Shift up so bottom of model sits at y=0 (on desk surface)
+    const box = new THREE.Box3().setFromObject(cloned)
+    cloned.position.y = -box.min.y
+
+    return cloned
+  }, [gltf.scene, screenshotTex, item.kind])
+
+  return <primitive object={scene} />
+}
+
+/* ------------------------------------------------------------------ */
+/*  Procedural desk                                                    */
+/* ------------------------------------------------------------------ */
+
+function ProceduralDesk() {
+  const topY = DESK_H - DESK_TOP_T / 2
+  const legH = DESK_H - DESK_TOP_T
+  const legY = legH / 2
+  const insetW = DESK_W / 2 - LEG_T / 2 - 0.03
+  const insetD = DESK_D / 2 - LEG_T / 2 - 0.03
+  const woodColor = '#8b6f4e'
+  const topColor = '#f0ebe3'
+
+  return (
+    <group>
+      {/* Tabletop — white laminate */}
+      <mesh position={[0, topY, 0]} castShadow receiveShadow>
+        <boxGeometry args={[DESK_W, DESK_TOP_T, DESK_D]} />
+        <meshStandardMaterial color={topColor} roughness={0.25} metalness={0.02} />
+      </mesh>
+      {/* Thin edge band */}
+      <mesh position={[0, topY - DESK_TOP_T / 2 - 0.005, 0]}>
+        <boxGeometry args={[DESK_W + 0.005, 0.01, DESK_D + 0.005]} />
+        <meshStandardMaterial color="#d5cfc5" roughness={0.4} metalness={0.05} />
+      </mesh>
+      {/* Four straight legs — warm wood */}
+      {[[-1, -1], [1, -1], [-1, 1], [1, 1]].map(([sx, sz], i) => (
+        <mesh key={i} position={[sx * insetW, legY, sz * insetD]} castShadow>
+          <boxGeometry args={[LEG_T, legH, LEG_T]} />
+          <meshStandardMaterial color={woodColor} roughness={0.55} metalness={0.0} />
+        </mesh>
+      ))}
+      {/* Cross bar under top for structure */}
+      <mesh position={[0, topY - DESK_TOP_T - 0.04, 0]}>
+        <boxGeometry args={[DESK_W - 0.15, 0.03, 0.03]} />
+        <meshStandardMaterial color={woodColor} roughness={0.55} metalness={0.0} />
+      </mesh>
+    </group>
+  )
+}
+
+/* ------------------------------------------------------------------ */
 /*  Computer desk (represents a real web tab or terminal)              */
 /* ------------------------------------------------------------------ */
 
@@ -185,20 +405,12 @@ function ComputerDesk({ position, rotation, item, id }: ComputerDeskProps) {
 
   return (
     <group position={finalPosition} rotation={[0, finalRotation, 0]}>
-      <GlbModel asset={DESK_ASSET} />
-      <group position={[0, 1.3, 0]}>
-        <GlbModel asset={COMPUTER_ASSET} />
+      <group scale={[FURNITURE_SCALE, FURNITURE_SCALE, FURNITURE_SCALE]}>
+        <ProceduralDesk />
+        <group position={[0, DESK_H, 0]}>
+          <ComputerWithScreen item={item} />
+        </group>
       </group>
-
-      {/* Screen glow indicator */}
-      <mesh position={[0, 1.1, -0.3]}>
-        <planeGeometry args={[0.5, 0.35]} />
-        <meshStandardMaterial
-          color={item.kind === 'terminal' ? '#001a00' : '#000d1a'}
-          emissive={isGrabbed ? '#ffaa00' : item.kind === 'terminal' ? '#00ff44' : '#4488ff'}
-          emissiveIntensity={isGrabbed ? 1.0 : isHovered ? 0.8 : 0.3}
-        />
-      </mesh>
 
       {/* Grab indicator ring */}
       {isGrabbed && (
