@@ -50,7 +50,7 @@ function ViewModeSwitcher() {
   const current = viewModes.find((m) => m.key === active)!
 
   return (
-    <div className="mt-24 w-[200%] max-w-none flex flex-col items-center gap-6">
+    <div className="mt-24 w-full md:w-[200%] max-w-none flex flex-col items-center gap-6">
       <div className="flex gap-2 relative z-10 mb-[-12px]">
         {viewModes.map((mode) => (
           <button
@@ -114,7 +114,7 @@ export default function App() {
 
   return (
     <>
-      <div className="min-h-screen">
+      <div className="min-h-screen overflow-x-hidden">
         {/* Nav */}
         <nav className="flex items-center justify-between px-6 py-4 max-w-6xl mx-auto">
           <div className="flex items-center gap-2">
