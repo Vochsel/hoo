@@ -293,6 +293,7 @@ interface BoardContextMenu {
   y: number
   boardId: string
   boardName: string
+  rootDir?: string | null
 }
 
 interface FolderContextMenu {
@@ -4206,7 +4207,7 @@ function BrowserPageInner(): React.ReactElement {
     <div className="flex h-full min-h-0 bg-transparent" onClick={() => { closeContextMenu(); closeBoardItemMenu(); closeBoardContextMenu(); closeFolderContextMenu() }}>
       {!sidebarCollapsed && (
         <aside style={{ width: sidebarWidth }} className="shrink-0 sidebar-vibrancy flex flex-col min-h-0">
-          <div className="sidebar-traffic-row shrink-0 flex items-center pr-3">
+          <div className="sidebar-traffic-row shrink-0 flex items-start pr-3">
             <div className="traffic-light-offset no-drag flex shrink-0 items-center">
               <button
                 type="button"
@@ -4504,6 +4505,9 @@ function BrowserPageInner(): React.ReactElement {
                                         setBoardItemMenu(null)
                                         setFolderContextMenu(null)
                                         setBoardContextMenu({ x: event.clientX, y: event.clientY, boardId: board.id, boardName: board.name })
+                                        void window.api.workspace.getBoardRootDir(board.id).then((dir) => {
+                                          setBoardContextMenu((prev) => prev?.boardId === board.id ? { ...prev, rootDir: dir as string | null } : prev)
+                                        })
                                       }}
                                     >
                                       <span
@@ -4642,6 +4646,9 @@ function BrowserPageInner(): React.ReactElement {
                             setBoardItemMenu(null)
                             setFolderContextMenu(null)
                             setBoardContextMenu({ x: event.clientX, y: event.clientY, boardId: board.id, boardName: board.name })
+                            void window.api.workspace.getBoardRootDir(board.id).then((dir) => {
+                              setBoardContextMenu((prev) => prev?.boardId === board.id ? { ...prev, rootDir: dir as string | null } : prev)
+                            })
                           }}
                         >
                           <span
@@ -5325,6 +5332,32 @@ function BrowserPageInner(): React.ReactElement {
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
         >
+          {boardContextMenu.rootDir && (
+            <>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  void window.api.workspace.openInFinder(boardContextMenu.rootDir!)
+                  setBoardContextMenu(null)
+                }}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Open in Finder
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  const editor = ((getSetting('preferredEditor') as string) ?? 'cursor').trim() || 'cursor'
+                  void window.api.workspace.openInEditor(boardContextMenu.rootDir!, editor)
+                  setBoardContextMenu(null)
+                }}
+              >
+                <Code className="h-4 w-4" />
+                Open in Editor
+              </button>
+              <div className="my-1 h-px bg-border/40" />
+            </>
+          )}
           <button
             className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
             onClick={(event) => {

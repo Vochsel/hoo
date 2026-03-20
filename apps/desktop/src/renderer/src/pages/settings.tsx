@@ -621,6 +621,21 @@ export function SettingsPage({
                   })}
                 </div>
               </SettingsPanel>
+
+              <SettingsPanel
+                title="Preferred Editor"
+                description="Choose which editor opens when using 'Open in Editor' from a board's context menu."
+              >
+                <select
+                  className="h-11 w-full rounded-2xl border border-input bg-background px-4 text-sm"
+                  value={((getSetting('preferredEditor') as string) ?? 'cursor').trim() || 'cursor'}
+                  onChange={(e) => setSetting('preferredEditor', e.target.value)}
+                >
+                  <option value="cursor">Cursor</option>
+                  <option value="vscode">Visual Studio Code</option>
+                  <option value="zed">Zed</option>
+                </select>
+              </SettingsPanel>
             </>
           )}
 

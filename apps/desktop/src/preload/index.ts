@@ -135,7 +135,9 @@ const api = {
     setBoardActiveView: (boardId: string, view: string) => ipcRenderer.invoke('workspace:setBoardActiveView', boardId, view),
     getBoardRootDir: (boardId: string) => ipcRenderer.invoke('workspace:getBoardRootDir', boardId),
     setBoardRootDir: (boardId: string, rootDir: string | null) => ipcRenderer.invoke('workspace:setBoardRootDir', boardId, rootDir),
-    pickBoardRootDir: (defaultPath?: string) => ipcRenderer.invoke('workspace:pickBoardRootDir', defaultPath)
+    pickBoardRootDir: (defaultPath?: string) => ipcRenderer.invoke('workspace:pickBoardRootDir', defaultPath),
+    openInFinder: (dirPath: string) => ipcRenderer.invoke('workspace:openInFinder', dirPath),
+    openInEditor: (dirPath: string, editor: string) => ipcRenderer.invoke('workspace:openInEditor', dirPath, editor)
   },
 
   terminal: {

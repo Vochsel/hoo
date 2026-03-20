@@ -1,4 +1,5 @@
-import { ipcMain, BrowserWindow, dialog } from 'electron'
+import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
+import { spawn } from 'child_process'
 import {
   getWorkspaceRootDir,
   setWorkspaceRootDir,
@@ -194,5 +195,21 @@ export function registerWorkspaceHandlers(): void {
         })
     if (result.canceled) return null
     return result.filePaths[0] ?? null
+  })
+
+  ipcMain.handle('workspace:openInFinder', async (_event, dirPath: string) => {
+    await shell.openPath(dirPath)
+    return { success: true }
+  })
+
+  ipcMain.handle('workspace:openInEditor', async (_event, dirPath: string, editor: string) => {
+    const editorCommands: Record<string, string> = {
+      cursor: 'cursor',
+      vscode: 'code',
+      zed: 'zed'
+    }
+    const cmd = editorCommands[editor] ?? 'cursor'
+    spawn(cmd, [dirPath], { detached: true, stdio: 'ignore' }).unref()
+    return { success: true }
   })
 }
