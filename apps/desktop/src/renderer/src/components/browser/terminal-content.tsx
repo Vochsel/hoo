@@ -22,6 +22,7 @@ interface TerminalContentProps {
   sessionId: string
   label?: string
   config: TerminalNodeConfig
+  active?: boolean
   onRequestClose?: () => void
   onUpdateConfig: (config: TerminalNodeConfig) => void
   onRunningChange?: (isRunning: boolean) => void
@@ -33,6 +34,7 @@ export function TerminalContent({
   sessionId,
   label,
   config,
+  active = true,
   onRequestClose,
   onUpdateConfig,
   onRunningChange,
@@ -55,6 +57,8 @@ export function TerminalContent({
   onRequestCloseRef.current = onRequestClose
   const onUpdateConfigRef = useRef(onUpdateConfig)
   onUpdateConfigRef.current = onUpdateConfig
+  const activeRef = useRef(active)
+  activeRef.current = active
   const onRunningChangeRef = useRef(onRunningChange)
   onRunningChangeRef.current = onRunningChange
   const tailRef = useRef('')
@@ -80,9 +84,23 @@ export function TerminalContent({
   }, [])
 
   const focusTerminal = useCallback(() => {
+    if (!activeRef.current) return
     window.requestAnimationFrame(() => {
+      if (!activeRef.current) return
       termRef.current?.focus()
     })
+  }, [])
+
+  const fitTerminal = useCallback(() => {
+    const term = termRef.current
+    const fitAddon = fitRef.current
+    if (!term || !fitAddon) return
+    try {
+      fitAddon.fit()
+      if (spawnedRef.current) {
+        window.api.terminal.resize(sessionIdRef.current, term.cols, term.rows).catch(() => {})
+      }
+    } catch {}
   }, [])
 
   const detachTerminal = useCallback(() => {
@@ -110,7 +128,6 @@ export function TerminalContent({
     const sid = sessionIdRef.current
     const cfg = configRef.current
     const term = termRef.current
-    const fitAddon = fitRef.current
     if (!term) return
     try { await window.api.terminal.kill(sid) } catch {}
     term.clear()
@@ -136,14 +153,11 @@ export function TerminalContent({
         pendingSubmittedCommandRef.current = false
         setRunningState(false)
       }
-      try {
-        fitAddon?.fit()
-        window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
-      } catch {}
+      fitTerminal()
     } catch (err) {
       term.writeln(`\r\nRestart error: ${err instanceof Error ? err.message : String(err)}`)
     }
-  }, [workspaceRootDir])
+  }, [fitTerminal, workspaceRootDir])
 
   // Dismiss context menu on click outside
   useEffect(() => {
@@ -157,6 +171,23 @@ export function TerminalContent({
   useEffect(() => {
     return () => { detachTerminal() }
   }, [detachTerminal])
+
+  useEffect(() => {
+    const term = termRef.current
+    if (!term) return
+
+    if (!active) {
+      term.blur()
+      return
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      fitTerminal()
+      focusTerminal()
+    })
+
+    return () => window.cancelAnimationFrame(frame)
+  }, [active, fitTerminal, focusTerminal])
 
   const handleDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
     if (!canAcceptTerminalDrop(event.dataTransfer)) return
@@ -233,10 +264,7 @@ export function TerminalContent({
               spawnedRef.current = true
               pendingSubmittedCommandRef.current = false
               setRunningState(isTerminalBusyFromTail(tailRef.current))
-              try {
-                fitAddon.fit()
-                window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
-              } catch {}
+              fitTerminal()
               focusTerminal()
             } else {
               if (cfg.lastScrollback) {
@@ -264,10 +292,7 @@ export function TerminalContent({
                 pendingSubmittedCommandRef.current = false
                 setRunningState(false)
               }
-              try {
-                fitAddon.fit()
-                window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
-              } catch {}
+              fitTerminal()
               focusTerminal()
             }
           })
@@ -326,12 +351,7 @@ export function TerminalContent({
         }
 
         const observer = new ResizeObserver(() => {
-          try {
-            fitAddon.fit()
-            if (spawnedRef.current) {
-              window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
-            }
-          } catch {}
+          fitTerminal()
         })
         observer.observe(el)
         observerRef.current = observer

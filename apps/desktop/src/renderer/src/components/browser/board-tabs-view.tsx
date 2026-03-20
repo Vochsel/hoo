@@ -189,6 +189,7 @@ export function BoardTabsView({
   const [orderedIds, setOrderedIds] = useState<string[]>([])
   const [cachedBrowserTabIds, setCachedBrowserTabIds] = useState<string[]>([])
   const [mountedBrowserTabIds, setMountedBrowserTabIds] = useState<string[]>([])
+  const [mountedTerminalIds, setMountedTerminalIds] = useState<string[]>([])
   const [browserReloadNonceById, setBrowserReloadNonceById] = useState<Map<string, number>>(new Map())
   const [terminalInstanceRevisionById, setTerminalInstanceRevisionById] = useState<Map<string, number>>(new Map())
   const cachedBrowserTabIdsRef = useRef<string[]>([])
@@ -331,6 +332,19 @@ export function BoardTabsView({
   }, [availableBrowserTabs])
 
   useEffect(() => {
+    if (selectedItem?.kind !== 'terminal') return
+    setMountedTerminalIds((prev) => (prev.includes(selectedItem.node.id) ? prev : [...prev, selectedItem.node.id]))
+  }, [selectedItem])
+
+  useEffect(() => {
+    const activeTerminalIds = new Set(terminalNodes.map((node) => node.id))
+    setMountedTerminalIds((prev) => {
+      const next = prev.filter((id) => activeTerminalIds.has(id))
+      return areStringArraysEqual(prev, next) ? prev : next
+    })
+  }, [terminalNodes])
+
+  useEffect(() => {
     if (!pendingReloadId || pendingReloadNonce == null) return
     if (pendingReloadNonce === lastProcessedReloadNonce.current) return
     lastProcessedReloadNonce.current = pendingReloadNonce
@@ -380,6 +394,25 @@ export function BoardTabsView({
       .map((tabId) => browserTabsById.get(tabId))
       .filter((tab): tab is BrowserTab => tab != null)
   }, [mountedBrowserTabIds, browserTabsById])
+
+  const terminalNodesById = useMemo(() => {
+    const map = new Map<string, GraphNode>()
+    for (const node of terminalNodes) map.set(node.id, node)
+    return map
+  }, [terminalNodes])
+
+  const mountedTerminalIdsToRender = useMemo(() => {
+    if (selectedItem?.kind !== 'terminal') return mountedTerminalIds
+    return mountedTerminalIds.includes(selectedItem.node.id)
+      ? mountedTerminalIds
+      : [...mountedTerminalIds, selectedItem.node.id]
+  }, [mountedTerminalIds, selectedItem])
+
+  const mountedTerminalNodes = useMemo(() => {
+    return mountedTerminalIdsToRender
+      .map((nodeId) => terminalNodesById.get(nodeId))
+      .filter((node): node is GraphNode => node != null)
+  }, [mountedTerminalIdsToRender, terminalNodesById])
 
   const firstAvailableItemId = useMemo(() => {
     const first = allItems[0]
@@ -731,23 +764,32 @@ export function BoardTabsView({
             </div>
           )
         })}
-        {selectedItem?.kind === 'terminal' && (
-          <div className="absolute inset-0 flex min-h-0 z-10">
-            <TerminalContent
-              key={`${selectedItem.node.id}:${terminalInstanceRevisionById.get(selectedItem.node.id) ?? 0}`}
-              sessionId={`pty-${selectedItem.node.id}`}
-              label={selectedItem.node.label}
-              config={parseNodeConfig(selectedItem.node.config) as TerminalNodeConfig}
-              onRequestClose={() => closeItem(selectedItem.node.id, 'terminal')}
-              onUpdateConfig={(nextCfg) => {
-                void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
-              }}
-              onRunningChange={(isRunning) => onTerminalRunningChange?.(selectedItem.node.id, isRunning)}
-              workspaceRootDir={boardRootDir || workspaceRootDir}
-              showHeader={false}
-            />
-          </div>
-        )}
+        {mountedTerminalNodes.map((node) => {
+          const isActive = selectedItem?.kind === 'terminal' && selectedItem.node.id === node.id
+          return (
+            <div
+              key={node.id}
+              className={`absolute inset-0 flex min-h-0 ${isActive ? 'z-10' : 'pointer-events-none'}`}
+              style={{ visibility: isActive ? 'visible' : 'hidden' }}
+              aria-hidden={!isActive}
+            >
+              <TerminalContent
+                key={`${node.id}:${terminalInstanceRevisionById.get(node.id) ?? 0}`}
+                sessionId={`pty-${node.id}`}
+                label={node.label}
+                config={parseNodeConfig(node.config) as TerminalNodeConfig}
+                active={isActive}
+                onRequestClose={() => closeItem(node.id, 'terminal')}
+                onUpdateConfig={(nextCfg) => {
+                  void onUpdateNode(node.id, { config: JSON.stringify(nextCfg) })
+                }}
+                onRunningChange={(isRunning) => onTerminalRunningChange?.(node.id, isRunning)}
+                workspaceRootDir={boardRootDir || workspaceRootDir}
+                showHeader={false}
+              />
+            </div>
+          )
+        })}
         {selectedItem?.kind === 'file' && (
           <div className="absolute inset-0 flex min-h-0 z-10">
             <FileContent
