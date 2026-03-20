@@ -5,6 +5,14 @@ import { RotateCw } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
 import type { TerminalNodeConfig } from './terminal-node'
 import {
+  appendTerminalOutputTail,
+  getLastNonEmptyTerminalLine,
+  isLikelyShellPromptLine,
+  isLikelyTerminalInputRequest,
+  isTerminalBusyFromTail,
+  normalizeTerminalOutput
+} from '@/lib/terminal-status'
+import {
   canAcceptTerminalDrop,
   installTerminalKeyBindings,
   writeDroppedItemsToTerminal
@@ -16,6 +24,7 @@ interface TerminalContentProps {
   config: TerminalNodeConfig
   onRequestClose?: () => void
   onUpdateConfig: (config: TerminalNodeConfig) => void
+  onRunningChange?: (isRunning: boolean) => void
   workspaceRootDir?: string
   showHeader?: boolean
 }
@@ -26,6 +35,7 @@ export function TerminalContent({
   config,
   onRequestClose,
   onUpdateConfig,
+  onRunningChange,
   workspaceRootDir,
   showHeader = true
 }: TerminalContentProps): React.ReactElement {
@@ -45,6 +55,14 @@ export function TerminalContent({
   onRequestCloseRef.current = onRequestClose
   const onUpdateConfigRef = useRef(onUpdateConfig)
   onUpdateConfigRef.current = onUpdateConfig
+  const onRunningChangeRef = useRef(onRunningChange)
+  onRunningChangeRef.current = onRunningChange
+  const tailRef = useRef('')
+  const pendingSubmittedCommandRef = useRef(false)
+
+  const setRunningState = useCallback((isRunning: boolean): void => {
+    onRunningChangeRef.current?.(isRunning)
+  }, [])
 
   const serializeBuffer = useCallback((): string => {
     const term = termRef.current
@@ -111,7 +129,12 @@ export function TerminalContent({
       spawnedRef.current = true
       // Run configured command on restart
       if (cfg.command?.trim()) {
+        pendingSubmittedCommandRef.current = true
+        setRunningState(true)
         window.api.terminal.write(sid, cfg.command.trim() + '\n').catch(() => {})
+      } else {
+        pendingSubmittedCommandRef.current = false
+        setRunningState(false)
       }
       try {
         fitAddon?.fit()
@@ -202,11 +225,14 @@ export function TerminalContent({
             if (alive) {
               const buffer = await window.api.terminal.getBuffer(sid)
               if (buffer) {
+                tailRef.current = appendTerminalOutputTail('', buffer)
                 term.write(buffer, () => {
                   term.scrollToBottom()
                 })
               }
               spawnedRef.current = true
+              pendingSubmittedCommandRef.current = false
+              setRunningState(isTerminalBusyFromTail(tailRef.current))
               try {
                 fitAddon.fit()
                 window.api.terminal.resize(sid, term.cols, term.rows).catch(() => {})
@@ -231,7 +257,12 @@ export function TerminalContent({
               spawnedRef.current = true
               // Run configured command on startup
               if (cfg.command?.trim()) {
+                pendingSubmittedCommandRef.current = true
+                setRunningState(true)
                 window.api.terminal.write(sid, cfg.command.trim() + '\n').catch(() => {})
+              } else {
+                pendingSubmittedCommandRef.current = false
+                setRunningState(false)
               }
               try {
                 fitAddon.fit()
@@ -246,11 +277,33 @@ export function TerminalContent({
 
         const removeDataListener = window.api.terminal.onData(
           (incomingSessionId: string, data: string) => {
-            if (incomingSessionId === sid) term.write(data)
+            if (incomingSessionId !== sid) return
+            term.write(data)
+
+            const normalizedChunk = normalizeTerminalOutput(data)
+            tailRef.current = appendTerminalOutputTail(tailRef.current, data)
+            const lastLine = getLastNonEmptyTerminalLine(tailRef.current)
+            const isPrompt = isLikelyShellPromptLine(lastLine)
+            const isInputRequest = isLikelyTerminalInputRequest(lastLine)
+            const hasMeaningfulOutput = /\S/.test(normalizedChunk)
+
+            if (isPrompt || isInputRequest) {
+              pendingSubmittedCommandRef.current = false
+              setRunningState(false)
+              return
+            }
+
+            if (pendingSubmittedCommandRef.current && hasMeaningfulOutput) {
+              setRunningState(true)
+            }
           }
         )
 
         const disposable = term.onData((data) => {
+          if (data.includes('\r') || data.includes('\n')) {
+            pendingSubmittedCommandRef.current = true
+            setRunningState(true)
+          }
           window.api.terminal.write(sid, data).catch(() => {})
         })
 
@@ -259,6 +312,8 @@ export function TerminalContent({
             if (incomingSessionId === sid) {
               term.writeln(`\r\n[Process exited with code ${exitCode}]`)
               spawnedRef.current = false
+              pendingSubmittedCommandRef.current = false
+              setRunningState(false)
             }
           }
         )

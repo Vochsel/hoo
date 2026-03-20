@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { type NodeProps } from '@xyflow/react'
-import { Terminal } from 'lucide-react'
+import { Loader2, Terminal } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'
 import { HandleWithTooltip } from './handle-with-tooltip'
@@ -55,7 +55,7 @@ function TerminalNodeInner({ data, selected }: NodeProps): React.ReactElement {
             <Terminal className="h-8 w-8 text-muted-foreground/30" />
           </div>
         )}
-        {hasNotification && (
+        {hasNotification && !isRunning && (
           <div className="absolute right-1.5 bottom-1.5 h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-card" />
         )}
       </div>
@@ -63,7 +63,11 @@ function TerminalNodeInner({ data, selected }: NodeProps): React.ReactElement {
       {/* Info */}
       <div className="px-2.5 py-2">
         <div className="flex items-center gap-1.5">
-          <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+          {isRunning ? (
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+          ) : (
+            <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+          )}
           <span className="truncate text-xs font-medium">{label || 'Terminal'}</span>
         </div>
         {config?.lastExitCode !== undefined && (

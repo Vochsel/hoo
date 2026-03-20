@@ -8,6 +8,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { TerminalNodeConfig } from './terminal-node'
 import {
+  appendTerminalOutputTail,
+  getLastNonEmptyTerminalLine,
+  isLikelyShellPromptLine,
+  isLikelyTerminalInputRequest,
+  isTerminalBusyFromTail,
+  normalizeTerminalOutput
+} from '@/lib/terminal-status'
+import {
   canAcceptTerminalDrop,
   installTerminalKeyBindings,
   writeDroppedItemsToTerminal
@@ -21,6 +29,7 @@ interface TerminalDialogProps {
   onRename?: (name: string) => void
   config: TerminalNodeConfig
   onUpdateConfig: (config: TerminalNodeConfig) => void
+  onRunningChange?: (isRunning: boolean) => void
   workspaceRootDir?: string
   boardRootDir?: string | null
 }
@@ -32,6 +41,7 @@ export function TerminalDialog({
   onRename,
   config,
   onUpdateConfig,
+  onRunningChange,
   sessionId,
   workspaceRootDir,
   boardRootDir
@@ -60,6 +70,14 @@ export function TerminalDialog({
   sessionIdRef.current = sessionId
   const onUpdateConfigRef = useRef(onUpdateConfig)
   onUpdateConfigRef.current = onUpdateConfig
+  const onRunningChangeRef = useRef(onRunningChange)
+  onRunningChangeRef.current = onRunningChange
+  const tailRef = useRef('')
+  const pendingSubmittedCommandRef = useRef(false)
+
+  const setRunningState = useCallback((isRunning: boolean): void => {
+    onRunningChangeRef.current?.(isRunning)
+  }, [])
 
   // Sync edit state when settings panel opens
   useEffect(() => {
@@ -108,7 +126,12 @@ export function TerminalDialog({
       spawnedRef.current = true
       // Run configured command on restart
       if (cfg.command?.trim()) {
+        pendingSubmittedCommandRef.current = true
+        setRunningState(true)
         window.api.terminal.write(sid, cfg.command.trim() + '\n').catch(() => {})
+      } else {
+        pendingSubmittedCommandRef.current = false
+        setRunningState(false)
       }
       try {
         fitAddon?.fit()
@@ -292,9 +315,12 @@ export function TerminalDialog({
             // Reconnect: fetch buffered output and write to xterm
             const buffer = await window.api.terminal.getBuffer(sid)
             if (buffer) {
+              tailRef.current = appendTerminalOutputTail('', buffer)
               term.write(buffer)
             }
             spawnedRef.current = true
+            pendingSubmittedCommandRef.current = false
+            setRunningState(isTerminalBusyFromTail(tailRef.current))
             // Re-fit and sync size
             try {
               fitAddon.fit()
@@ -322,7 +348,12 @@ export function TerminalDialog({
             spawnedRef.current = true
             // Run configured command on startup
             if (cfg.command?.trim()) {
+              pendingSubmittedCommandRef.current = true
+              setRunningState(true)
               window.api.terminal.write(sid, cfg.command.trim() + '\n').catch(() => {})
+            } else {
+              pendingSubmittedCommandRef.current = false
+              setRunningState(false)
             }
             try {
               fitAddon.fit()
@@ -337,14 +368,34 @@ export function TerminalDialog({
       // Wire data from PTY → xterm
       const removeDataListener = window.api.terminal.onData(
         (incomingSessionId: string, data: string) => {
-          if (incomingSessionId === sid) {
-            term.write(data)
+          if (incomingSessionId !== sid) return
+          term.write(data)
+
+          const normalizedChunk = normalizeTerminalOutput(data)
+          tailRef.current = appendTerminalOutputTail(tailRef.current, data)
+          const lastLine = getLastNonEmptyTerminalLine(tailRef.current)
+          const isPrompt = isLikelyShellPromptLine(lastLine)
+          const isInputRequest = isLikelyTerminalInputRequest(lastLine)
+          const hasMeaningfulOutput = /\S/.test(normalizedChunk)
+
+          if (isPrompt || isInputRequest) {
+            pendingSubmittedCommandRef.current = false
+            setRunningState(false)
+            return
+          }
+
+          if (pendingSubmittedCommandRef.current && hasMeaningfulOutput) {
+            setRunningState(true)
           }
         }
       )
 
       // Wire data from xterm → PTY
       const disposable = term.onData((data) => {
+        if (data.includes('\r') || data.includes('\n')) {
+          pendingSubmittedCommandRef.current = true
+          setRunningState(true)
+        }
         window.api.terminal.write(sid, data).catch(() => {})
       })
 
@@ -354,6 +405,8 @@ export function TerminalDialog({
           if (incomingSessionId === sid) {
             term.writeln(`\r\n[Process exited with code ${exitCode}]`)
             spawnedRef.current = false
+            pendingSubmittedCommandRef.current = false
+            setRunningState(false)
           }
         }
       )

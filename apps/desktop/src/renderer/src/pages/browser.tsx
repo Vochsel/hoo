@@ -21,7 +21,7 @@ import {
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu, RotateCw } from 'lucide-react'
+import { Globe, MessageSquare, Radio, Trash2, Copy, Play, Bug, Bell, Sparkles, Timer, NotebookPen, File, FileText, FolderOpen, ChevronDown, ChevronRight, Code, Search, GitCompare, CalendarClock, FormInput, Folder, Terminal, Presentation, PanelTop, Settings, PanelLeftClose, PanelLeftOpen, ArrowLeft, Check, FolderPlus, Archive, Menu, RotateCw, Loader2 } from 'lucide-react'
 import { UpdateBanner } from '@/components/update-banner'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -58,6 +58,14 @@ import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 import { DynamicIcon, IconPicker } from '@/components/ui/icon-picker'
 import { SettingsPage, SettingsSidebar, type SettingsSectionId } from '@/pages/settings'
 import { CLI_AGENTS, WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY, getAgentCommand } from '@/lib/cli-agents'
+import {
+  MAX_TERMINAL_STATUS_TAIL_CHARS,
+  appendTerminalOutputTail,
+  getLastNonEmptyTerminalLine,
+  isLikelyShellPromptLine,
+  isLikelyTerminalInputRequest,
+  normalizeTerminalOutput
+} from '@/lib/terminal-status'
 import TurndownService from 'turndown'
 
 const MONITOR_TAG = '[browser-monitor]'
@@ -74,7 +82,6 @@ const PREVIEW_LOAD_TIMEOUT_MS = 12_000
 const NETWORK_IDLE_POLL_MS = 300
 const NETWORK_IDLE_WAIT_MS = 600
 const NETWORK_IDLE_TIMEOUT_MS = 15_000
-const MAX_TERMINAL_NOTIFICATION_TAIL_CHARS = 2_000
 const INTERACTIVE_SELECTOR =
   'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
@@ -99,45 +106,6 @@ function preview(value: string | undefined, max = 160): string {
   const compact = value.replace(/\s+/g, ' ').trim()
   if (compact.length <= max) return compact
   return `${compact.slice(0, max)}...`
-}
-
-function stripAnsiFromTerminalOutput(value: string): string {
-  // eslint-disable-next-line no-control-regex
-  return value.replace(/\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g, '')
-}
-
-function normalizeTerminalOutput(value: string): string {
-  return stripAnsiFromTerminalOutput(value)
-    .replace(/\u0007/g, '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-}
-
-function getLastNonEmptyTerminalLine(value: string): string {
-  const lines = value.split('\n')
-  for (let index = lines.length - 1; index >= 0; index -= 1) {
-    const line = lines[index]?.trimEnd() ?? ''
-    if (line.length > 0) return line
-  }
-  return ''
-}
-
-function isLikelyShellPromptLine(value: string): boolean {
-  const trimmed = value.trimEnd()
-  if (!trimmed || trimmed.length > 140) return false
-  if (/^PS [^>\n]+>\s*$/.test(value)) return true
-  if (/^(?:❯|➜|λ)\s*$/.test(trimmed)) return true
-  return /(?:[%#$›»>])\s*$/.test(trimmed)
-}
-
-function isLikelyTerminalInputRequest(value: string): boolean {
-  const trimmed = value.trim()
-  if (!trimmed || trimmed.length > 220) return false
-  if (/\[(?:Y\/n|y\/N|y\/n|N\/y|n\/Y)\]|\((?:Y\/n|y\/N|y\/n|N\/y|n\/Y)\)/.test(trimmed)) return true
-  if (/(press any key|password|passphrase|verification code|one-time code|otp|mfa|two-factor|2fa|username|email|login|confirm|are you sure|continue\?|overwrite\?|retry\?|select an option|choose an option|pick an option|enter (?:choice|selection|value|password|passphrase|code))/i.test(trimmed)) {
-    return true
-  }
-  return /:\s*$/.test(trimmed) && /(password|passphrase|username|email|login|code|otp|token|choice|selection)/i.test(trimmed)
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -434,9 +402,12 @@ function BrowserPageInner(): React.ReactElement {
   const [editingTerminalName, setEditingTerminalName] = useState('')
   const [renameDialog, setRenameDialog] = useState<RenameDialogState | null>(null)
   const [renameDialogValue, setRenameDialogValue] = useState('')
+  const [terminalCommandDialog, setTerminalCommandDialog] = useState<{ nodeId: string; boardId: string | null; label: string } | null>(null)
+  const [terminalCommandValue, setTerminalCommandValue] = useState('')
   const [recentWorkspaces, setRecentWorkspaces] = useState<import('@/hooks/use-workspace').RecentWorkspace[]>([])
   const [newWorkspaceDialogOpen, setNewWorkspaceDialogOpen] = useState(false)
   const [notifiedItemIds, setNotifiedItemIds] = useState<Set<string>>(new Set())
+  const [runningTerminalIds, setRunningTerminalIds] = useState<Set<string>>(new Set())
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('appearance')
@@ -464,6 +435,7 @@ function BrowserPageInner(): React.ReactElement {
   const scheduleRunningRef = useRef(false)
   const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
   const terminalNotificationStateRef = useRef<Map<string, TerminalNotificationState>>(new Map())
+  const runningTerminalIdsRef = useRef<Set<string>>(new Set())
   const pendingBoardRenameRef = useRef(false)
   const pendingFolderRenameRef = useRef(false)
   // -- Drag-and-drop state for sidebar boards/folders --
@@ -489,6 +461,18 @@ function BrowserPageInner(): React.ReactElement {
   // -- Notification tracking --
   // Keep activeItemIdRef in sync
   useEffect(() => { activeItemIdRef.current = activeItemId }, [activeItemId])
+  useEffect(() => { runningTerminalIdsRef.current = runningTerminalIds }, [runningTerminalIds])
+
+  const setTerminalRunning = useCallback((nodeId: string, isRunning: boolean): void => {
+    setRunningTerminalIds((prev) => {
+      const alreadyRunning = prev.has(nodeId)
+      if (alreadyRunning === isRunning) return prev
+      const next = new Set(prev)
+      if (isRunning) next.add(nodeId)
+      else next.delete(nodeId)
+      return next
+    })
+  }, [])
 
   // Clear notification when an item becomes active
   useEffect(() => {
@@ -535,7 +519,7 @@ function BrowserPageInner(): React.ReactElement {
       const nodeId = sessionId.slice(4)
       const state = getTerminalState(nodeId)
       const normalizedChunk = normalizeTerminalOutput(data)
-      const nextTail = `${state.tail}${normalizedChunk}`.slice(-MAX_TERMINAL_NOTIFICATION_TAIL_CHARS)
+      const nextTail = appendTerminalOutputTail(state.tail, data, MAX_TERMINAL_STATUS_TAIL_CHARS)
       state.tail = nextTail
 
       const lastLine = getLastNonEmptyTerminalLine(nextTail)
@@ -543,6 +527,12 @@ function BrowserPageInner(): React.ReactElement {
       const isInputRequest = isLikelyTerminalInputRequest(lastLine)
       const hasMeaningfulOutput = /\S/.test(normalizedChunk)
       const isActive = nodeId === activeItemIdRef.current
+
+      if (isShellPrompt || isInputRequest) {
+        setTerminalRunning(nodeId, false)
+      } else if (!isActive && hasMeaningfulOutput) {
+        setTerminalRunning(nodeId, true)
+      }
 
       if (isActive) {
         state.hasSeenPrompt = state.hasSeenPrompt || isShellPrompt
@@ -584,6 +574,7 @@ function BrowserPageInner(): React.ReactElement {
       const state = getTerminalState(nodeId)
       state.hasBackgroundOutput = false
       state.lastAttentionSignature = 'exit'
+      setTerminalRunning(nodeId, false)
       if (nodeId === activeItemIdRef.current) return
       markTerminalNotified(nodeId)
     })
@@ -592,7 +583,7 @@ function BrowserPageInner(): React.ReactElement {
       removeDataListener()
       removeExitListener()
     }
-  }, [])
+  }, [setTerminalRunning])
 
   // Track browser tab title changes for non-active tabs
   const prevTabTitlesRef = useRef<Map<string, string>>(new Map())
@@ -2363,6 +2354,7 @@ function BrowserPageInner(): React.ReactElement {
           data: {
             label: gn.label || 'Terminal',
             config,
+            isRunning: runningTerminalIds.has(gn.id),
             hasNotification: notifiedItemIds.has(gn.id)
           }
         }
@@ -2384,7 +2376,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} duplicate node ids detected: ${Array.from(duplicateIds).join(', ')}`)
     }
     return mergedNodes
-  }, [tabs, gNodes, runningTabs, previewingTabs, notifiedItemIds, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
+  }, [tabs, gNodes, runningTabs, previewingTabs, notifiedItemIds, runningTerminalIds, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
@@ -3320,6 +3312,7 @@ function BrowserPageInner(): React.ReactElement {
             }
 
             if (item.kind === 'terminal') {
+              const terminalIsRunning = runningTerminalIds.has(item.id)
               return (
                 <div
                   key={item.id}
@@ -3327,7 +3320,11 @@ function BrowserPageInner(): React.ReactElement {
                   onClick={() => handleSidebarItemClick(item.id, boardId)}
                   onContextMenu={(event) => handleBoardItemContextMenu(event, item.id, item.kind, boardId)}
                 >
-                  <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                  {terminalIsRunning ? (
+                    <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                  ) : (
+                    <Terminal className="h-3.5 w-3.5 shrink-0 text-green-500" />
+                  )}
                   {editingTerminalId === item.id ? (
                     <Input
                       value={editingTerminalName}
@@ -3358,7 +3355,7 @@ function BrowserPageInner(): React.ReactElement {
                       {item.node.label || 'Terminal'}
                     </span>
                   )}
-                  {!isActive && notifiedItemIds.has(item.id) && (
+                  {!isActive && !terminalIsRunning && notifiedItemIds.has(item.id) && (
                     <span className="ml-auto shrink-0 h-1.5 w-1.5 rounded-full bg-blue-500" />
                   )}
                 </div>
@@ -3394,6 +3391,7 @@ function BrowserPageInner(): React.ReactElement {
       getOrderedSidebarBoardItems,
       handleBoardItemContextMenu,
       handleSidebarItemClick,
+      runningTerminalIds,
       saveInlineTerminalEdit,
       startInlineTerminalEdit
     ]
@@ -3473,6 +3471,7 @@ function BrowserPageInner(): React.ReactElement {
     async (itemId: string, kind: 'graph' | 'terminal' | 'file') => {
       if (kind === 'terminal') {
         window.api.terminal.kill(`pty-${itemId}`).catch(() => {})
+        setTerminalRunning(itemId, false)
         if (terminalDialogNodeId === itemId) {
           setTerminalDialogNodeId(null)
         }
@@ -3483,7 +3482,7 @@ function BrowserPageInner(): React.ReactElement {
       setEdges(filteredEdges)
       saveEdges(filteredEdges)
     },
-    [deleteNode, reactFlowInstance, saveEdges, setEdges, terminalDialogNodeId]
+    [deleteNode, reactFlowInstance, saveEdges, setEdges, setTerminalRunning, terminalDialogNodeId]
   )
 
   const handleBoardItemRename = useCallback(() => {
@@ -3530,6 +3529,81 @@ function BrowserPageInner(): React.ReactElement {
     setPendingTabReload({ itemId: boardItemMenu.itemId, nonce: pendingReloadNonceRef.current })
     setBoardItemMenu(null)
   }, [boardItemMenu])
+
+  const openTerminalCommandDialog = useCallback(
+    (nodeId: string, boardId: string | null) => {
+      const isActiveBoardItem = !!boardId && boardId === activeBoardId
+      const terminalNode = isActiveBoardItem || !boardId
+        ? gNodes.find((node) => node.id === nodeId && node.nodeType === 'terminal')
+        : getSidebarBoardCollections(boardId).terminalNodes.find((node) => node.id === nodeId)
+
+      if (!terminalNode) {
+        setContextMenu(null)
+        setBoardItemMenu(null)
+        return
+      }
+
+      const currentConfig = parseNodeConfig(terminalNode.config) as TerminalNodeConfig
+      setTerminalCommandDialog({
+        nodeId,
+        boardId,
+        label: terminalNode.label?.trim() || 'Terminal'
+      })
+      setTerminalCommandValue(currentConfig.command ?? '')
+      setContextMenu(null)
+      setBoardItemMenu(null)
+    },
+    [activeBoardId, gNodes, getSidebarBoardCollections]
+  )
+
+  const handleBoardItemEditTerminalCommand = useCallback(() => {
+    if (!boardItemMenu || boardItemMenu.kind !== 'terminal') return
+    openTerminalCommandDialog(boardItemMenu.itemId, boardItemMenu.boardId)
+  }, [boardItemMenu, openTerminalCommandDialog])
+
+  const handleTerminalCommandDialogSubmit = useCallback(async () => {
+    if (!terminalCommandDialog) return
+
+    const trimmedCommand = terminalCommandValue.trim()
+    const { nodeId, boardId } = terminalCommandDialog
+    const isActiveBoardItem = !!boardId && boardId === activeBoardId
+    const terminalNode = isActiveBoardItem || !boardId
+      ? gNodes.find((node) => node.id === nodeId && node.nodeType === 'terminal')
+      : getSidebarBoardCollections(boardId).terminalNodes.find((node) => node.id === nodeId)
+
+    if (!terminalNode) {
+      setTerminalCommandDialog(null)
+      return
+    }
+
+    const currentConfig = parseNodeConfig(terminalNode.config) as TerminalNodeConfig
+    const currentCommand = currentConfig.command?.trim() ?? ''
+    if (trimmedCommand === currentCommand) {
+      setTerminalCommandDialog(null)
+      return
+    }
+
+    const nextConfig: TerminalNodeConfig = {
+      ...currentConfig,
+      command: trimmedCommand || undefined
+    }
+
+    try {
+      if (isActiveBoardItem || !boardId) {
+        await updateNode(nodeId, { config: JSON.stringify(nextConfig) })
+      } else {
+        await window.api.graphNodes.update(nodeId, { config: JSON.stringify(nextConfig) }, boardId)
+        updateBoardNodeSidebar(boardId, 'terminal', (prev) =>
+          prev.map((node) => (node.id === nodeId ? { ...node, config: JSON.stringify(nextConfig) } : node))
+        )
+      }
+      setTerminalCommandDialog(null)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      console.error(`${FLOW_TAG} failed to update terminal command id=${nodeId}:`, error)
+      window.alert(`Failed to update terminal command: ${message}`)
+    }
+  }, [activeBoardId, gNodes, getSidebarBoardCollections, terminalCommandDialog, terminalCommandValue, updateBoardNodeSidebar, updateNode])
 
   const handleBoardItemPickDifferentFile = useCallback(async () => {
     if (!boardItemMenu || boardItemMenu.source !== 'tab-strip' || boardItemMenu.kind !== 'file') {
@@ -3601,6 +3675,7 @@ function BrowserPageInner(): React.ReactElement {
 
       if (kind === 'terminal') {
         window.api.terminal.kill(`pty-${itemId}`).catch(() => {})
+        setTerminalRunning(itemId, false)
       }
       if (!boardId) return
       await window.api.graphNodes.delete(itemId, boardId)
@@ -3609,7 +3684,7 @@ function BrowserPageInner(): React.ReactElement {
       }
       updateBoardItemOrder(boardId, (prev) => prev.filter((id) => id !== itemId))
     },
-    [activeBoardId, deleteTab, deleteGraphItemFromActiveBoard, updateBoardItemOrder, updateBoardNodeSidebar, updateBoardTabsSidebar]
+    [activeBoardId, deleteTab, deleteGraphItemFromActiveBoard, setTerminalRunning, updateBoardItemOrder, updateBoardNodeSidebar, updateBoardTabsSidebar]
   )
 
   const handleContextExecuteNode = useCallback(() => {
@@ -3831,8 +3906,14 @@ function BrowserPageInner(): React.ReactElement {
     if (!contextTerminalNode) return
     const sessionId = `pty-${contextTerminalNode.id}`
     window.api.terminal.kill(sessionId).catch(() => {})
+    setTerminalRunning(contextTerminalNode.id, false)
     setContextMenu(null)
-  }, [contextTerminalNode])
+  }, [contextTerminalNode, setTerminalRunning])
+
+  const handleContextEditTerminalCommand = useCallback(() => {
+    if (!contextTerminalNode) return
+    openTerminalCommandDialog(contextTerminalNode.id, activeBoardId)
+  }, [activeBoardId, contextTerminalNode, openTerminalCommandDialog])
 
   const handleContextShowFileAsTab = useCallback(() => {
     if (!contextFileNode) return
@@ -4852,6 +4933,8 @@ function BrowserPageInner(): React.ReactElement {
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
               onUpdateNode={updateNode}
               notifiedIds={notifiedItemIds}
+              runningTerminalIds={runningTerminalIds}
+              onTerminalRunningChange={setTerminalRunning}
               onItemContextMenu={(event, item) => {
                 if (!activeBoardId) return
                 handleBoardItemContextMenu(event, item.id, item.kind, activeBoardId, 'tab-strip')
@@ -5092,13 +5175,22 @@ function BrowserPageInner(): React.ReactElement {
                 Rename node
               </button>
               {isTerminalNode && (
-                <button
-                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                  onClick={handleContextRestartTerminal}
-                >
-                  <Terminal className="h-4 w-4" />
-                  Restart terminal
-                </button>
+                <>
+                  <button
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                    onClick={handleContextRestartTerminal}
+                  >
+                    <Terminal className="h-4 w-4" />
+                    Restart terminal
+                  </button>
+                  <button
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                    onClick={handleContextEditTerminalCommand}
+                  >
+                    <Code className="h-4 w-4" />
+                    Set default command
+                  </button>
+                </>
               )}
               {isFileNode && (
                 <button
@@ -5140,6 +5232,15 @@ function BrowserPageInner(): React.ReactElement {
             >
               <RotateCw className="h-4 w-4" />
               {boardItemMenu.kind === 'browser' ? 'Reload Webview' : 'Restart Terminal'}
+            </button>
+          )}
+          {boardItemMenu.kind === 'terminal' && (
+            <button
+              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+              onClick={() => void handleBoardItemEditTerminalCommand()}
+            >
+              <Code className="h-4 w-4" />
+              Set default command
             </button>
           )}
           {boardItemMenu.source === 'tab-strip' && boardItemMenu.kind === 'file' && (
@@ -5503,6 +5604,11 @@ function BrowserPageInner(): React.ReactElement {
                 void updateNode(terminalDialogNodeId, { config: JSON.stringify(nextCfg) })
               }
             }}
+            onRunningChange={(isRunning) => {
+              if (terminalDialogNodeId) {
+                setTerminalRunning(terminalDialogNodeId, isRunning)
+              }
+            }}
             workspaceRootDir={workspace?.rootDir}
             boardRootDir={boardRootDir}
           />
@@ -5598,6 +5704,38 @@ function BrowserPageInner(): React.ReactElement {
           <DialogFooter>
             <Button variant="outline" onClick={() => setRenameDialog(null)}>Cancel</Button>
             <Button onClick={() => void handleRenameDialogSubmit()}>Save</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={!!terminalCommandDialog} onOpenChange={(open) => { if (!open) setTerminalCommandDialog(null) }}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>Default Command</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <p className="text-sm text-muted-foreground">
+              {terminalCommandDialog
+                ? `Runs automatically whenever "${terminalCommandDialog.label}" starts or restarts. Leave blank to open a plain shell.`
+                : 'Runs automatically whenever this terminal starts or restarts. Leave blank to open a plain shell.'}
+            </p>
+            <Input
+              value={terminalCommandValue}
+              onChange={(event) => setTerminalCommandValue(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  void handleTerminalCommandDialogSubmit()
+                }
+              }}
+              placeholder="claude"
+              autoFocus
+              className="font-mono text-sm"
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setTerminalCommandDialog(null)}>Cancel</Button>
+            <Button onClick={() => void handleTerminalCommandDialogSubmit()}>Save</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

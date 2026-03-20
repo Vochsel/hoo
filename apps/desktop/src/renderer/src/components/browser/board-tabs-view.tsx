@@ -1,5 +1,5 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { Globe, Terminal, File, Plus, X, Sparkles } from 'lucide-react'
+import { Globe, Terminal, File, Plus, X, Sparkles, Loader2 } from 'lucide-react'
 import { BrowserTabContent } from './browser-tab-content'
 import { TerminalContent } from './terminal-content'
 import { FileContent } from './file-content'
@@ -44,6 +44,8 @@ interface BoardTabsViewProps {
   onUpdateNode: (id: string, data: Record<string, unknown>) => Promise<unknown>
   onItemContextMenu?: (event: React.MouseEvent, item: { id: string; kind: BoardTabsItemKind }) => void
   notifiedIds?: Set<string>
+  runningTerminalIds?: Set<string>
+  onTerminalRunningChange?: (nodeId: string, isRunning: boolean) => void
   workspaceRootDir?: string
   boardRootDir?: string | null
   pendingSelectId?: string | null
@@ -139,6 +141,8 @@ export function BoardTabsView({
   onUpdateNode,
   onItemContextMenu,
   notifiedIds,
+  runningTerminalIds,
+  onTerminalRunningChange,
   workspaceRootDir,
   boardRootDir,
   pendingSelectId,
@@ -551,6 +555,7 @@ export function BoardTabsView({
           const isDragging = id === draggingId
           const showLeftIndicator = dropIndicator?.id === id && dropIndicator.side === 'left'
           const showRightIndicator = dropIndicator?.id === id && dropIndicator.side === 'right'
+          const terminalIsRunning = item.kind === 'terminal' && !!runningTerminalIds?.has(id)
           const title = item.kind === 'browser'
             ? (item.tab.title || item.tab.url || 'New Tab')
             : (item.node.label || (item.kind === 'terminal' ? 'Terminal' : 'File'))
@@ -561,9 +566,9 @@ export function BoardTabsView({
               key={id}
               type="button"
               draggable
-              className={`no-drag group relative flex max-w-[200px] items-center gap-1.5 ${isSelected ? 'rounded-t-xl' : 'rounded-t-lg'} border -mb-px px-3 py-1.5 text-xs transition-colors ${
+              className={`no-drag group relative flex max-w-[200px] items-center gap-1.5 ${isSelected ? 'rounded-t-xl' : 'rounded-t-lg'} border -mb-px px-3 py-1.5 text-xs transition-[background-color,border-color,color,box-shadow] ${
                 isSelected
-                  ? 'bg-background border-border/60 border-b-background z-10 font-medium'
+                  ? 'bg-background border-border/70 border-b-background text-foreground shadow-[0_-1px_0_rgba(255,255,255,0.08),0_12px_28px_rgba(15,23,42,0.14)] z-10 font-semibold'
                   : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
               } ${isDragging ? 'opacity-40' : ''}`}
               onDragStart={(e) => handleDragStart(e, id)}
@@ -581,6 +586,9 @@ export function BoardTabsView({
               }}
               title={title}
             >
+              {isSelected && (
+                <span className="absolute inset-x-3 top-0 h-0.5 rounded-full bg-primary/80" />
+              )}
               {showLeftIndicator && (
                 <span className="absolute left-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
               )}
@@ -591,15 +599,19 @@ export function BoardTabsView({
                 <BrowserFavicon
                   src={favicon}
                   imgClassName="h-3.5 w-3.5 shrink-0 rounded-sm"
-                  iconClassName="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+                  iconClassName={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-foreground' : 'text-muted-foreground'}`}
                 />
               ) : item.kind === 'terminal' ? (
-                <Terminal className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                terminalIsRunning ? (
+                  <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-primary" />
+                ) : (
+                  <Terminal className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-primary' : 'text-muted-foreground'}`} />
+                )
               ) : (
-                <File className="h-3.5 w-3.5 shrink-0 text-cyan-500" />
+                <File className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-cyan-400' : 'text-cyan-500'}`} />
               )}
               <span className="truncate">{title}</span>
-              {!isSelected && notifiedIds?.has(id) && (
+              {!isSelected && !terminalIsRunning && notifiedIds?.has(id) && (
                 <span className="ml-0.5 shrink-0 h-1.5 w-1.5 rounded-full bg-blue-500" />
               )}
               <span
@@ -730,6 +742,7 @@ export function BoardTabsView({
               onUpdateConfig={(nextCfg) => {
                 void onUpdateNode(selectedItem.node.id, { config: JSON.stringify(nextCfg) })
               }}
+              onRunningChange={(isRunning) => onTerminalRunningChange?.(selectedItem.node.id, isRunning)}
               workspaceRootDir={boardRootDir || workspaceRootDir}
               showHeader={false}
             />
