@@ -61,7 +61,10 @@ import { CLI_AGENTS, WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY, getAgentCommand } fr
 import {
   MAX_TERMINAL_STATUS_TAIL_CHARS,
   appendTerminalOutputTail,
+  detectTerminalAgentKind,
   getLastNonEmptyTerminalLine,
+  hasTerminalAttentionSignal,
+  isLikelyAgentWaitingForInput,
   isLikelyShellPromptLine,
   isLikelyTerminalInputRequest,
   normalizeTerminalOutput
@@ -457,6 +460,14 @@ function BrowserPageInner(): React.ReactElement {
   const workspaceAgentCommandOverrides = getSetting(WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY)
 
   const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
+  const terminalCommandById = useMemo(() => {
+    const next = new Map<string, string | undefined>()
+    for (const node of terminalNodes) {
+      const config = parseNodeConfig(node.config) as TerminalNodeConfig
+      next.set(node.id, typeof config.command === 'string' ? config.command : undefined)
+    }
+    return next
+  }, [terminalNodes])
   const fileNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'file'), [gNodes])
   const outputNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'output'), [gNodes])
 
@@ -525,12 +536,17 @@ function BrowserPageInner(): React.ReactElement {
       state.tail = nextTail
 
       const lastLine = getLastNonEmptyTerminalLine(nextTail)
+      const agentKind = detectTerminalAgentKind(terminalCommandById.get(nodeId))
+      const hasAttentionSignal = hasTerminalAttentionSignal(data)
       const isShellPrompt = isLikelyShellPromptLine(lastLine)
       const isInputRequest = isLikelyTerminalInputRequest(lastLine)
+      const isAgentWaitingForInput = isLikelyAgentWaitingForInput(nextTail, agentKind)
+      const shouldStopRunning = hasAttentionSignal || isShellPrompt || isInputRequest || isAgentWaitingForInput
+      const shouldNotifyBoundary = isShellPrompt || isInputRequest || isAgentWaitingForInput
       const hasMeaningfulOutput = /\S/.test(normalizedChunk)
       const isActive = nodeId === activeItemIdRef.current
 
-      if (isShellPrompt || isInputRequest) {
+      if (shouldStopRunning) {
         setTerminalRunning(nodeId, false)
       } else if (!isActive && hasMeaningfulOutput) {
         setTerminalRunning(nodeId, true)
@@ -538,24 +554,25 @@ function BrowserPageInner(): React.ReactElement {
 
       if (isActive) {
         state.hasSeenPrompt = state.hasSeenPrompt || isShellPrompt
-        if (!isShellPrompt && hasMeaningfulOutput) {
+        if (!shouldStopRunning && hasMeaningfulOutput) {
           state.hasBackgroundOutput = true
           state.lastAttentionSignature = null
-        } else if (isShellPrompt) {
+        } else if (shouldNotifyBoundary) {
           state.hasBackgroundOutput = false
           state.lastAttentionSignature = null
         }
         return
       }
 
-      if (!isShellPrompt && hasMeaningfulOutput) {
+      if (!shouldStopRunning && hasMeaningfulOutput) {
         state.hasBackgroundOutput = true
         state.lastAttentionSignature = null
       }
 
       let attentionSignature: string | null = null
-      if (isInputRequest) {
-        attentionSignature = `input:${lastLine}`
+      if (isInputRequest || isAgentWaitingForInput) {
+        attentionSignature = `input:${lastLine || agentKind || 'terminal'}`
+        state.hasBackgroundOutput = false
       } else if (isShellPrompt && state.hasSeenPrompt && state.hasBackgroundOutput) {
         attentionSignature = `prompt:${lastLine}`
         state.hasBackgroundOutput = false
@@ -585,7 +602,7 @@ function BrowserPageInner(): React.ReactElement {
       removeDataListener()
       removeExitListener()
     }
-  }, [setTerminalRunning])
+  }, [setTerminalRunning, terminalCommandById])
 
   // Track browser tab title changes for non-active tabs
   const prevTabTitlesRef = useRef<Map<string, string>>(new Map())

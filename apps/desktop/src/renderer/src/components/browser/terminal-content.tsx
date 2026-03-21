@@ -6,7 +6,10 @@ import '@xterm/xterm/css/xterm.css'
 import type { TerminalNodeConfig } from './terminal-node'
 import {
   appendTerminalOutputTail,
+  detectTerminalAgentKind,
   getLastNonEmptyTerminalLine,
+  hasTerminalAttentionSignal,
+  isLikelyAgentWaitingForInput,
   isLikelyShellPromptLine,
   isLikelyTerminalInputRequest,
   isTerminalBusyFromTail,
@@ -265,7 +268,11 @@ export function TerminalContent({
               }
               spawnedRef.current = true
               pendingSubmittedCommandRef.current = false
-              setRunningState(isTerminalBusyFromTail(tailRef.current))
+              const agentKind = detectTerminalAgentKind(cfg.command)
+              setRunningState(
+                isTerminalBusyFromTail(tailRef.current) &&
+                !isLikelyAgentWaitingForInput(tailRef.current, agentKind)
+              )
               fitTerminal()
               focusTerminal()
             } else {
@@ -310,11 +317,14 @@ export function TerminalContent({
             const normalizedChunk = normalizeTerminalOutput(data)
             tailRef.current = appendTerminalOutputTail(tailRef.current, data)
             const lastLine = getLastNonEmptyTerminalLine(tailRef.current)
+            const agentKind = detectTerminalAgentKind(configRef.current.command)
+            const hasAttentionSignal = hasTerminalAttentionSignal(data)
             const isPrompt = isLikelyShellPromptLine(lastLine)
             const isInputRequest = isLikelyTerminalInputRequest(lastLine)
+            const isAgentWaitingForInput = isLikelyAgentWaitingForInput(tailRef.current, agentKind)
             const hasMeaningfulOutput = /\S/.test(normalizedChunk)
 
-            if (isPrompt || isInputRequest) {
+            if (hasAttentionSignal || isPrompt || isInputRequest || isAgentWaitingForInput) {
               pendingSubmittedCommandRef.current = false
               setRunningState(false)
               return
