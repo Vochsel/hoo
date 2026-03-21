@@ -418,6 +418,7 @@ function BrowserPageInner(): React.ReactElement {
   const [boardDocLoading, setBoardDocLoading] = useState(false)
   const boardDocSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [boardRootDir, setBoardRootDir] = useState<string | null>(null)
+  const [boardRootDirLoaded, setBoardRootDirLoaded] = useState(false)
   const [settingsDialogBoardId, setSettingsDialogBoardId] = useState<string | null>(null)
   const [settingsDialogRootDir, setSettingsDialogRootDir] = useState('')
   const [archivingBoardId, setArchivingBoardId] = useState<string | null>(null)
@@ -923,15 +924,23 @@ function BrowserPageInner(): React.ReactElement {
   useEffect(() => {
     if (!activeBoardId) {
       setBoardRootDir(null)
+      setBoardRootDirLoaded(true)
       return
     }
+    setBoardRootDirLoaded(false)
     let cancelled = false
     void window.api.workspace.getBoardRootDir(activeBoardId)
       .then((dir) => {
-        if (!cancelled) setBoardRootDir((dir as string) || null)
+        if (!cancelled) {
+          setBoardRootDir((dir as string) || null)
+          setBoardRootDirLoaded(true)
+        }
       })
       .catch(() => {
-        if (!cancelled) setBoardRootDir(null)
+        if (!cancelled) {
+          setBoardRootDir(null)
+          setBoardRootDirLoaded(true)
+        }
       })
     return (): void => { cancelled = true }
   }, [activeBoardId])
@@ -4898,7 +4907,7 @@ function BrowserPageInner(): React.ReactElement {
                 if (!activeBoardId) return undefined
                 try {
                   const agentId = getSetting('defaultAgent')
-                  const command = getAgentCommand(agentId, workspace?.rootDir, workspaceAgentCommandOverrides)
+                  const command = getAgentCommand(agentId, boardRootDir || workspace?.rootDir, workspaceAgentCommandOverrides)
                   const agentLabel = CLI_AGENTS.find((a) => a.id === agentId)?.label ?? 'Agent'
                   const node = await createNode({
                     nodeType: 'terminal',
@@ -4948,6 +4957,7 @@ function BrowserPageInner(): React.ReactElement {
               }}
               workspaceRootDir={workspace?.rootDir}
               boardRootDir={boardRootDir}
+              boardRootDirLoaded={boardRootDirLoaded}
               pendingReloadId={pendingTabReload?.itemId ?? null}
               pendingReloadNonce={pendingTabReload?.nonce}
               onActiveItemChange={handleActiveBoardItemChange}

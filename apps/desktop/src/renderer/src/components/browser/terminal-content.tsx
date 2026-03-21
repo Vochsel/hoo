@@ -61,6 +61,8 @@ export function TerminalContent({
   activeRef.current = active
   const onRunningChangeRef = useRef(onRunningChange)
   onRunningChangeRef.current = onRunningChange
+  const workspaceRootDirRef = useRef(workspaceRootDir)
+  workspaceRootDirRef.current = workspaceRootDir
   const tailRef = useRef('')
   const pendingSubmittedCommandRef = useRef(false)
 
@@ -135,7 +137,7 @@ export function TerminalContent({
     try {
       const result = await window.api.terminal.spawn(sid, {
         shell: cfg.shell || undefined,
-        cwd: cfg.cwd || workspaceRootDir || undefined,
+        cwd: cfg.cwd || workspaceRootDirRef.current || undefined,
         cols: term.cols || 80,
         rows: term.rows || 24
       })
@@ -157,7 +159,7 @@ export function TerminalContent({
     } catch (err) {
       term.writeln(`\r\nRestart error: ${err instanceof Error ? err.message : String(err)}`)
     }
-  }, [fitTerminal, workspaceRootDir])
+  }, [fitTerminal])
 
   // Dismiss context menu on click outside
   useEffect(() => {
@@ -274,7 +276,7 @@ export function TerminalContent({
               }
               const result = await window.api.terminal.spawn(sid, {
                 shell: cfg.shell || undefined,
-                cwd: cfg.cwd || workspaceRootDir || undefined,
+                cwd: cfg.cwd || workspaceRootDirRef.current || undefined,
                 cols: term.cols || 80,
                 rows: term.rows || 24
               })

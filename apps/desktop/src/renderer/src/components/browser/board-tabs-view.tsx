@@ -48,6 +48,7 @@ interface BoardTabsViewProps {
   onTerminalRunningChange?: (nodeId: string, isRunning: boolean) => void
   workspaceRootDir?: string
   boardRootDir?: string | null
+  boardRootDirLoaded?: boolean
   pendingSelectId?: string | null
   pendingSelectNonce?: number
   pendingReloadId?: string | null
@@ -145,6 +146,7 @@ export function BoardTabsView({
   onTerminalRunningChange,
   workspaceRootDir,
   boardRootDir,
+  boardRootDirLoaded = true,
   pendingSelectId,
   pendingSelectNonce,
   pendingReloadId,
@@ -764,7 +766,7 @@ export function BoardTabsView({
             </div>
           )
         })}
-        {mountedTerminalNodes.map((node) => {
+        {boardRootDirLoaded && mountedTerminalNodes.map((node) => {
           const isActive = selectedItem?.kind === 'terminal' && selectedItem.node.id === node.id
           return (
             <div
