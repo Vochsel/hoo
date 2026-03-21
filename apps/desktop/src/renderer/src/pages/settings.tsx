@@ -623,6 +623,24 @@ export function SettingsPage({
               </SettingsPanel>
 
               <SettingsPanel
+                title="Bubble Notifications to Folders"
+                description="Show notification badges on folders by aggregating unread counts from their boards."
+              >
+                <label className="flex items-center gap-3 cursor-pointer">
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={getSetting('bubbleNotificationsToFolders') === true}
+                    className={`relative inline-flex h-6 w-11 shrink-0 items-center rounded-full transition-colors ${getSetting('bubbleNotificationsToFolders') === true ? 'bg-blue-500' : 'bg-muted'}`}
+                    onClick={() => setSetting('bubbleNotificationsToFolders', !(getSetting('bubbleNotificationsToFolders') === true))}
+                  >
+                    <span className={`inline-block h-4 w-4 rounded-full bg-white shadow transition-transform ${getSetting('bubbleNotificationsToFolders') === true ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                  <span className="text-sm text-muted-foreground">{getSetting('bubbleNotificationsToFolders') === true ? 'On' : 'Off'}</span>
+                </label>
+              </SettingsPanel>
+
+              <SettingsPanel
                 title="Preferred Editor"
                 description="Choose which editor opens when using 'Open in Editor' from a board's context menu."
               >

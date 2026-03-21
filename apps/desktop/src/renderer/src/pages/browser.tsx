@@ -4332,10 +4332,10 @@ function BrowserPageInner(): React.ReactElement {
               {workspace?.folders.map((folder) => {
                 const folderBoards = boardsByFolderId.get(folder.id) ?? []
                 const expanded = expandedFolders.has(folder.id)
-                const folderNotificationCount = folderBoards.reduce((count, board) => {
+                const folderNotificationCount = getSetting('bubbleNotificationsToFolders') === true ? folderBoards.reduce((count, board) => {
                   const boardItems = getOrderedSidebarBoardItems(board.id)
                   return count + boardItems.filter((item) => notifiedItemIds.has(item.id)).length
-                }, 0)
+                }, 0) : 0
                 return (
                   <section
                     key={folder.id}
