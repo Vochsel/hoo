@@ -4,6 +4,17 @@ type SettingsMap = Record<string, unknown>
 type SettingUpdater = (prevValue: unknown, prevSettings: SettingsMap) => unknown
 type SettingValue = unknown | SettingUpdater
 
+// Cross-instance sync: when any useSettings instance writes a setting,
+// all other instances are notified so they stay in sync.
+type SettingsListener = (settings: SettingsMap) => void
+const listeners = new Set<SettingsListener>()
+
+function notifyListeners(settings: SettingsMap, exclude?: SettingsListener): void {
+  for (const listener of listeners) {
+    if (listener !== exclude) listener(settings)
+  }
+}
+
 export function useSettings(): {
   settings: SettingsMap
   loading: boolean
@@ -33,6 +44,18 @@ export function useSettings(): {
     refresh()
   }, [refresh])
 
+  // Listen for cross-instance settings updates
+  const listenerRef = useRef<SettingsListener | null>(null)
+  useEffect(() => {
+    const listener: SettingsListener = (next) => {
+      settingsRef.current = next
+      setSettings(next)
+    }
+    listenerRef.current = listener
+    listeners.add(listener)
+    return () => { listeners.delete(listener) }
+  }, [])
+
   const getSetting = useCallback(
     (key: string) => settings[key],
     [settings]
@@ -44,6 +67,7 @@ export function useSettings(): {
     const nextSettings = { ...currentSettings, [key]: nextValue }
     settingsRef.current = nextSettings
     setSettings(nextSettings)
+    notifyListeners(nextSettings, listenerRef.current ?? undefined)
     await window.api.settings.set(key, nextValue)
   }, [resolveSettingValue])
 

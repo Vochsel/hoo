@@ -1,6 +1,6 @@
 export const MAX_TERMINAL_STATUS_TAIL_CHARS = 2_000
 
-export type TerminalAgentKind = 'claude' | 'codex' | null
+export type TerminalAgentKind = 'claude' | 'codex' | 'opencode' | 'amp' | 'gemini' | null
 
 export function stripAnsiFromTerminalOutput(value: string): string {
   // eslint-disable-next-line no-control-regex
@@ -19,6 +19,9 @@ export function detectTerminalAgentKind(command: string | null | undefined): Ter
   if (!normalized) return null
   if (/(^|\s|\/)claude(?=\s|$)/.test(normalized)) return 'claude'
   if (/(^|\s|\/)codex(?=\s|$)/.test(normalized)) return 'codex'
+  if (/(^|\s|\/)opencode(?=\s|$)/.test(normalized)) return 'opencode'
+  if (/(^|\s|\/)amp(?=\s|$)/.test(normalized)) return 'amp'
+  if (/(^|\s|\/)gemini(?=\s|$)/.test(normalized)) return 'gemini'
   return null
 }
 
@@ -74,16 +77,34 @@ export function isLikelyAgentWaitingForInput(
   if (!agentKind) return false
   const window = tail.slice(-800).toLowerCase()
   if (!window.trim()) return false
-  return (
+
+  // Generic patterns — apply to all coding agents
+  if (
     /waiting for (?:your )?input/.test(window) ||
     /waiting for (?:your )?(?:approval|permission)/.test(window) ||
     /needs your (?:input|approval|permission)/.test(window) ||
     /approve (?:this|the)? ?(?:command|change|action)?/.test(window) ||
     /review and approve/.test(window) ||
     /press enter to continue/.test(window) ||
-    (agentKind === 'claude' && /what would you like claude to do\??/.test(window)) ||
-    (agentKind === 'codex' && /what should codex do next\??/.test(window))
-  )
+    /what would you like to (?:do|work on)\??/.test(window) ||
+    /how can i help/.test(window) ||
+    /what(?:'s| is) next/.test(window)
+  ) {
+    return true
+  }
+
+  // Agent-specific idle prompt patterns
+  switch (agentKind) {
+    case 'claude':
+      return /what would you like claude to do\??/.test(window)
+    case 'codex':
+      return /what should codex do next\??/.test(window)
+    case 'gemini':
+      return /what would you like gemini to do\??/.test(window)
+    case 'opencode':
+    case 'amp':
+      return false
+  }
 }
 
 export function isTerminalBusyFromTail(tail: string): boolean {

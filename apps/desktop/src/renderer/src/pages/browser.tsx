@@ -4358,10 +4358,15 @@ function BrowserPageInner(): React.ReactElement {
               {workspace?.folders.map((folder) => {
                 const folderBoards = boardsByFolderId.get(folder.id) ?? []
                 const expanded = expandedFolders.has(folder.id)
-                const folderNotificationCount = getSetting('bubbleNotificationsToFolders') === true ? folderBoards.reduce((count, board) => {
+                const bubbleToFolders = getSetting('bubbleNotificationsToFolders') === true
+                const folderNotificationCount = bubbleToFolders ? folderBoards.reduce((count, board) => {
                   const boardItems = getOrderedSidebarBoardItems(board.id)
                   return count + boardItems.filter((item) => notifiedItemIds.has(item.id)).length
                 }, 0) : 0
+                const folderHasRunning = bubbleToFolders && folderBoards.some((board) => {
+                  const boardItems = getOrderedSidebarBoardItems(board.id)
+                  return boardItems.some((item) => runningTerminalIds.has(item.id))
+                })
                 return (
                   <section
                     key={folder.id}
@@ -4439,11 +4444,16 @@ function BrowserPageInner(): React.ReactElement {
                             })()}
                           </span>
                           <span className="truncate text-[13px] font-medium">{folder.name}</span>
-                          {folderNotificationCount > 0 ? (
-                            <span className="ml-auto shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">
-                              {folderNotificationCount}
+                          {(folderHasRunning || folderNotificationCount > 0) && (
+                            <span className="ml-auto flex shrink-0 items-center gap-1">
+                              {folderHasRunning && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+                              {folderNotificationCount > 0 && (
+                                <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">
+                                  {folderNotificationCount}
+                                </span>
+                              )}
                             </span>
-                          ) : null}
+                          )}
                         </button>
                       )}
                       <DropdownMenu>
@@ -4560,10 +4570,16 @@ function BrowserPageInner(): React.ReactElement {
                                       </span>
                                       <span className="truncate">{board.name}</span>
                                       {(() => {
+                                        const hasRunning = boardItems.some((bi) => runningTerminalIds.has(bi.id))
                                         const notifCount = boardItems.filter((bi) => notifiedItemIds.has(bi.id)).length
-                                        return notifCount > 0 ? (
-                                          <span className="ml-auto shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">{notifCount}</span>
-                                        ) : null
+                                        return (
+                                          <span className="ml-auto flex shrink-0 items-center gap-1">
+                                            {hasRunning && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+                                            {notifCount > 0 && (
+                                              <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">{notifCount}</span>
+                                            )}
+                                          </span>
+                                        )
                                       })()}
                                     </button>
                                   )}
@@ -4701,10 +4717,16 @@ function BrowserPageInner(): React.ReactElement {
                           </span>
                           <span className="truncate">{board.name}</span>
                           {(() => {
+                            const hasRunning = boardItems.some((bi) => runningTerminalIds.has(bi.id))
                             const notifCount = boardItems.filter((bi) => notifiedItemIds.has(bi.id)).length
-                            return notifCount > 0 ? (
-                              <span className="ml-auto shrink-0 flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">{notifCount}</span>
-                            ) : null
+                            return (
+                              <span className="ml-auto flex shrink-0 items-center gap-1">
+                                {hasRunning && <Loader2 className="h-3 w-3 animate-spin text-primary" />}
+                                {notifCount > 0 && (
+                                  <span className="flex h-4 min-w-4 items-center justify-center rounded-full bg-blue-500 px-1 text-[9px] font-medium text-white">{notifCount}</span>
+                                )}
+                              </span>
+                            )
                           })()}
                         </button>
                       )}
