@@ -45,7 +45,7 @@ export interface WorkspaceSnapshot {
   archivedBoards: WorkspaceBoardSnapshot[]
 }
 
-export type BoardViewMode = 'whiteboard' | 'tabs' | 'document'
+export type BoardViewMode = 'whiteboard' | 'tabs' | 'document' | 'files'
 
 export interface BoardDocument {
   version: 1
@@ -268,7 +268,7 @@ async function seedDefaultWorkspace(rootDir: string): Promise<string[]> {
 }
 
 function isValidBoardViewMode(v: unknown): v is BoardViewMode {
-  return v === 'whiteboard' || v === 'tabs' || v === 'document'
+  return v === 'whiteboard' || v === 'tabs' || v === 'document' || v === 'files'
 }
 
 function normalizeBoardDocument(raw: unknown): BoardDocument {

@@ -41,7 +41,7 @@ import { TerminalNode, type TerminalNodeConfig } from '@/components/browser/term
 import { TerminalDialog } from '@/components/browser/terminal-dialog'
 import { BrowserTabDialog } from '@/components/browser/browser-tab-dialog'
 import { MonitorWebviews } from '@/components/browser/monitor-webviews'
-import { BoardTabsView, type BoardTabsItemKind } from '@/components/browser/board-tabs-view'
+import { BOARD_FILESYSTEM_TAB_ID, BoardTabsView, type BoardTabsItemKind } from '@/components/browser/board-tabs-view'
 import { BrowserFavicon } from '@/components/browser/browser-favicon'
 import { BoardDocumentView } from '@/components/browser/board-document-view'
 import { useBrowserTabs, type BrowserTab, type BrowserTabMonitor, type MonitorRule } from '@/hooks/use-browser-tabs'
@@ -280,7 +280,7 @@ interface ContextMenu {
   flowPosition?: { x: number; y: number }
 }
 
-type SidebarItemKind = BoardTabsItemKind
+type SidebarItemKind = Exclude<BoardTabsItemKind, 'filesystem'>
 
 interface BoardItemMenu {
   x: number
@@ -314,6 +314,7 @@ interface RenameDialogState {
 }
 
 type SidebarBoardItem =
+  | { id: typeof BOARD_FILESYSTEM_TAB_ID; kind: 'filesystem'; title: string }
   | { id: string; kind: 'browser'; tab: BrowserTab }
   | { id: string; kind: 'terminal' | 'file'; node: GraphNode }
 
@@ -925,7 +926,9 @@ function BrowserPageInner(): React.ReactElement {
       .then((view) => {
         if (cancelled) return
         const v = view as string
-        if (v === 'whiteboard' || v === 'tabs' || v === 'document') {
+        if (v === 'files') {
+          setBoardView('tabs')
+        } else if (v === 'whiteboard' || v === 'tabs' || v === 'document') {
           setBoardView(v)
         } else {
           setBoardView('whiteboard')
@@ -3171,6 +3174,7 @@ function BrowserPageInner(): React.ReactElement {
       const flowY = sourceTab.flowY + 20
       const preferredOrderIds = boardItemOrderMap.get(activeBoardId) ?? []
       const availableItemIds = new Set([
+        BOARD_FILESYSTEM_TAB_ID,
         ...tabs.map((tab) => tab.id),
         ...terminalNodes.map((node) => node.id),
         ...fileNodes.map((node) => node.id)
@@ -3260,7 +3264,15 @@ function BrowserPageInner(): React.ReactElement {
         terminalNodes: boardTerminals,
         fileNodes: boardFiles
       } = getSidebarBoardCollections(boardId)
+      const preferredOrderIds = boardItemOrderMap.get(boardId) ?? []
       const itemsById = new Map<string, SidebarBoardItem>()
+      if (preferredOrderIds.includes(BOARD_FILESYSTEM_TAB_ID)) {
+        itemsById.set(BOARD_FILESYSTEM_TAB_ID, {
+          id: BOARD_FILESYSTEM_TAB_ID,
+          kind: 'filesystem',
+          title: 'Files'
+        })
+      }
       for (const tab of boardTabs) {
         itemsById.set(tab.id, { id: tab.id, kind: 'browser', tab })
       }
@@ -3273,7 +3285,7 @@ function BrowserPageInner(): React.ReactElement {
 
       const orderedItems: SidebarBoardItem[] = []
       const seen = new Set<string>()
-      for (const id of boardItemOrderMap.get(boardId) ?? []) {
+      for (const id of preferredOrderIds) {
         const item = itemsById.get(id)
         if (!item || seen.has(id)) continue
         seen.add(id)
@@ -3316,6 +3328,20 @@ function BrowserPageInner(): React.ReactElement {
         <div className="ml-[7px] mt-0.5 space-y-0.5 border-l border-border pl-[13px] py-0.5">
           {items.map((item) => {
             const isActive = activeItemId === item.id && boardId === activeBoardId
+            if (item.kind === 'filesystem') {
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => handleSidebarItemClick(item.id, boardId)}
+                  className={`flex w-full items-center gap-1.5 rounded-lg px-2 py-1.5 text-left text-xs transition-colors ${isActive ? 'bg-accent/60 text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground'}`}
+                >
+                  <FolderOpen className="h-3.5 w-3.5 shrink-0 text-amber-500" />
+                  <span className="truncate">{item.title}</span>
+                </button>
+              )
+            }
+
             if (item.kind === 'browser') {
               return (
                 <button
@@ -4499,12 +4525,15 @@ function BrowserPageInner(): React.ReactElement {
                                 onDragStart={(e) => handleDragStart(e, 'board', board.id)}
                                 onDragEnd={handleDragEnd}
                                 className={[
-                                  'group/boardItem rounded-lg px-2 py-1 transition-colors',
+                                  'group/boardItem relative rounded-lg px-2 py-1 transition-colors',
                                   board.id === activeBoardId
                                     ? 'bg-accent/60 text-foreground'
                                     : 'hover:bg-accent/50'
                                 ].join(' ')}
                               >
+                                {board.id === activeBoardId && (
+                                  <span className="absolute bottom-1 left-0.5 top-1 w-0.5 rounded-full bg-primary/80" />
+                                )}
                                 <div className="flex items-center gap-1">
                                   {editingBoardId === board.id ? (
                                     <Input
@@ -4646,12 +4675,15 @@ function BrowserPageInner(): React.ReactElement {
                     onDragStart={(e) => handleDragStart(e, 'board', board.id)}
                     onDragEnd={handleDragEnd}
                     className={[
-                      'group/boardItem rounded-lg px-2 py-1 transition-colors',
+                      'group/boardItem relative rounded-lg px-2 py-1 transition-colors',
                       board.id === activeBoardId
                         ? 'bg-accent/60 text-foreground'
                         : 'hover:bg-accent/50'
                     ].join(' ')}
                   >
+                    {board.id === activeBoardId && (
+                      <span className="absolute bottom-1 left-0.5 top-1 w-0.5 rounded-full bg-primary/80" />
+                    )}
                     <div className="flex items-center gap-1">
                       {editingBoardId === board.id ? (
                         <Input
@@ -4992,6 +5024,7 @@ function BrowserPageInner(): React.ReactElement {
               onTerminalRunningChange={setTerminalRunning}
               onItemContextMenu={(event, item) => {
                 if (!activeBoardId) return
+                if (item.kind === 'filesystem') return
                 handleBoardItemContextMenu(event, item.id, item.kind, activeBoardId, 'tab-strip')
               }}
               workspaceRootDir={workspace?.rootDir}
@@ -5000,6 +5033,7 @@ function BrowserPageInner(): React.ReactElement {
               pendingReloadId={pendingTabReload?.itemId ?? null}
               pendingReloadNonce={pendingTabReload?.nonce}
               onActiveItemChange={handleActiveBoardItemChange}
+              onBoardRootDirChange={(nextRootDir) => setBoardRootDir(nextRootDir)}
             />
           )}
           {!isSettingsRoute && boardView === 'document' && (

@@ -1,8 +1,9 @@
 import { useState, useCallback, useEffect, useRef, useMemo } from 'react'
-import { Globe, Terminal, File, Plus, X, Sparkles, Loader2 } from 'lucide-react'
+import { Globe, Terminal, File, Plus, X, Sparkles, Loader2, FolderOpen } from 'lucide-react'
 import { BrowserTabContent } from './browser-tab-content'
 import { TerminalContent } from './terminal-content'
 import { FileContent } from './file-content'
+import { BoardFilesystemView } from './board-filesystem-view'
 import { BrowserFavicon } from './browser-favicon'
 import type { BrowserTab } from '@/hooks/use-browser-tabs'
 import type { GraphNode } from '@/hooks/use-graph-nodes'
@@ -10,8 +11,10 @@ import type { TerminalNodeConfig } from './terminal-node'
 import type { FileNodeConfig } from './file-node'
 
 const MAX_CACHED_BROWSER_TABS = 5
+export const BOARD_FILESYSTEM_TAB_ID = '__board_filesystem__'
 
 type TabItem =
+  | { kind: 'filesystem'; id: typeof BOARD_FILESYSTEM_TAB_ID; title: string }
   | { kind: 'browser'; tab: BrowserTab }
   | { kind: 'terminal'; node: GraphNode }
   | { kind: 'file'; node: GraphNode }
@@ -49,6 +52,7 @@ interface BoardTabsViewProps {
   workspaceRootDir?: string
   boardRootDir?: string | null
   boardRootDirLoaded?: boolean
+  onBoardRootDirChange?: (rootDir: string | null) => void | Promise<void>
   pendingSelectId?: string | null
   pendingSelectNonce?: number
   pendingReloadId?: string | null
@@ -113,6 +117,12 @@ function buildOrderedIds(
     next.push(node.id)
   }
 
+  for (const id of availableItemIds) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    next.push(id)
+  }
+
   return next
 }
 
@@ -147,6 +157,7 @@ export function BoardTabsView({
   workspaceRootDir,
   boardRootDir,
   boardRootDirLoaded = true,
+  onBoardRootDirChange,
   pendingSelectId,
   pendingSelectNonce,
   pendingReloadId,
@@ -160,6 +171,12 @@ export function BoardTabsView({
     if (fileNodes.length > 0) return fileNodes[0].id
     return null
   })
+  const [orderedIds, setOrderedIds] = useState<string[]>([])
+  const [cachedBrowserTabIds, setCachedBrowserTabIds] = useState<string[]>([])
+  const [mountedBrowserTabIds, setMountedBrowserTabIds] = useState<string[]>([])
+  const [mountedTerminalIds, setMountedTerminalIds] = useState<string[]>([])
+  const [browserReloadNonceById, setBrowserReloadNonceById] = useState<Map<string, number>>(new Map())
+  const [terminalInstanceRevisionById, setTerminalInstanceRevisionById] = useState<Map<string, number>>(new Map())
 
   // Nonce-based pending selection tracking (handles same-board re-selections)
   const lastProcessedNonce = useRef(pendingSelectNonce ?? 0)
@@ -178,22 +195,23 @@ export function BoardTabsView({
     }
   }, [pendingSelectId, pendingSelectNonce])
 
+  const filesystemTabOpen =
+    activeBoardId != null &&
+    (orderedIds.includes(BOARD_FILESYSTEM_TAB_ID) || preferredOrderIds.includes(BOARD_FILESYSTEM_TAB_ID))
+
   // Build an unordered map of all tab items keyed by id
   const itemsById = useMemo(() => {
     const map = new Map<string, TabItem>()
+    if (filesystemTabOpen) {
+      map.set(BOARD_FILESYSTEM_TAB_ID, { kind: 'filesystem', id: BOARD_FILESYSTEM_TAB_ID, title: 'Files' })
+    }
     for (const tab of tabs) map.set(tab.id, { kind: 'browser', tab })
     for (const node of terminalNodes) map.set(node.id, { kind: 'terminal', node })
     for (const node of fileNodes) map.set(node.id, { kind: 'file', node })
     return map
-  }, [tabs, terminalNodes, fileNodes])
+  }, [filesystemTabOpen, tabs, terminalNodes, fileNodes])
 
   // Maintain a custom ordering of tab IDs that persists across renders
-  const [orderedIds, setOrderedIds] = useState<string[]>([])
-  const [cachedBrowserTabIds, setCachedBrowserTabIds] = useState<string[]>([])
-  const [mountedBrowserTabIds, setMountedBrowserTabIds] = useState<string[]>([])
-  const [mountedTerminalIds, setMountedTerminalIds] = useState<string[]>([])
-  const [browserReloadNonceById, setBrowserReloadNonceById] = useState<Map<string, number>>(new Map())
-  const [terminalInstanceRevisionById, setTerminalInstanceRevisionById] = useState<Map<string, number>>(new Map())
   const cachedBrowserTabIdsRef = useRef<string[]>([])
   const lastProcessedReloadNonce = useRef(pendingReloadNonce ?? 0)
   const availableBrowserTabs = allBrowserTabs ?? tabs
@@ -256,7 +274,7 @@ export function BoardTabsView({
     }
 
     const nextGraphNodeIds = nextOrderedIds.filter(
-      (entryId) => graphItemIdSet.has(entryId) || (kind !== 'browser' && entryId === id)
+      (entryId) => graphItemIdSet.has(entryId) || ((kind === 'terminal' || kind === 'file') && entryId === id)
     )
     if (nextGraphNodeIds.length > 0) {
       void onSaveNodeOrder(nextGraphNodeIds)
@@ -287,6 +305,11 @@ export function BoardTabsView({
     appendCreatedItemToEnd(nodeId, 'terminal')
   }, [onCreateTerminal, appendCreatedItemToEnd])
 
+  const handleCreateFilesystemTab = useCallback(() => {
+    if (activeBoardId == null || filesystemTabOpen) return
+    appendCreatedItemToEnd(BOARD_FILESYSTEM_TAB_ID, 'filesystem')
+  }, [activeBoardId, appendCreatedItemToEnd, filesystemTabOpen])
+
   useEffect(() => {
     if (!newTabMenuOpen) return
     const handleClickOutside = (e: MouseEvent): void => {
@@ -299,6 +322,7 @@ export function BoardTabsView({
   }, [newTabMenuOpen])
 
   const selectedItem = allItems.find((item) => {
+    if (item.kind === 'filesystem') return item.id === selectedId
     if (item.kind === 'browser') return item.tab.id === selectedId
     return item.node.id === selectedId
   }) ?? null
@@ -417,8 +441,9 @@ export function BoardTabsView({
   }, [mountedTerminalIdsToRender, terminalNodesById])
 
   const firstAvailableItemId = useMemo(() => {
-    const first = allItems[0]
+    const first = allItems.find((item) => item.kind !== 'filesystem') ?? allItems[0]
     if (!first) return null
+    if (first.kind === 'filesystem') return first.id
     return first.kind === 'browser' ? first.tab.id : first.node.id
   }, [allItems])
   const shouldWaitForPendingSelection =
@@ -455,7 +480,25 @@ export function BoardTabsView({
     setSelectedId(id)
   }, [])
 
-  const closeItem = useCallback((id: string, kind: 'browser' | 'terminal' | 'file') => {
+  const closeItem = useCallback((id: string, kind: BoardTabsItemKind) => {
+    if (kind === 'filesystem') {
+      const nextOrderedIds = orderedIds.filter((entryId) => entryId !== id)
+      if (!areStringArraysEqual(nextOrderedIds, orderedIds)) {
+        setOrderedIds(nextOrderedIds)
+        void onSaveViewOrder(nextOrderedIds)
+      }
+      if (selectedId === id) {
+        const remaining = allItems.filter((item) => {
+          const itemId = item.kind === 'filesystem' ? item.id : item.kind === 'browser' ? item.tab.id : item.node.id
+          return itemId !== id
+        })
+        setSelectedId(remaining.length > 0
+          ? (remaining[0].kind === 'filesystem' ? remaining[0].id : remaining[0].kind === 'browser' ? remaining[0].tab.id : remaining[0].node.id)
+          : null
+        )
+      }
+      return
+    }
     if (kind === 'browser') {
       onDeleteTab(id)
     } else {
@@ -463,17 +506,17 @@ export function BoardTabsView({
     }
     if (selectedId === id) {
       const remaining = allItems.filter((item) => {
-        const itemId = item.kind === 'browser' ? item.tab.id : item.node.id
+        const itemId = item.kind === 'filesystem' ? item.id : item.kind === 'browser' ? item.tab.id : item.node.id
         return itemId !== id
       })
       setSelectedId(remaining.length > 0
-        ? (remaining[0].kind === 'browser' ? remaining[0].tab.id : remaining[0].node.id)
+        ? (remaining[0].kind === 'filesystem' ? remaining[0].id : remaining[0].kind === 'browser' ? remaining[0].tab.id : remaining[0].node.id)
         : null
       )
     }
-  }, [selectedId, allItems, onDeleteTab, onDeleteNode])
+  }, [selectedId, allItems, onDeleteTab, onDeleteNode, onSaveViewOrder, orderedIds])
 
-  const handleCloseTab = useCallback((e: React.MouseEvent, id: string, kind: 'browser' | 'terminal' | 'file') => {
+  const handleCloseTab = useCallback((e: React.MouseEvent, id: string, kind: BoardTabsItemKind) => {
     e.stopPropagation()
     closeItem(id, kind)
   }, [closeItem])
@@ -487,7 +530,11 @@ export function BoardTabsView({
       if (e.key.toLowerCase() === 'w' && !e.shiftKey && !e.altKey && selectedItem) {
         e.preventDefault()
         if (e.repeat) return
-        const id = selectedItem.kind === 'browser' ? selectedItem.tab.id : selectedItem.node.id
+        const id = selectedItem.kind === 'filesystem'
+          ? selectedItem.id
+          : selectedItem.kind === 'browser'
+          ? selectedItem.tab.id
+          : selectedItem.node.id
         closeItem(id, selectedItem.kind)
         return
       }
@@ -496,12 +543,12 @@ export function BoardTabsView({
       if (e.ctrlKey && e.key === 'Tab' && allItems.length > 0) {
         e.preventDefault()
         const currentIndex = allItems.findIndex((item) =>
-          item.kind === 'browser' ? item.tab.id === selectedId : item.node.id === selectedId
+          item.kind === 'filesystem' ? item.id === selectedId : item.kind === 'browser' ? item.tab.id === selectedId : item.node.id === selectedId
         )
         const direction = e.shiftKey ? -1 : 1
         const nextIndex = (currentIndex + direction + allItems.length) % allItems.length
         const target = allItems[nextIndex]
-        setSelectedId(target.kind === 'browser' ? target.tab.id : target.node.id)
+        setSelectedId(target.kind === 'filesystem' ? target.id : target.kind === 'browser' ? target.tab.id : target.node.id)
         return
       }
 
@@ -511,7 +558,7 @@ export function BoardTabsView({
       if (index >= allItems.length) return
       e.preventDefault()
       const target = allItems[index]
-      setSelectedId(target.kind === 'browser' ? target.tab.id : target.node.id)
+      setSelectedId(target.kind === 'filesystem' ? target.id : target.kind === 'browser' ? target.tab.id : target.node.id)
     }
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
@@ -585,13 +632,15 @@ export function BoardTabsView({
       ) : null}
       <div className="scrollbar-hidden flex min-w-0 flex-1 items-end gap-0 overflow-x-auto">
         {allItems.map((item) => {
-          const id = item.kind === 'browser' ? item.tab.id : item.node.id
+          const id = item.kind === 'filesystem' ? item.id : item.kind === 'browser' ? item.tab.id : item.node.id
           const isSelected = id === selectedId
           const isDragging = id === draggingId
           const showLeftIndicator = dropIndicator?.id === id && dropIndicator.side === 'left'
           const showRightIndicator = dropIndicator?.id === id && dropIndicator.side === 'right'
           const terminalIsRunning = item.kind === 'terminal' && !!runningTerminalIds?.has(id)
-          const title = item.kind === 'browser'
+          const title = item.kind === 'filesystem'
+            ? item.title
+            : item.kind === 'browser'
             ? (item.tab.title || item.tab.url || 'New Tab')
             : (item.node.label || (item.kind === 'terminal' ? 'Terminal' : 'File'))
           const favicon = item.kind === 'browser' ? item.tab.favicon : null
@@ -612,7 +661,9 @@ export function BoardTabsView({
               onDragEnd={handleDragEnd}
               onDragLeave={() => setDropIndicator(null)}
               onContextMenu={(event) => {
-                onItemContextMenu?.(event, { id, kind: item.kind })
+                if (item.kind !== 'filesystem') {
+                  onItemContextMenu?.(event, { id, kind: item.kind })
+                }
               }}
               onClick={() => handleSelectTab(id)}
               onDoubleClick={() => {
@@ -630,7 +681,9 @@ export function BoardTabsView({
               {showRightIndicator && (
                 <span className="absolute right-0 top-1 bottom-1 w-0.5 rounded-full bg-primary" />
               )}
-              {item.kind === 'browser' ? (
+              {item.kind === 'filesystem' ? (
+                <FolderOpen className={`h-3.5 w-3.5 shrink-0 ${isSelected ? 'text-amber-400' : 'text-amber-500'}`} />
+              ) : item.kind === 'browser' ? (
                 <BrowserFavicon
                   src={favicon}
                   imgClassName="h-3.5 w-3.5 shrink-0 rounded-sm"
@@ -705,6 +758,19 @@ export function BoardTabsView({
                 <Sparkles className="h-3.5 w-3.5" />
                 Agent
               </button>
+              {!filesystemTabOpen && activeBoardId != null && (
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
+                  onClick={() => {
+                    setNewTabMenuOpen(false)
+                    handleCreateFilesystemTab()
+                  }}
+                >
+                  <FolderOpen className="h-3.5 w-3.5" />
+                  Files
+                </button>
+              )}
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
@@ -792,6 +858,17 @@ export function BoardTabsView({
             </div>
           )
         })}
+        {selectedItem?.kind === 'filesystem' && (
+          <div className="absolute inset-0 flex min-h-0 z-10">
+            <BoardFilesystemView
+              boardId={activeBoardId}
+              boardRootDir={boardRootDir}
+              boardRootDirLoaded={boardRootDirLoaded}
+              workspaceRootDir={workspaceRootDir}
+              onBoardRootDirChange={onBoardRootDirChange}
+            />
+          </div>
+        )}
         {selectedItem?.kind === 'file' && (
           <div className="absolute inset-0 flex min-h-0 z-10">
             <FileContent
