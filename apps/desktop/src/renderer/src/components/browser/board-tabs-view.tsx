@@ -249,16 +249,7 @@ export function BoardTabsView({
 
   // New-tab dropdown state
   const [newTabMenuOpen, setNewTabMenuOpen] = useState(false)
-  const [newTabMenuPos, setNewTabMenuPos] = useState<{ top: number; left: number } | null>(null)
   const newTabMenuRef = useRef<HTMLDivElement | null>(null)
-  const newTabBtnRef = useRef<HTMLButtonElement | null>(null)
-
-  const openNewTabMenu = useCallback(() => {
-    if (!newTabBtnRef.current) return
-    const rect = newTabBtnRef.current.getBoundingClientRect()
-    setNewTabMenuPos({ top: rect.bottom + 4, left: rect.left })
-    setNewTabMenuOpen(true)
-  }, [])
 
   const appendCreatedItemToEnd = useCallback((id: string, kind: BoardTabsItemKind) => {
     const nextOrderedIds = orderedIds.includes(id) ? orderedIds : [...orderedIds, id]
@@ -717,25 +708,23 @@ export function BoardTabsView({
             </button>
           )
         })}
-        <div className="shrink-0" ref={newTabMenuRef}>
+        <div className="relative shrink-0" ref={newTabMenuRef}>
           <button
-            ref={newTabBtnRef}
             type="button"
             className="no-drag flex items-center justify-center rounded-t-lg px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
             onClick={() => {
-              setNewTabMenuOpen(false)
-              void handleCreateBrowserTab()
+              setNewTabMenuOpen((prev) => !prev)
             }}
             onContextMenu={(event) => {
               event.preventDefault()
-              openNewTabMenu()
+              setNewTabMenuOpen(true)
             }}
-            title="New browser tab"
+            title="New tab"
           >
             <Plus className="h-3.5 w-3.5" />
           </button>
-          {newTabMenuOpen && newTabMenuPos && (
-            <div className="fixed z-50 w-36 rounded-md border border-border/40 bg-popover p-1 shadow-sm" style={{ top: newTabMenuPos.top, left: newTabMenuPos.left }}>
+          {newTabMenuOpen && (
+            <div className="absolute right-0 top-[calc(100%+4px)] z-50 w-36 rounded-md border border-border/40 bg-popover p-1 shadow-sm">
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
