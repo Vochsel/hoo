@@ -318,6 +318,12 @@ type SidebarBoardItem =
   | { id: string; kind: 'browser'; tab: BrowserTab }
   | { id: string; kind: 'terminal' | 'file'; node: GraphNode }
 
+type PendingBrowserActionKind = 'open' | 'chat' | 'monitor'
+
+type PendingBrowserAction =
+  | { boardId: string; tabId: string; action: PendingBrowserActionKind }
+  | null
+
 
 function BrowserPageInner(): React.ReactElement {
   const {
@@ -368,6 +374,7 @@ function BrowserPageInner(): React.ReactElement {
   const [activeItemId, setActiveItemId] = useState<string | null>(null)
   const activeItemIdRef = useRef<string | null>(null)
   const [dialogOpen, setDialogOpen] = useState(false)
+  const [dialogInitialChatOpen, setDialogInitialChatOpen] = useState(false)
   const [terminalDialogNodeId, setTerminalDialogNodeId] = useState<string | null>(null)
   const pendingSelectNonceRef = useRef(0)
   const [pendingTabSelect, setPendingTabSelect] = useState<{ boardId: string | null; itemId: string; nonce: number } | null>(null)
@@ -375,6 +382,7 @@ function BrowserPageInner(): React.ReactElement {
   pendingTabSelectRef.current = pendingTabSelect
   const pendingReloadNonceRef = useRef(0)
   const [pendingTabReload, setPendingTabReload] = useState<{ itemId: string; nonce: number } | null>(null)
+  const [pendingBrowserAction, setPendingBrowserAction] = useState<PendingBrowserAction>(null)
   const requestTabSelect = useCallback((itemId: string, boardId: string | null = activeBoardId) => {
     pendingSelectNonceRef.current += 1
     setPendingTabSelect({ boardId, itemId, nonce: pendingSelectNonceRef.current })
@@ -2586,6 +2594,7 @@ function BrowserPageInner(): React.ReactElement {
       const tab = tabs.find((t) => t.id === node.id)
       if (tab) {
         setSelectedTab(tab)
+        setDialogInitialChatOpen(false)
         setDialogOpen(true)
         return
       }
@@ -2599,7 +2608,7 @@ function BrowserPageInner(): React.ReactElement {
         requestTabSelect(node.id)
       }
     },
-    [tabs]
+    [requestTabSelect, tabs]
   )
 
   const handleAddTab = useCallback(
@@ -2668,7 +2677,7 @@ function BrowserPageInner(): React.ReactElement {
     [activeBoardId, createNode, handlePickFile]
   )
 
-  const handleSidebarItemClick = useCallback(
+  const focusBoardItemInTabs = useCallback(
     (itemId: string, boardId: string) => {
       if (boardId !== activeBoardId) {
         void setActiveBoard(boardId)
@@ -2679,6 +2688,27 @@ function BrowserPageInner(): React.ReactElement {
       requestTabSelect(itemId, boardId)
     },
     [activeBoardId, setActiveBoard, setBoardActiveView, requestTabSelect]
+  )
+
+  const handleSidebarItemClick = useCallback(
+    (itemId: string, boardId: string) => {
+      focusBoardItemInTabs(itemId, boardId)
+    },
+    [focusBoardItemInTabs]
+  )
+
+  const openBrowserDialogForTab = useCallback((tab: BrowserTab, initialChatOpen = false) => {
+    setSelectedTab(tab)
+    setDialogInitialChatOpen(initialChatOpen)
+    setDialogOpen(true)
+  }, [])
+
+  const queueBrowserTabAction = useCallback(
+    (boardId: string, tabId: string, action: PendingBrowserActionKind) => {
+      focusBoardItemInTabs(tabId, boardId)
+      setPendingBrowserAction({ boardId, tabId, action })
+    },
+    [focusBoardItemInTabs]
   )
 
   const handleActiveBoardItemChange = useCallback(
@@ -2933,6 +2963,21 @@ function BrowserPageInner(): React.ReactElement {
     }
     setSelectedTab(updated)
   }, [tabs, selectedTab])
+
+  useEffect(() => {
+    if (!pendingBrowserAction) return
+    if (pendingBrowserAction.boardId !== activeBoardId || tabsLoading) return
+    const tab = tabs.find((entry) => entry.id === pendingBrowserAction.tabId)
+    if (!tab) return
+
+    if (pendingBrowserAction.action === 'monitor') {
+      setMonitorInput('')
+      setMonitorNodeId(tab.id)
+    } else {
+      openBrowserDialogForTab(tab, pendingBrowserAction.action === 'chat')
+    }
+    setPendingBrowserAction(null)
+  }, [activeBoardId, openBrowserDialogForTab, pendingBrowserAction, tabs, tabsLoading])
 
   // ─── Context Menus ──────────────────────────────────────────────────────────
 
@@ -3476,49 +3521,36 @@ function BrowserPageInner(): React.ReactElement {
 
   // Node context menu actions
   const handleContextOpenTab = useCallback(() => {
-    if (contextMenu?.nodeId) {
-      const tab = tabs.find((t) => t.id === contextMenu.nodeId)
-      if (tab) {
-        setSelectedTab(tab)
-        setDialogOpen(true)
-      }
-    }
+    if (!contextMenu?.nodeId || !activeBoardId) return
+    queueBrowserTabAction(activeBoardId, contextMenu.nodeId, 'open')
     setContextMenu(null)
-  }, [contextMenu, tabs])
+  }, [activeBoardId, contextMenu, queueBrowserTabAction])
 
   const handleContextAskAI = useCallback(() => {
-    if (contextMenu?.nodeId) {
-      const tab = tabs.find((t) => t.id === contextMenu.nodeId)
-      if (tab) {
-        setSelectedTab(tab)
-        setDialogOpen(true)
-      }
-    }
+    if (!contextMenu?.nodeId || !activeBoardId) return
+    queueBrowserTabAction(activeBoardId, contextMenu.nodeId, 'chat')
     setContextMenu(null)
-  }, [contextMenu, tabs])
+  }, [activeBoardId, contextMenu, queueBrowserTabAction])
 
   const handleContextAddMonitor = useCallback(() => {
-    if (contextMenu?.nodeId) {
-      setMonitorNodeId(contextMenu.nodeId)
-      setMonitorInput('')
-    }
+    if (!contextMenu?.nodeId || !activeBoardId) return
+    queueBrowserTabAction(activeBoardId, contextMenu.nodeId, 'monitor')
     setContextMenu(null)
-  }, [contextMenu])
+  }, [activeBoardId, contextMenu, queueBrowserTabAction])
 
   const handleContextDuplicateTab = useCallback(async () => {
-    if (contextMenu?.nodeId) {
-      const tab = tabs.find((t) => t.id === contextMenu.nodeId)
-      if (tab) {
-        await createTab({
-          title: tab.title,
-          url: tab.url,
-          flowX: tab.flowX + 280,
-          flowY: tab.flowY + 20
-        })
-      }
+    if (!contextMenu?.nodeId) return
+    const tab = tabs.find((t) => t.id === contextMenu.nodeId)
+    if (tab) {
+      await createTab({
+        title: tab.title,
+        url: tab.url,
+        flowX: tab.flowX + 280,
+        flowY: tab.flowY + 20
+      })
     }
     setContextMenu(null)
-  }, [contextMenu, tabs, createTab])
+  }, [contextMenu, createTab, tabs])
 
   const deleteGraphItemFromActiveBoard = useCallback(
     async (itemId: string, kind: 'graph' | 'terminal' | 'file') => {
@@ -3536,6 +3568,189 @@ function BrowserPageInner(): React.ReactElement {
       saveEdges(filteredEdges)
     },
     [deleteNode, reactFlowInstance, saveEdges, setEdges, setTerminalRunning, terminalDialogNodeId]
+  )
+
+  const getBrowserTabForBoard = useCallback(
+    (boardId: string, itemId: string): BrowserTab | null => {
+      const sourceTabs = boardId === activeBoardId ? tabs : getSidebarBoardCollections(boardId).tabs
+      return sourceTabs.find((entry) => entry.id === itemId) ?? null
+    },
+    [activeBoardId, getSidebarBoardCollections, tabs]
+  )
+
+  const getBoardNodeForKind = useCallback(
+    (boardId: string, itemId: string, kind: 'terminal' | 'file'): GraphNode | null => {
+      const sourceNodes = boardId === activeBoardId
+        ? gNodes.filter((node) => node.nodeType === kind)
+        : kind === 'terminal'
+        ? getSidebarBoardCollections(boardId).terminalNodes
+        : getSidebarBoardCollections(boardId).fileNodes
+      return sourceNodes.find((entry) => entry.id === itemId) ?? null
+    },
+    [activeBoardId, gNodes, getSidebarBoardCollections]
+  )
+
+  const getCurrentBoardItemIds = useCallback(
+    (boardId: string): string[] => {
+      const preferredOrderIds = boardItemOrderMap.get(boardId) ?? []
+      const {
+        tabs: boardTabs,
+        terminalNodes: boardTerminals,
+        fileNodes: boardFiles
+      } = getSidebarBoardCollections(boardId)
+      const orderedIds: string[] = []
+      const seen = new Set<string>()
+
+      for (const id of preferredOrderIds) {
+        if (!id || seen.has(id)) continue
+        if (id === BOARD_FILESYSTEM_TAB_ID) {
+          seen.add(id)
+          orderedIds.push(id)
+          continue
+        }
+        const exists = boardTabs.some((tab) => tab.id === id)
+          || boardTerminals.some((node) => node.id === id)
+          || boardFiles.some((node) => node.id === id)
+        if (!exists) continue
+        seen.add(id)
+        orderedIds.push(id)
+      }
+
+      for (const tab of boardTabs) {
+        if (seen.has(tab.id)) continue
+        seen.add(tab.id)
+        orderedIds.push(tab.id)
+      }
+      for (const node of boardTerminals) {
+        if (seen.has(node.id)) continue
+        seen.add(node.id)
+        orderedIds.push(node.id)
+      }
+      for (const node of boardFiles) {
+        if (seen.has(node.id)) continue
+        seen.add(node.id)
+        orderedIds.push(node.id)
+      }
+
+      return orderedIds
+    },
+    [boardItemOrderMap, getSidebarBoardCollections]
+  )
+
+  const requestBoardItemReload = useCallback(
+    (itemId: string, boardId: string) => {
+      focusBoardItemInTabs(itemId, boardId)
+      pendingReloadNonceRef.current += 1
+      setPendingTabReload({ itemId, nonce: pendingReloadNonceRef.current })
+    },
+    [focusBoardItemInTabs]
+  )
+
+  const handleBrowserItemOpen = useCallback(
+    (itemId: string, boardId: string) => {
+      queueBrowserTabAction(boardId, itemId, 'open')
+    },
+    [queueBrowserTabAction]
+  )
+
+  const handleBrowserItemAskAI = useCallback(
+    (itemId: string, boardId: string) => {
+      queueBrowserTabAction(boardId, itemId, 'chat')
+    },
+    [queueBrowserTabAction]
+  )
+
+  const handleBrowserItemAddMonitor = useCallback(
+    (itemId: string, boardId: string) => {
+      queueBrowserTabAction(boardId, itemId, 'monitor')
+    },
+    [queueBrowserTabAction]
+  )
+
+  const handleDuplicateBrowserItem = useCallback(
+    async (itemId: string, boardId: string) => {
+      const sourceTab = getBrowserTabForBoard(boardId, itemId)
+      if (!sourceTab) return
+
+      try {
+        const payload = {
+          title: sourceTab.title,
+          url: sourceTab.url,
+          flowX: sourceTab.flowX + 280,
+          flowY: sourceTab.flowY + 20
+        }
+        const duplicatedTab = boardId === activeBoardId
+          ? await createTab(payload)
+          : await window.api.browserTabs.create(payload, boardId)
+        if (!duplicatedTab) return
+
+        if (boardId !== activeBoardId) {
+          updateBoardTabsSidebar(boardId, (prev) => [...prev, duplicatedTab])
+        }
+
+        const currentOrder = getCurrentBoardItemIds(boardId).filter((id) => id !== duplicatedTab.id)
+        const sourceIndex = currentOrder.indexOf(itemId)
+        const nextOrder =
+          sourceIndex === -1
+            ? [...currentOrder, duplicatedTab.id]
+            : [
+                ...currentOrder.slice(0, sourceIndex + 1),
+                duplicatedTab.id,
+                ...currentOrder.slice(sourceIndex + 1)
+              ]
+        await saveBoardItemOrder(boardId, nextOrder)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to duplicate tab id=${itemId}:`, error)
+        window.alert(`Failed to duplicate tab: ${message}`)
+      }
+    },
+    [activeBoardId, createTab, getBrowserTabForBoard, getCurrentBoardItemIds, saveBoardItemOrder, updateBoardTabsSidebar]
+  )
+
+  const handleFileItemPickDifferentFile = useCallback(
+    async (itemId: string, boardId: string) => {
+      const fileNode = getBoardNodeForKind(boardId, itemId, 'file')
+      if (!fileNode) return
+
+      const currentConfig = parseNodeConfig(fileNode.config) as FileNodeConfig
+      const currentFilePath = normalizeOptionalPath(currentConfig.filePath)
+
+      try {
+        const selectedPath = await handlePickFile(fileNode.id, 'open', currentFilePath)
+        if (!selectedPath) return
+
+        const currentLabel = fileNode.label?.trim() || ''
+        const currentFileName = currentFilePath ? getFileNameFromPath(currentFilePath) : ''
+        const nextFileName = getFileNameFromPath(selectedPath) || 'File'
+        const nextLabel =
+          !currentLabel || currentLabel === 'File' || (currentFileName.length > 0 && currentLabel === currentFileName)
+            ? nextFileName
+            : currentLabel
+
+        const nextData = {
+          label: nextLabel,
+          config: JSON.stringify({
+            ...currentConfig,
+            filePath: selectedPath
+          } satisfies FileNodeConfig)
+        }
+
+        if (boardId === activeBoardId) {
+          await updateNode(fileNode.id, nextData)
+        } else {
+          await window.api.graphNodes.update(fileNode.id, nextData, boardId)
+          updateBoardNodeSidebar(boardId, 'file', (prev) =>
+            prev.map((node) => (node.id === fileNode.id ? { ...node, ...nextData } : node))
+          )
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        console.error(`${FLOW_TAG} failed to switch file path id=${fileNode.id}:`, error)
+        window.alert(`Failed to open file: ${message}`)
+      }
+    },
+    [activeBoardId, getBoardNodeForKind, handlePickFile, updateBoardNodeSidebar, updateNode]
   )
 
   const handleBoardItemRename = useCallback(() => {
@@ -3570,18 +3785,13 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleBoardItemReload = useCallback(() => {
     if (!boardItemMenu) return
-    if (boardItemMenu.source !== 'tab-strip') {
-      setBoardItemMenu(null)
-      return
-    }
     if (boardItemMenu.kind !== 'browser' && boardItemMenu.kind !== 'terminal') {
       setBoardItemMenu(null)
       return
     }
-    pendingReloadNonceRef.current += 1
-    setPendingTabReload({ itemId: boardItemMenu.itemId, nonce: pendingReloadNonceRef.current })
+    requestBoardItemReload(boardItemMenu.itemId, boardItemMenu.boardId)
     setBoardItemMenu(null)
-  }, [boardItemMenu])
+  }, [boardItemMenu, requestBoardItemReload])
 
   const openTerminalCommandDialog = useCallback(
     (nodeId: string, boardId: string | null) => {
@@ -3659,47 +3869,20 @@ function BrowserPageInner(): React.ReactElement {
   }, [activeBoardId, gNodes, getSidebarBoardCollections, terminalCommandDialog, terminalCommandValue, updateBoardNodeSidebar, updateNode])
 
   const handleBoardItemPickDifferentFile = useCallback(async () => {
-    if (!boardItemMenu || boardItemMenu.source !== 'tab-strip' || boardItemMenu.kind !== 'file') {
+    if (!boardItemMenu || boardItemMenu.kind !== 'file') {
       setBoardItemMenu(null)
       return
     }
-
-    const fileNode = fileNodes.find((node) => node.id === boardItemMenu.itemId)
-    if (!fileNode) {
-      setBoardItemMenu(null)
-      return
-    }
-
-    const currentConfig = parseNodeConfig(fileNode.config) as FileNodeConfig
-    const currentFilePath = normalizeOptionalPath(currentConfig.filePath)
-
     try {
-      const selectedPath = await handlePickFile(fileNode.id, 'open', currentFilePath)
-      if (!selectedPath) return
-
-      const currentLabel = fileNode.label?.trim() || ''
-      const currentFileName = currentFilePath ? getFileNameFromPath(currentFilePath) : ''
-      const nextFileName = getFileNameFromPath(selectedPath) || 'File'
-      const nextLabel =
-        !currentLabel || currentLabel === 'File' || (currentFileName.length > 0 && currentLabel === currentFileName)
-          ? nextFileName
-          : currentLabel
-
-      await updateNode(fileNode.id, {
-        label: nextLabel,
-        config: JSON.stringify({
-          ...currentConfig,
-          filePath: selectedPath
-        } satisfies FileNodeConfig)
-      })
+      await handleFileItemPickDifferentFile(boardItemMenu.itemId, boardItemMenu.boardId)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      console.error(`${FLOW_TAG} failed to switch file tab path id=${fileNode.id}:`, error)
+      console.error(`${FLOW_TAG} failed to switch file tab path id=${boardItemMenu.itemId}:`, error)
       window.alert(`Failed to open file: ${message}`)
     } finally {
       setBoardItemMenu(null)
     }
-  }, [boardItemMenu, fileNodes, handlePickFile, updateNode])
+  }, [boardItemMenu, handleFileItemPickDifferentFile])
 
   const deleteBoardItem = useCallback(
     async (itemId: string, kind: 'browser' | 'graph' | 'terminal' | 'file', boardId: string | null) => {
@@ -3945,6 +4128,9 @@ function BrowserPageInner(): React.ReactElement {
   const monitorTabMonitors = monitorTab ? parseMonitors(monitorTab) : []
 
   const isBrowserTabNode = contextMenu?.type === 'node' && !contextMenu.nodeId?.startsWith('gn-')
+  const contextBrowserTab = isBrowserTabNode && contextMenu?.nodeId
+    ? tabs.find((tab) => tab.id === contextMenu.nodeId) ?? null
+    : null
   const isGraphNode = contextMenu?.type === 'node' && contextMenu.nodeId?.startsWith('gn-')
   const contextTerminalNode = isGraphNode && contextMenu?.nodeId
     ? gNodes.find((n) => n.id === contextMenu.nodeId && n.nodeType === 'terminal')
@@ -3955,25 +4141,29 @@ function BrowserPageInner(): React.ReactElement {
     : null
   const isFileNode = !!contextFileNode
 
+  const handleContextShowNodeInTabs = useCallback(() => {
+    if (!contextMenu?.nodeId || !activeBoardId) return
+    focusBoardItemInTabs(contextMenu.nodeId, activeBoardId)
+    setContextMenu(null)
+  }, [activeBoardId, contextMenu, focusBoardItemInTabs])
+
   const handleContextRestartTerminal = useCallback(() => {
     if (!contextTerminalNode) return
-    const sessionId = `pty-${contextTerminalNode.id}`
-    window.api.terminal.kill(sessionId).catch(() => {})
-    setTerminalRunning(contextTerminalNode.id, false)
+    if (!activeBoardId) return
+    requestBoardItemReload(contextTerminalNode.id, activeBoardId)
     setContextMenu(null)
-  }, [contextTerminalNode, setTerminalRunning])
+  }, [activeBoardId, contextTerminalNode, requestBoardItemReload])
 
   const handleContextEditTerminalCommand = useCallback(() => {
     if (!contextTerminalNode) return
     openTerminalCommandDialog(contextTerminalNode.id, activeBoardId)
   }, [activeBoardId, contextTerminalNode, openTerminalCommandDialog])
 
-  const handleContextShowFileAsTab = useCallback(() => {
-    if (!contextFileNode) return
-    setBoardView('tabs')
-    requestTabSelect(contextFileNode.id)
+  const handleContextPickDifferentFile = useCallback(async () => {
+    if (!contextFileNode || !activeBoardId) return
+    await handleFileItemPickDifferentFile(contextFileNode.id, activeBoardId)
     setContextMenu(null)
-  }, [contextFileNode])
+  }, [activeBoardId, contextFileNode, handleFileItemPickDifferentFile])
   const handleFlowContainerMouseMove = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     lastMouseClientPositionRef.current = { x: event.clientX, y: event.clientY }
   }, [])
@@ -5016,7 +5206,7 @@ function BrowserPageInner(): React.ReactElement {
                 const kind = gn?.nodeType === 'terminal' ? 'terminal' : gn?.nodeType === 'file' ? 'file' : 'graph'
                 void deleteBoardItem(id, kind, activeBoardId)
               }}
-              onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
+              onOpenTab={(tab) => { openBrowserDialogForTab(tab) }}
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
               onUpdateNode={updateNode}
               notifiedIds={notifiedItemIds}
@@ -5045,7 +5235,7 @@ function BrowserPageInner(): React.ReactElement {
               terminalNodes={terminalNodes}
               outputNodes={outputNodes}
               onChange={handleBoardDocHtmlChange}
-              onOpenTab={(tab) => { setSelectedTab(tab); setDialogOpen(true) }}
+              onOpenTab={(tab) => { openBrowserDialogForTab(tab) }}
               onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
             />
           )}
@@ -5201,20 +5391,20 @@ function BrowserPageInner(): React.ReactElement {
                 <Play className="h-4 w-4" />
                 Execute node
               </button>
+              <div className="my-1 h-px bg-border" />
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => void handleContextRenameNode()}
+                onClick={handleContextShowNodeInTabs}
               >
-                <NotebookPen className="h-4 w-4" />
-                Rename tab
+                <PanelTop className="h-4 w-4" />
+                Show in Tabs
               </button>
-              <div className="my-1 h-px bg-border" />
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={handleContextOpenTab}
               >
                 <Globe className="h-4 w-4" />
-                Open tab
+                Open Tab
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
@@ -5225,18 +5415,37 @@ function BrowserPageInner(): React.ReactElement {
               </button>
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  if (activeBoardId && contextBrowserTab) {
+                    requestBoardItemReload(contextBrowserTab.id, activeBoardId)
+                  }
+                  setContextMenu(null)
+                }}
+              >
+                <RotateCw className="h-4 w-4" />
+                Reload Tab
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={handleContextDuplicateTab}
               >
                 <Copy className="h-4 w-4" />
-                Duplicate tab
+                Duplicate Tab
               </button>
-              <div className="my-1 h-px bg-border" />
               <button
                 className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
                 onClick={handleContextAddMonitor}
               >
                 <Radio className="h-4 w-4" />
-                Add monitor / watch
+                Add Monitor
+              </button>
+              <div className="my-1 h-px bg-border" />
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleContextRenameNode()}
+              >
+                <NotebookPen className="h-4 w-4" />
+                Rename
               </button>
               <div className="my-1 h-px bg-border" />
               <button
@@ -5244,7 +5453,7 @@ function BrowserPageInner(): React.ReactElement {
                 onClick={handleContextDeleteNode}
               >
                 <Trash2 className="h-4 w-4" />
-                Delete tab
+                Delete
               </button>
             </>
           )}
@@ -5257,48 +5466,80 @@ function BrowserPageInner(): React.ReactElement {
                 <Play className="h-4 w-4" />
                 Execute node
               </button>
-              <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                onClick={() => void handleContextRenameNode()}
-              >
-                <NotebookPen className="h-4 w-4" />
-                Rename node
-              </button>
-              {isTerminalNode && (
+              {(isTerminalNode || isFileNode) ? (
+                <>
+                  <div className="my-1 h-px bg-border" />
+                  <button
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                    onClick={handleContextShowNodeInTabs}
+                  >
+                    <PanelTop className="h-4 w-4" />
+                    Show in Tabs
+                  </button>
+                  {isTerminalNode && (
+                    <>
+                      <button
+                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                        onClick={handleContextRestartTerminal}
+                      >
+                        <Terminal className="h-4 w-4" />
+                        Restart Terminal
+                      </button>
+                      <button
+                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                        onClick={handleContextEditTerminalCommand}
+                      >
+                        <Code className="h-4 w-4" />
+                        Set Default Command
+                      </button>
+                    </>
+                  )}
+                  {isFileNode && (
+                    <>
+                      <button
+                        className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                        onClick={() => void handleContextPickDifferentFile()}
+                      >
+                        <FolderOpen className="h-4 w-4" />
+                        Open Different File
+                      </button>
+                    </>
+                  )}
+                  <div className="my-1 h-px bg-border" />
+                  <button
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                    onClick={() => void handleContextRenameNode()}
+                  >
+                    <NotebookPen className="h-4 w-4" />
+                    Rename
+                  </button>
+                  <button
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
+                    onClick={handleContextDeleteNode}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete
+                  </button>
+                </>
+              ) : (
                 <>
                   <button
                     className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                    onClick={handleContextRestartTerminal}
+                    onClick={() => void handleContextRenameNode()}
                   >
-                    <Terminal className="h-4 w-4" />
-                    Restart terminal
+                    <NotebookPen className="h-4 w-4" />
+                    Rename Node
                   </button>
+                  <div className="my-1 h-px bg-border" />
                   <button
-                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                    onClick={handleContextEditTerminalCommand}
+                    className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
+                    onClick={handleContextDeleteNode}
                   >
-                    <Code className="h-4 w-4" />
-                    Set default command
+                    <Trash2 className="h-4 w-4" />
+                    Delete Node
                   </button>
                 </>
               )}
-              {isFileNode && (
-                <button
-                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-                  onClick={handleContextShowFileAsTab}
-                >
-                  <File className="h-4 w-4" />
-                  Show as tab
-                </button>
-              )}
-              <div className="my-1 h-px bg-border" />
-              <button
-                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-destructive hover:bg-accent"
-                onClick={handleContextDeleteNode}
-              >
-                <Trash2 className="h-4 w-4" />
-                Delete node
-              </button>
             </>
           )}
         </div>
@@ -5315,32 +5556,118 @@ function BrowserPageInner(): React.ReactElement {
           onClick={(event) => event.stopPropagation()}
           onContextMenu={(event) => event.preventDefault()}
         >
-          {boardItemMenu.source === 'tab-strip' && (boardItemMenu.kind === 'browser' || boardItemMenu.kind === 'terminal') && (
-            <button
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-              onClick={() => void handleBoardItemReload()}
-            >
-              <RotateCw className="h-4 w-4" />
-              {boardItemMenu.kind === 'browser' ? 'Reload Webview' : 'Restart Terminal'}
-            </button>
+          {boardItemMenu.kind === 'browser' && (
+            <>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  focusBoardItemInTabs(boardItemMenu.itemId, boardItemMenu.boardId)
+                  setBoardItemMenu(null)
+                }}
+              >
+                <PanelTop className="h-4 w-4" />
+                Show in Tabs
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  handleBrowserItemOpen(boardItemMenu.itemId, boardItemMenu.boardId)
+                  setBoardItemMenu(null)
+                }}
+              >
+                <Globe className="h-4 w-4" />
+                Open Tab
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  handleBrowserItemAskAI(boardItemMenu.itemId, boardItemMenu.boardId)
+                  setBoardItemMenu(null)
+                }}
+              >
+                <MessageSquare className="h-4 w-4" />
+                Ask AI...
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleBoardItemReload()}
+              >
+                <RotateCw className="h-4 w-4" />
+                Reload Tab
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  void handleDuplicateBrowserItem(boardItemMenu.itemId, boardItemMenu.boardId)
+                  setBoardItemMenu(null)
+                }}
+              >
+                <Copy className="h-4 w-4" />
+                Duplicate Tab
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  handleBrowserItemAddMonitor(boardItemMenu.itemId, boardItemMenu.boardId)
+                  setBoardItemMenu(null)
+                }}
+              >
+                <Radio className="h-4 w-4" />
+                Add Monitor
+              </button>
+              <div className="my-1 h-px bg-border" />
+            </>
           )}
           {boardItemMenu.kind === 'terminal' && (
-            <button
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-              onClick={() => void handleBoardItemEditTerminalCommand()}
-            >
-              <Code className="h-4 w-4" />
-              Set default command
-            </button>
+            <>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  focusBoardItemInTabs(boardItemMenu.itemId, boardItemMenu.boardId)
+                  setBoardItemMenu(null)
+                }}
+              >
+                <PanelTop className="h-4 w-4" />
+                Show in Tabs
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleBoardItemReload()}
+              >
+                <Terminal className="h-4 w-4" />
+                Restart Terminal
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleBoardItemEditTerminalCommand()}
+              >
+                <Code className="h-4 w-4" />
+                Set Default Command
+              </button>
+              <div className="my-1 h-px bg-border" />
+            </>
           )}
-          {boardItemMenu.source === 'tab-strip' && boardItemMenu.kind === 'file' && (
-            <button
-              className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
-              onClick={() => void handleBoardItemPickDifferentFile()}
-            >
-              <FolderOpen className="h-4 w-4" />
-              Open Different File
-            </button>
+          {boardItemMenu.kind === 'file' && (
+            <>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => {
+                  focusBoardItemInTabs(boardItemMenu.itemId, boardItemMenu.boardId)
+                  setBoardItemMenu(null)
+                }}
+              >
+                <PanelTop className="h-4 w-4" />
+                Show in Tabs
+              </button>
+              <button
+                className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                onClick={() => void handleBoardItemPickDifferentFile()}
+              >
+                <FolderOpen className="h-4 w-4" />
+                Open Different File
+              </button>
+              <div className="my-1 h-px bg-border" />
+            </>
           )}
           <button
             className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
@@ -5693,6 +6020,7 @@ function BrowserPageInner(): React.ReactElement {
         tab={selectedTab}
         boardId={activeBoardId}
         open={dialogOpen}
+        initialChatOpen={dialogInitialChatOpen}
         onOpenChange={handleDialogClose}
         onTabUpdate={updateTab}
         onRecaptureScreenshot={refresh}

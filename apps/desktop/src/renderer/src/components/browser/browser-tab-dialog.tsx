@@ -9,6 +9,7 @@ interface BrowserTabDialogProps {
   tab: BrowserTab | null
   boardId?: string | null
   open: boolean
+  initialChatOpen?: boolean
   onOpenChange: (open: boolean) => void
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
   onRecaptureScreenshot?: () => void
@@ -27,6 +28,7 @@ export function BrowserTabDialog({
   tab,
   boardId,
   open,
+  initialChatOpen = false,
   onOpenChange,
   onTabUpdate,
   onRecaptureScreenshot,
@@ -80,6 +82,11 @@ export function BrowserTabDialog({
   useEffect(() => {
     currentUrlRef.current = currentUrl
   }, [currentUrl])
+
+  useEffect(() => {
+    if (!open) return
+    setChatCollapsed(!initialChatOpen)
+  }, [initialChatOpen, open, tab?.id])
 
   const publishLiveWebContents = useCallback((webContentsId?: number | null): void => {
     const tabId = tabIdRef.current
