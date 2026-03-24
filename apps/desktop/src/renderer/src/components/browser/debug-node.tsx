@@ -1,5 +1,5 @@
 import { memo, useState, useEffect, useRef } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import { Bug } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'

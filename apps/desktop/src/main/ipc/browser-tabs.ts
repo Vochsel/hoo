@@ -712,7 +712,11 @@ export function registerBrowserTabHandlers(): void {
 
   ipcMain.handle(
     'browserTabs:create',
-    async (_e, data: { title?: string; url?: string; flowX?: number; flowY?: number }, boardId?: string) => {
+    async (
+      _e,
+      data: { title?: string; url?: string; flowX?: number; flowY?: number; flowWidth?: number; flowHeight?: number },
+      boardId?: string
+    ) => {
       await ensureWorkspaceInitialized()
       const resolvedBoardId = resolveBoardIdOrThrow(boardId)
       const now = new Date().toISOString()
@@ -726,6 +730,8 @@ export function registerBrowserTabHandlers(): void {
         monitors: null,
         flowX: data.flowX ?? 0,
         flowY: data.flowY ?? 0,
+        flowWidth: typeof data.flowWidth === 'number' && Number.isFinite(data.flowWidth) ? data.flowWidth : undefined,
+        flowHeight: typeof data.flowHeight === 'number' && Number.isFinite(data.flowHeight) ? data.flowHeight : undefined,
         createdAt: now,
         updatedAt: now
       }
@@ -1237,7 +1243,15 @@ export function registerBrowserTabHandlers(): void {
     'graphNodes:create',
     async (
       _e,
-      data: { nodeType: string; label?: string; config?: string; flowX?: number; flowY?: number },
+      data: {
+        nodeType: string
+        label?: string
+        config?: string
+        flowX?: number
+        flowY?: number
+        flowWidth?: number
+        flowHeight?: number
+      },
       boardId?: string
     ) => {
       await ensureWorkspaceInitialized()
@@ -1251,6 +1265,8 @@ export function registerBrowserTabHandlers(): void {
         config: data.config ?? '{}',
         flowX: data.flowX ?? 0,
         flowY: data.flowY ?? 0,
+        flowWidth: typeof data.flowWidth === 'number' && Number.isFinite(data.flowWidth) ? data.flowWidth : undefined,
+        flowHeight: typeof data.flowHeight === 'number' && Number.isFinite(data.flowHeight) ? data.flowHeight : undefined,
         createdAt: now,
         updatedAt: now
       }

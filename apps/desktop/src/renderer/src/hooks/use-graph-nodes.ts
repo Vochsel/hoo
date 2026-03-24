@@ -7,6 +7,8 @@ export interface GraphNode {
   config: string
   flowX: number
   flowY: number
+  flowWidth?: number
+  flowHeight?: number
   createdAt: string
   updatedAt: string
 }
@@ -31,6 +33,8 @@ export function useGraphNodes(boardId: string | null): {
     config?: string
     flowX?: number
     flowY?: number
+    flowWidth?: number
+    flowHeight?: number
   }) => Promise<GraphNode>
   updateNode: (id: string, data: Record<string, unknown>) => Promise<GraphNode>
   deleteNode: (id: string) => Promise<void>
@@ -85,6 +89,8 @@ export function useGraphNodes(boardId: string | null): {
       config?: string
       flowX?: number
       flowY?: number
+      flowWidth?: number
+      flowHeight?: number
     }) => {
       const targetBoardId = boardId
       if (!targetBoardId) {

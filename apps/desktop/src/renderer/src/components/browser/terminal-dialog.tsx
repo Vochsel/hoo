@@ -325,7 +325,7 @@ export function TerminalDialog({
             pendingSubmittedCommandRef.current = false
             const agentKind = detectTerminalAgentKind(cfg.command)
             setRunningState(
-              isTerminalBusyFromTail(tailRef.current) &&
+              isTerminalBusyFromTail(tailRef.current, agentKind) &&
               !isLikelyAgentWaitingForInput(tailRef.current, agentKind)
             )
             // Re-fit and sync size
@@ -388,7 +388,8 @@ export function TerminalDialog({
           const isAgentWaitingForInput = isLikelyAgentWaitingForInput(tailRef.current, agentKind)
           const hasMeaningfulOutput = /\S/.test(normalizedChunk)
 
-          if (hasAttentionSignal || isPrompt || isInputRequest || isAgentWaitingForInput) {
+          const shouldStop = hasAttentionSignal || isInputRequest || isAgentWaitingForInput || (!agentKind && isPrompt)
+          if (shouldStop) {
             pendingSubmittedCommandRef.current = false
             setRunningState(false)
             return

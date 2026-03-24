@@ -1,5 +1,5 @@
 import { memo, useState, useRef, useEffect } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import { Timer, Check, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'

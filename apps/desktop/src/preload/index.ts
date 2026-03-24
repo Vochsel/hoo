@@ -10,7 +10,10 @@ const api = {
   browserTabs: {
     list: (boardId?: string) => ipcRenderer.invoke('browserTabs:list', boardId),
     get: (id: string, boardId?: string) => ipcRenderer.invoke('browserTabs:get', id, boardId),
-    create: (data: { title?: string; url?: string; flowX?: number; flowY?: number }, boardId?: string) =>
+    create: (
+      data: { title?: string; url?: string; flowX?: number; flowY?: number; flowWidth?: number; flowHeight?: number },
+      boardId?: string
+    ) =>
       ipcRenderer.invoke('browserTabs:create', data, boardId),
     update: (id: string, data: Record<string, unknown>, boardId?: string) =>
       ipcRenderer.invoke('browserTabs:update', id, data, boardId),
@@ -73,7 +76,10 @@ const api = {
 
   graphNodes: {
     list: (boardId?: string) => ipcRenderer.invoke('graphNodes:list', boardId),
-    create: (data: { nodeType: string; label?: string; config?: string; flowX?: number; flowY?: number }, boardId?: string) =>
+    create: (
+      data: { nodeType: string; label?: string; config?: string; flowX?: number; flowY?: number; flowWidth?: number; flowHeight?: number },
+      boardId?: string
+    ) =>
       ipcRenderer.invoke('graphNodes:create', data, boardId),
     update: (id: string, data: Record<string, unknown>, boardId?: string) =>
       ipcRenderer.invoke('graphNodes:update', id, data, boardId),

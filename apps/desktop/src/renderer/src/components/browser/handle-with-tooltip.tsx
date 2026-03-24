@@ -15,7 +15,7 @@ export function HandleWithTooltip({ label, className, ...handleProps }: HandleWi
         <TooltipTrigger asChild>
           <Handle
             {...handleProps}
-            className={`${className ?? ''} before:!absolute before:!-inset-2 before:!rounded-full before:!content-['']`}
+            className={`${className ?? ''} pointer-events-none opacity-0 before:!absolute before:!-inset-2 before:!rounded-full before:!content-['']`}
           />
         </TooltipTrigger>
         <TooltipContent side="top" className="text-[10px] px-2 py-1">

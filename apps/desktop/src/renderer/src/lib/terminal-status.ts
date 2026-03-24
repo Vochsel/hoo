@@ -96,21 +96,25 @@ export function isLikelyAgentWaitingForInput(
   // Agent-specific idle prompt patterns
   switch (agentKind) {
     case 'claude':
-      return /what would you like claude to do\??/.test(window)
+      // Claude Code idle prompts: initial greeting, post-task prompt, permission prompts
+      return /(?:what would you like (?:claude )?to do|enter a message|type your|waiting for (?:your )?response|do you want to proceed|allow|deny|yes\/no)/.test(window)
     case 'codex':
-      return /what should codex do next\??/.test(window)
+      // Codex CLI idle prompts
+      return /(?:what (?:should|would you like) codex (?:to )?do|enter a message|type your|waiting for (?:your )?response)/.test(window)
     case 'gemini':
-      return /what would you like gemini to do\??/.test(window)
+      return /(?:what would you like gemini to do|enter a message|type your)/.test(window)
     case 'opencode':
     case 'amp':
       return false
   }
 }
 
-export function isTerminalBusyFromTail(tail: string): boolean {
+export function isTerminalBusyFromTail(tail: string, agentKind?: TerminalAgentKind): boolean {
   const lastLine = getLastNonEmptyTerminalLine(tail)
   if (!lastLine) return false
-  if (isLikelyShellPromptLine(lastLine)) return false
+  // For CLI agents, skip shell-prompt detection — their TUI output
+  // frequently contains lines ending in >, $, etc. that are not shell prompts.
+  if (!agentKind && isLikelyShellPromptLine(lastLine)) return false
   if (isLikelyTerminalInputRequest(lastLine)) return false
   return true
 }

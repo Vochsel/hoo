@@ -1,14 +1,17 @@
 import { memo } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
-import { HandleWithTooltip } from './handle-with-tooltip'
-import { BrowserFavicon } from './browser-favicon'
-import { Globe, X, Radio, Loader2 } from 'lucide-react'
+import { type NodeProps, NodeResizer } from '@xyflow/react'
+import { ExternalLink, Globe, Loader2, Radio, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import type { BrowserTabMonitor } from '@/hooks/use-browser-tabs'
+import type { BrowserTab, BrowserTabMonitor } from '@/hooks/use-browser-tabs'
+import { BrowserFavicon } from './browser-favicon'
+import { BrowserTabContent } from './browser-tab-content'
 import { NodeExecutionFooter } from './node-status-bar'
-import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'
+
+const MIN_WIDTH = 420
+const MIN_HEIGHT = 320
 
 export interface BrowserTabNodeData {
+  tab: BrowserTab
   title: string
   url: string
   favicon: string | null
@@ -17,126 +20,148 @@ export interface BrowserTabNodeData {
   isRunning?: boolean
   hasNotification?: boolean
   runtimeStatus?: string
+  runtimeOutput?: string
+  isInteractive?: boolean
+  isResizing?: boolean
+  reloadNonce?: number
   onClose: (id: string) => void
+  onOpen?: (id: string) => void
+  onActivate?: (id: string) => void
+  onResize?: (id: string, width: number, height: number) => void
+  onResizeStateChange?: (id: string, isResizing: boolean) => void
+  onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
+  onWebviewStateChange?: (tabId: string, webview: Electron.WebviewTag | null) => void
   [key: string]: unknown
 }
 
 function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElement {
-  const { title, favicon, screenshot, monitors, isRunning, hasNotification, runtimeStatus, runtimeOutput, onClose } = data as unknown as BrowserTabNodeData
-  const enabledMonitors = monitors?.filter((m) => m.enabled) ?? []
-  const hasMonitors = enabledMonitors.length > 0
-  const direction = useFlowDirection()
-  const sourcePos = getSourcePosition(direction)
-  const targetPos = getTargetPosition(direction)
+  const {
+    tab,
+    title,
+    favicon,
+    screenshot,
+    monitors,
+    isRunning,
+    hasNotification,
+    runtimeStatus,
+    runtimeOutput,
+    isInteractive,
+    isResizing,
+    reloadNonce,
+    onClose,
+    onOpen,
+    onResize,
+    onResizeStateChange,
+    onTabUpdate,
+    onWebviewStateChange
+  } = data as unknown as BrowserTabNodeData
+  const enabledMonitors = monitors?.filter((monitor) => monitor.enabled) ?? []
 
   return (
     <div
       className={cn(
-        'group w-[240px] rounded-lg border bg-card shadow transition-all hover:shadow-md',
+        'group flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md',
         selected && 'ring-2 ring-primary'
       )}
     >
-      {/* Screenshot / Placeholder */}
-      <div className="relative w-full overflow-hidden rounded-t-lg bg-muted">
-        {screenshot ? (
-          <img src={screenshot} alt={title} draggable={false} className="block h-auto w-full" />
-        ) : (
-          <div className="flex min-h-[135px] w-full items-center justify-center">
-            <Globe className="h-8 w-8 text-muted-foreground/40" />
+      <NodeResizer
+        minWidth={MIN_WIDTH}
+        minHeight={MIN_HEIGHT}
+        isVisible={selected}
+        autoScale={false}
+        lineStyle={{ borderColor: 'hsl(var(--border))', opacity: 0.65 }}
+        handleStyle={{
+          width: 10,
+          height: 10,
+          borderRadius: 9999,
+          border: '1px solid hsl(var(--border))',
+          background: 'hsl(var(--background))'
+        }}
+        onResizeStart={() => onResizeStateChange?.(id, true)}
+        onResizeEnd={(_, params) => {
+          onResize?.(id, params.width, params.height)
+          onResizeStateChange?.(id, false)
+        }}
+      />
+
+      <div className="canvas-node-drag-handle flex h-9 shrink-0 items-center gap-2 border-b bg-background/95 px-2.5">
+        <BrowserFavicon
+          src={favicon}
+          imgClassName="h-3.5 w-3.5 shrink-0"
+          iconClassName="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+        />
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs font-medium">{title || 'New Tab'}</p>
+        </div>
+        {enabledMonitors.length > 0 && (
+          <div className="flex items-center gap-1 rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600">
+            <Radio className="h-2.5 w-2.5" />
+            <span>{enabledMonitors.length}</span>
           </div>
         )}
-
-        {/* Close button */}
+        {hasNotification && !isRunning && <div className="h-2 w-2 rounded-full bg-blue-500" />}
         <button
-          className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/40 text-white opacity-0 transition-opacity hover:bg-black/60 group-hover:opacity-100"
-          onClick={(e) => {
-            e.stopPropagation()
+          type="button"
+          className="nodrag inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation()
+            onOpen?.(id)
+          }}
+          title="Open tab"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+        </button>
+        <button
+          type="button"
+          className="nodrag inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          onClick={(event) => {
+            event.stopPropagation()
             onClose(id)
           }}
+          title="Close tab"
         >
-          <X className="h-3 w-3" />
+          <X className="h-3.5 w-3.5" />
         </button>
-
-        {/* Monitor indicator badge */}
-        {hasMonitors && (
-          <div className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded-full bg-amber-500/90 px-1.5 py-0.5">
-            <Radio className="h-2.5 w-2.5 text-white" />
-            <span className="text-[9px] font-medium text-white">{enabledMonitors.length}</span>
-          </div>
-        )}
-
-        {/* Notification badge */}
-        {hasNotification && !isRunning && (
-          <div className="absolute right-1.5 bottom-1.5 h-2.5 w-2.5 rounded-full bg-blue-500 ring-2 ring-card" />
-        )}
-
-        {/* Running indicator overlay */}
-        {isRunning && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/30 backdrop-blur-[1px]">
-            <div className="flex items-center gap-1.5 rounded-full bg-primary/90 px-2 py-1">
-              <Loader2 className="h-3 w-3 animate-spin text-white" />
-              <span className="text-[9px] font-medium text-white">Running</span>
-            </div>
-          </div>
-        )}
       </div>
 
-        {/* Info */}
-      <div className="px-2.5 py-2">
-        <div className="flex items-center gap-1.5">
-          <BrowserFavicon
-            src={favicon}
-            imgClassName="h-3.5 w-3.5 shrink-0"
-            iconClassName="h-3.5 w-3.5 shrink-0 text-muted-foreground"
-          />
-          <span className="truncate text-xs font-medium">{title || 'New Tab'}</span>
-        </div>
-      </div>
-
-      {/* Per-monitor rows with inline handles */}
-      {hasMonitors && (
-        <div className="border-t border-border/40 px-2.5 py-1.5 space-y-0.5">
-          {enabledMonitors.map((monitor) => (
-            <div key={monitor.id} className="relative flex items-center gap-1.5 h-5">
-              <Radio className="h-2.5 w-2.5 text-amber-500 shrink-0" />
-              <span
-                className="text-[10px] text-muted-foreground truncate max-w-[180px]"
-                title={monitor.condition}
-              >
-                {monitor.condition}
-              </span>
-              {/* Handle sits inside the row so it's vertically centered */}
-              <HandleWithTooltip
-                label={monitor.condition}
-                type="source"
-                position={sourcePos}
-                id={`monitor-${monitor.id}`}
-                className={cn(
-                  '!absolute !w-3 !h-3 !bg-amber-500 !border-2 !border-amber-300',
-                  direction === 'vertical'
-                    ? '!bottom-[-18px] !left-1/2 !-translate-x-1/2'
-                    : '!right-[-18px] !top-1/2 !-translate-y-1/2'
-                )}
+      <div className="flex min-h-0 flex-1 flex-col">
+        {isInteractive ? (
+          <div className={cn('nodrag nopan nowheel flex min-h-0 flex-1', isResizing && 'pointer-events-none select-none')}>
+            <BrowserTabContent
+              tab={tab}
+              onTabUpdate={onTabUpdate}
+              active
+              reloadNonce={reloadNonce ?? 0}
+              onWebviewStateChange={onWebviewStateChange}
+            />
+          </div>
+        ) : (
+          <div className="flex min-h-0 flex-1 items-center justify-center bg-muted">
+            {screenshot ? (
+              <img
+                src={screenshot}
+                alt={title}
+                draggable={false}
+                className="h-full w-full object-cover object-top"
               />
-            </div>
-          ))}
-        </div>
-      )}
+            ) : (
+              <div className="flex h-full w-full items-center justify-center">
+                {isRunning ? (
+                  <Loader2 className="h-8 w-8 animate-spin text-primary/70" />
+                ) : (
+                  <Globe className="h-8 w-8 text-muted-foreground/40" />
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
 
-      <NodeExecutionFooter status={runtimeStatus} isRunning={isRunning} runtimeOutput={runtimeOutput as string | undefined} className="px-2.5 py-1.5" />
-
-      {/* Default handles */}
-      <HandleWithTooltip
-        label="Input"
-        type="target"
-        position={targetPos}
-        className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
-      />
-      <HandleWithTooltip
-        label="Page content"
-        type="source"
-        position={sourcePos}
-        className="!w-3 !h-3 !bg-muted-foreground !border-2 !border-background"
+      <NodeExecutionFooter
+        status={runtimeStatus}
+        isRunning={isRunning}
+        runtimeOutput={runtimeOutput}
+        className="shrink-0 px-2.5 py-1.5"
       />
     </div>
   )

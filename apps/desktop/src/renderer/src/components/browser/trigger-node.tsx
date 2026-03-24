@@ -1,5 +1,5 @@
 import { memo } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import { Play } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { NodeExecutionFooter } from './node-status-bar'

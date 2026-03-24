@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import { Sparkles, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useFlowDirection, getSourcePosition, getTargetPosition } from './flow-direction-context'

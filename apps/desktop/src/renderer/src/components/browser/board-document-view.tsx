@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
-import { Extension, Node, mergeAttributes } from '@tiptap/core'
+import { Extension, Node as TiptapNode, mergeAttributes } from '@tiptap/core'
 import { EditorContent, useEditor, NodeViewWrapper, ReactNodeViewRenderer, type NodeViewProps } from '@tiptap/react'
 import Suggestion from '@tiptap/suggestion'
 import Document from '@tiptap/extension-document'
@@ -99,7 +99,7 @@ function TaskEmbedNodeView(props: NodeViewProps): React.ReactElement {
   )
 }
 
-const TaskEmbedNode = Node.create({
+const TaskEmbedNode = TiptapNode.create({
   name: 'taskEmbed',
   group: 'block',
   atom: true,
@@ -160,7 +160,7 @@ function EmbedContextMenu({
 
   useEffect(() => {
     const handler = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
+      if (ref.current && !ref.current.contains(e.target as globalThis.Node)) onClose()
     }
     document.addEventListener('mousedown', handler)
     return () => document.removeEventListener('mousedown', handler)
@@ -274,7 +274,7 @@ function BrowserEmbedNodeView(props: NodeViewProps): React.ReactElement {
   )
 }
 
-const BrowserEmbedNode = Node.create({
+const BrowserEmbedNode = TiptapNode.create({
   name: 'browserEmbed',
   group: 'block',
   atom: true,
@@ -351,6 +351,8 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
   try {
     config = JSON.parse(node.config) as Record<string, unknown>
   } catch {}
+  const commandText =
+    typeof config.command === 'string' ? config.command : config.command != null ? String(config.command) : ''
 
   return (
     <NodeViewWrapper as="div" className="terminal-embed-card" contentEditable={false}>
@@ -373,8 +375,8 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
           <Terminal className="h-5 w-5 shrink-0 text-muted-foreground" />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-medium">{node.label || 'Terminal'}</p>
-            {config.command && (
-              <p className="truncate text-xs text-muted-foreground font-mono">$ {String(config.command)}</p>
+            {commandText && (
+              <p className="truncate text-xs text-muted-foreground font-mono">$ {commandText}</p>
             )}
           </div>
         </button>
@@ -406,7 +408,7 @@ function TerminalEmbedNodeView(props: NodeViewProps): React.ReactElement {
   )
 }
 
-const TerminalEmbedNode = Node.create({
+const TerminalEmbedNode = TiptapNode.create({
   name: 'terminalEmbed',
   group: 'block',
   atom: true,
@@ -524,7 +526,7 @@ function OutputEmbedNodeView(props: NodeViewProps): React.ReactElement {
   )
 }
 
-const OutputEmbedNode = Node.create({
+const OutputEmbedNode = TiptapNode.create({
   name: 'outputEmbed',
   group: 'block',
   atom: true,
@@ -801,7 +803,7 @@ function ToolbarButton({
 // ─── Board Document View ────────────────────────────────────────────────────
 
 export function BoardDocumentView({
-  boardId,
+  boardId: _boardId,
   html,
   loading,
   tabs,

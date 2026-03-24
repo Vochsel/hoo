@@ -1,5 +1,5 @@
 import { memo, useState, type ReactNode } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import { FileText } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { HandleWithTooltip } from './handle-with-tooltip'

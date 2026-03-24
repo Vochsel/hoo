@@ -27,6 +27,8 @@ export interface BrowserTab {
   pinnedUrl: string | null
   flowX: number
   flowY: number
+  flowWidth?: number
+  flowHeight?: number
   createdAt: string
   updatedAt: string
 }
@@ -78,7 +80,9 @@ export function useBrowserTabs(boardId: string | null): {
   tabs: BrowserTab[]
   loading: boolean
   refresh: () => Promise<void>
-  createTab: (data?: { title?: string; url?: string; flowX?: number; flowY?: number }) => Promise<BrowserTab>
+  createTab: (
+    data?: { title?: string; url?: string; flowX?: number; flowY?: number; flowWidth?: number; flowHeight?: number }
+  ) => Promise<BrowserTab>
   updateTab: (id: string, data: Record<string, unknown>) => Promise<BrowserTab>
   deleteTab: (id: string) => Promise<void>
   saveOrder: (orderedIds: string[]) => Promise<void>
@@ -126,7 +130,9 @@ export function useBrowserTabs(boardId: string | null): {
   }, [refresh])
 
   const createTab = useCallback(
-    async (data?: { title?: string; url?: string; flowX?: number; flowY?: number }) => {
+    async (
+      data?: { title?: string; url?: string; flowX?: number; flowY?: number; flowWidth?: number; flowHeight?: number }
+    ) => {
       const targetBoardId = boardId
       if (!targetBoardId) {
         throw new Error('No board selected')

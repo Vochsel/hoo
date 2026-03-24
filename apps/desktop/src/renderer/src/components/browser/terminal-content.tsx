@@ -88,6 +88,79 @@ export function TerminalContent({
     return lines.join('\n')
   }, [])
 
+  const captureScreenshot = useCallback((): string | undefined => {
+    const term = termRef.current
+    if (!term) return undefined
+    const buf = term.buffer.active
+    if (!buf || buf.length === 0) return undefined
+
+    const ansiColors = [
+      '#000000', '#cd3131', '#0dbc79', '#e5e510', '#2472c8', '#bc3fbc', '#11a8cd', '#e5e5e5',
+      '#666666', '#f14c4c', '#23d18b', '#f5f543', '#3b8eea', '#d670d6', '#29b8db', '#e5e5e5'
+    ]
+    const defaultFg = '#e0e0e0'
+    const background = '#1a1a2e'
+    const dpr = window.devicePixelRatio || 2
+    const fontSize = 12
+    const lineHeight = Math.ceil(fontSize * 1.3)
+    const fontFamily = 'Menlo, Monaco, "Courier New", monospace'
+    const cols = term.cols || 80
+    const visibleRows = term.rows || 24
+
+    const measureCanvas = document.createElement('canvas')
+    const measureCtx = measureCanvas.getContext('2d')
+    if (!measureCtx) return undefined
+    measureCtx.font = `${fontSize}px ${fontFamily}`
+    const charWidth = measureCtx.measureText('M').width
+
+    const padding = 8
+    const logicalWidth = Math.ceil(cols * charWidth + padding * 2)
+    const logicalHeight = visibleRows * lineHeight + padding * 2
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.ceil(logicalWidth * dpr)
+    canvas.height = Math.ceil(logicalHeight * dpr)
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return undefined
+
+    ctx.scale(dpr, dpr)
+    ctx.fillStyle = background
+    ctx.fillRect(0, 0, logicalWidth, logicalHeight)
+    ctx.font = `${fontSize}px ${fontFamily}`
+    ctx.textBaseline = 'top'
+
+    const startRow = Math.max(0, buf.length - visibleRows)
+    for (let row = 0; row < visibleRows && startRow + row < buf.length; row += 1) {
+      const line = buf.getLine(startRow + row)
+      if (!line) continue
+      const y = padding + row * lineHeight
+
+      for (let col = 0; col < cols; col += 1) {
+        const cell = line.getCell(col)
+        if (!cell) continue
+        const chars = cell.getChars()
+        if (!chars || chars === ' ') continue
+
+        let fg = defaultFg
+        if (cell.isFgPalette()) {
+          const idx = cell.getFgColor()
+          if (idx < 16) fg = ansiColors[idx]
+        } else if (cell.isFgRGB()) {
+          const color = cell.getFgColor()
+          fg = `#${((color >> 16) & 0xff).toString(16).padStart(2, '0')}${((color >> 8) & 0xff).toString(16).padStart(2, '0')}${(color & 0xff).toString(16).padStart(2, '0')}`
+        }
+
+        ctx.fillStyle = fg
+        ctx.fillText(chars, padding + col * charWidth, y)
+      }
+    }
+
+    try {
+      return canvas.toDataURL('image/png')
+    } catch {
+      return undefined
+    }
+  }, [])
+
   const focusTerminal = useCallback(() => {
     if (!activeRef.current) return
     window.requestAnimationFrame(() => {
@@ -110,8 +183,13 @@ export function TerminalContent({
 
   const detachTerminal = useCallback(() => {
     const scrollback = serializeBuffer()
-    if (scrollback) {
-      onUpdateConfigRef.current({ ...configRef.current, lastScrollback: scrollback })
+    const screenshot = captureScreenshot()
+    if (scrollback || screenshot) {
+      onUpdateConfigRef.current({
+        ...configRef.current,
+        ...(scrollback ? { lastScrollback: scrollback } : {}),
+        ...(screenshot ? { lastScreenshot: screenshot } : {})
+      })
     }
     if (cleanupListenersRef.current) {
       cleanupListenersRef.current()
@@ -126,7 +204,7 @@ export function TerminalContent({
       termRef.current = null
     }
     fitRef.current = null
-  }, [serializeBuffer])
+  }, [captureScreenshot, serializeBuffer])
 
   const handleRestartTerminal = useCallback(async () => {
     setTermContextMenu(null)
@@ -270,7 +348,7 @@ export function TerminalContent({
               pendingSubmittedCommandRef.current = false
               const agentKind = detectTerminalAgentKind(cfg.command)
               setRunningState(
-                isTerminalBusyFromTail(tailRef.current) &&
+                isTerminalBusyFromTail(tailRef.current, agentKind) &&
                 !isLikelyAgentWaitingForInput(tailRef.current, agentKind)
               )
               fitTerminal()
@@ -324,7 +402,8 @@ export function TerminalContent({
             const isAgentWaitingForInput = isLikelyAgentWaitingForInput(tailRef.current, agentKind)
             const hasMeaningfulOutput = /\S/.test(normalizedChunk)
 
-            if (hasAttentionSignal || isPrompt || isInputRequest || isAgentWaitingForInput) {
+            const shouldStop = hasAttentionSignal || isInputRequest || isAgentWaitingForInput || (!agentKind && isPrompt)
+            if (shouldStop) {
               pendingSubmittedCommandRef.current = false
               setRunningState(false)
               return

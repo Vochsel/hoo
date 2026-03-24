@@ -9,6 +9,7 @@ interface BrowserTabContentProps {
   onTabUpdate: (id: string, data: Record<string, unknown>) => Promise<unknown>
   active?: boolean
   reloadNonce?: number
+  onWebviewStateChange?: (tabId: string, webview: Electron.WebviewTag | null) => void
 }
 
 const TAG = '[browser-tab-content]'
@@ -19,7 +20,8 @@ export function BrowserTabContent({
   tab,
   onTabUpdate,
   active = true,
-  reloadNonce = 0
+  reloadNonce = 0,
+  onWebviewStateChange
 }: BrowserTabContentProps): React.ReactElement {
   const webviewRef = useRef<Electron.WebviewTag | null>(null)
   const addressBarRef = useRef<AddressBarHandle>(null)
@@ -87,8 +89,8 @@ export function BrowserTabContent({
     }
   }, [])
 
-  const captureScreenshot = useCallback(async (): Promise<void> => {
-    const wv = webviewRef.current
+  const captureScreenshot = useCallback(async (targetWebview?: Electron.WebviewTag | null): Promise<void> => {
+    const wv = targetWebview ?? webviewRef.current
     const tabId = tabIdRef.current
     if (!wv || !tabId) return
     try {
@@ -103,6 +105,14 @@ export function BrowserTabContent({
   const setupWebview = useCallback(
     (el: Electron.WebviewTag | null) => {
       if (!el) {
+        const currentTabId = tabIdRef.current
+        const currentWebview = webviewRef.current
+        if (currentWebview) {
+          void captureScreenshot(currentWebview)
+        }
+        if (currentTabId) {
+          onWebviewStateChange?.(currentTabId, null)
+        }
         publishLiveWebContents(null)
         webContentsIdRef.current = null
         webviewCleanupRef.current?.()
@@ -120,6 +130,7 @@ export function BrowserTabContent({
       } catch {}
       webviewCleanupRef.current?.()
       webviewRef.current = el
+      onWebviewStateChange?.(tab.id, el)
 
       const handleDidNavigate = (e: Electron.DidNavigateEvent): void => {
         setCurrentUrl(e.url)
@@ -200,7 +211,7 @@ export function BrowserTabContent({
         el.removeEventListener('dom-ready', handleDomReady)
       }
     },
-    [captureScreenshot, persistTabUpdate, publishLiveWebContents]
+    [captureScreenshot, onWebviewStateChange, persistTabUpdate, publishLiveWebContents, tab.id]
   )
 
   const handleNavigate = useCallback((url: string) => {

@@ -17,7 +17,8 @@ import {
   type NodeChange,
   type NodePositionChange,
   type EdgeChange,
-  type Connection
+  type Connection,
+  type Viewport
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
@@ -85,10 +86,24 @@ const PREVIEW_LOAD_TIMEOUT_MS = 12_000
 const NETWORK_IDLE_POLL_MS = 300
 const NETWORK_IDLE_WAIT_MS = 600
 const NETWORK_IDLE_TIMEOUT_MS = 15_000
+const MIN_BROWSER_NODE_WIDTH = 420
+const MIN_BROWSER_NODE_HEIGHT = 320
+const MIN_TERMINAL_NODE_WIDTH = 420
+const MIN_TERMINAL_NODE_HEIGHT = 280
+const DEFAULT_BROWSER_NODE_WIDTH = 1024
+const DEFAULT_BROWSER_NODE_HEIGHT = 768
+const DEFAULT_TERMINAL_NODE_WIDTH = 920
+const DEFAULT_TERMINAL_NODE_HEIGHT = 560
 const INTERACTIVE_SELECTOR =
   'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
 type FlowInteractionMode = 'design' | 'map'
+type InteractiveCanvasNodeType = 'browserTab' | 'terminal'
+
+interface CanvasNodeSize {
+  width: number
+  height: number
+}
 
 interface TerminalNotificationState {
   tail: string
@@ -109,6 +124,45 @@ function preview(value: string | undefined, max = 160): string {
   const compact = value.replace(/\s+/g, ' ').trim()
   if (compact.length <= max) return compact
   return `${compact.slice(0, max)}...`
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
+function toFiniteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function resolveDefaultBrowserNodeSize(viewport: CanvasNodeSize): CanvasNodeSize {
+  if (viewport.width <= 0 || viewport.height <= 0) {
+    return { width: DEFAULT_BROWSER_NODE_WIDTH, height: DEFAULT_BROWSER_NODE_HEIGHT }
+  }
+  return {
+    width: clamp(viewport.width - 80, MIN_BROWSER_NODE_WIDTH, DEFAULT_BROWSER_NODE_WIDTH),
+    height: clamp(viewport.height - 80, MIN_BROWSER_NODE_HEIGHT, DEFAULT_BROWSER_NODE_HEIGHT)
+  }
+}
+
+function resolveDefaultTerminalNodeSize(viewport: CanvasNodeSize): CanvasNodeSize {
+  if (viewport.width <= 0 || viewport.height <= 0) {
+    return { width: DEFAULT_TERMINAL_NODE_WIDTH, height: DEFAULT_TERMINAL_NODE_HEIGHT }
+  }
+  return {
+    width: clamp(viewport.width - 120, MIN_TERMINAL_NODE_WIDTH, DEFAULT_TERMINAL_NODE_WIDTH),
+    height: clamp(viewport.height - 120, MIN_TERMINAL_NODE_HEIGHT, DEFAULT_TERMINAL_NODE_HEIGHT)
+  }
+}
+
+function centerNodeOnPosition(x: number, y: number, size: CanvasNodeSize): { x: number; y: number } {
+  return {
+    x: Math.round(x - size.width / 2),
+    y: Math.round(y - size.height / 2)
+  }
+}
+
+function isInteractiveCanvasNodeType(nodeType: string | null | undefined): nodeType is InteractiveCanvasNodeType {
+  return nodeType === 'browserTab' || nodeType === 'terminal'
 }
 
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -376,6 +430,8 @@ function BrowserPageInner(): React.ReactElement {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [dialogInitialChatOpen, setDialogInitialChatOpen] = useState(false)
   const [terminalDialogNodeId, setTerminalDialogNodeId] = useState<string | null>(null)
+  const [canvasInteractiveNodeId, setCanvasInteractiveNodeId] = useState<string | null>(null)
+  const [flowViewportSize, setFlowViewportSize] = useState<CanvasNodeSize>({ width: 0, height: 0 })
   const pendingSelectNonceRef = useRef(0)
   const [pendingTabSelect, setPendingTabSelect] = useState<{ boardId: string | null; itemId: string; nonce: number } | null>(null)
   const pendingTabSelectRef = useRef(pendingTabSelect)
@@ -421,6 +477,7 @@ function BrowserPageInner(): React.ReactElement {
   const [newWorkspaceDialogOpen, setNewWorkspaceDialogOpen] = useState(false)
   const [notifiedItemIds, setNotifiedItemIds] = useState<Set<string>>(new Set())
   const [runningTerminalIds, setRunningTerminalIds] = useState<Set<string>>(new Set())
+  const [canvasResizingNodeIds, setCanvasResizingNodeIds] = useState<Set<string>>(new Set())
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSectionId>('appearance')
@@ -442,9 +499,12 @@ function BrowserPageInner(): React.ReactElement {
   const lastMouseClientPositionRef = useRef<{ x: number; y: number } | null>(null)
   const triggerWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
   const dialogWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
+  const canvasWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
   const previewWebviews = useRef<Map<string, Electron.WebviewTag>>(new Map())
   const previewHydrationInFlightRef = useRef<Set<string>>(new Set())
   const pendingPositionOverrides = useRef<Map<string, { x: number; y: number }>>(new Map())
+  const pendingSizeOverrides = useRef<Map<string, CanvasNodeSize>>(new Map())
+  const interactiveViewportRestoreRef = useRef<Viewport | null>(null)
   const scheduleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const scheduleRunningRef = useRef(false)
   const scheduleLastFiredMinuteRef = useRef<Map<string, string>>(new Map())
@@ -479,13 +539,76 @@ function BrowserPageInner(): React.ReactElement {
   }, [terminalNodes])
   const fileNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'file'), [gNodes])
   const outputNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'output'), [gNodes])
+  const defaultBrowserNodeSize = useMemo(
+    () => resolveDefaultBrowserNodeSize(flowViewportSize),
+    [flowViewportSize]
+  )
+  const defaultTerminalNodeSize = useMemo(
+    () => resolveDefaultTerminalNodeSize(flowViewportSize),
+    [flowViewportSize]
+  )
+
+  const getBrowserNodeSize = useCallback(
+    (tab?: Pick<BrowserTab, 'id' | 'flowWidth' | 'flowHeight'> | null): CanvasNodeSize => {
+      const pending = tab ? pendingSizeOverrides.current.get(tab.id) : undefined
+      return {
+        width: Math.round(pending?.width ?? toFiniteNumber(tab?.flowWidth) ?? defaultBrowserNodeSize.width),
+        height: Math.round(pending?.height ?? toFiniteNumber(tab?.flowHeight) ?? defaultBrowserNodeSize.height)
+      }
+    },
+    [defaultBrowserNodeSize]
+  )
+
+  const getTerminalNodeSize = useCallback(
+    (node?: Pick<GraphNode, 'id' | 'flowWidth' | 'flowHeight'> | null): CanvasNodeSize => {
+      const pending = node ? pendingSizeOverrides.current.get(node.id) : undefined
+      return {
+        width: Math.round(pending?.width ?? toFiniteNumber(node?.flowWidth) ?? defaultTerminalNodeSize.width),
+        height: Math.round(pending?.height ?? toFiniteNumber(node?.flowHeight) ?? defaultTerminalNodeSize.height)
+      }
+    },
+    [defaultTerminalNodeSize]
+  )
+
+  const setCanvasNodeResizing = useCallback((nodeId: string, isResizing: boolean): void => {
+    setCanvasResizingNodeIds((prev) => {
+      const next = new Set(prev)
+      if (isResizing) {
+        next.add(nodeId)
+      } else {
+        next.delete(nodeId)
+      }
+      return next
+    })
+  }, [])
+
+  const exitCanvasInteractiveNode = useCallback(
+    (options?: { restoreViewport?: boolean; duration?: number }): void => {
+      if (!canvasInteractiveNodeId) return
+      const shouldRestoreViewport = options?.restoreViewport ?? true
+      const duration = options?.duration ?? 180
+      setCanvasInteractiveNodeId(null)
+      if (shouldRestoreViewport && interactiveViewportRestoreRef.current) {
+        void reactFlowInstance.setViewport(interactiveViewportRestoreRef.current, { duration })
+      }
+      interactiveViewportRestoreRef.current = null
+    },
+    [canvasInteractiveNodeId, reactFlowInstance]
+  )
 
   // -- Notification tracking --
   // Keep activeItemIdRef in sync
   useEffect(() => { activeItemIdRef.current = activeItemId }, [activeItemId])
   useEffect(() => { runningTerminalIdsRef.current = runningTerminalIds }, [runningTerminalIds])
 
+  // Track agent terminals confirmed idle (via BEL or pattern match) so that
+  // subsequent TUI refresh output doesn't flip the spinner back to running.
+  const confirmedIdleTerminalIdsRef = useRef(new Set<string>())
+
   const setTerminalRunning = useCallback((nodeId: string, isRunning: boolean): void => {
+    if (isRunning) {
+      confirmedIdleTerminalIdsRef.current.delete(nodeId)
+    }
     setRunningTerminalIds((prev) => {
       const alreadyRunning = prev.has(nodeId)
       if (alreadyRunning === isRunning) return prev
@@ -550,14 +673,15 @@ function BrowserPageInner(): React.ReactElement {
       const isShellPrompt = isLikelyShellPromptLine(lastLine)
       const isInputRequest = isLikelyTerminalInputRequest(lastLine)
       const isAgentWaitingForInput = isLikelyAgentWaitingForInput(nextTail, agentKind)
-      const shouldStopRunning = hasAttentionSignal || isShellPrompt || isInputRequest || isAgentWaitingForInput
+      const shouldStopRunning = hasAttentionSignal || isInputRequest || isAgentWaitingForInput || (!agentKind && isShellPrompt)
       const shouldNotifyBoundary = isShellPrompt || isInputRequest || isAgentWaitingForInput
       const hasMeaningfulOutput = /\S/.test(normalizedChunk)
       const isActive = nodeId === activeItemIdRef.current
 
       if (shouldStopRunning) {
+        if (agentKind) confirmedIdleTerminalIdsRef.current.add(nodeId)
         setTerminalRunning(nodeId, false)
-      } else if (!isActive && hasMeaningfulOutput) {
+      } else if (!isActive && hasMeaningfulOutput && !confirmedIdleTerminalIdsRef.current.has(nodeId)) {
         setTerminalRunning(nodeId, true)
       }
 
@@ -888,15 +1012,49 @@ function BrowserPageInner(): React.ReactElement {
     setRunningTabs(new Set())
     setPreviewingTabs(new Set())
     dialogWebviews.current.clear()
+    canvasWebviews.current.clear()
     setMonitorNodeId(null)
     setSelectedTab(null)
     setDialogOpen(false)
     setTerminalDialogNodeId(null)
+    interactiveViewportRestoreRef.current = null
+    setCanvasInteractiveNodeId(null)
+    setCanvasResizingNodeIds(new Set())
     setContextMenu(null)
     setBoardItemMenu(null)
     setBoardContextMenu(null)
     setFolderContextMenu(null)
   }, [activeBoardId])
+
+  useEffect(() => {
+    if (boardView !== 'whiteboard' || isSettingsRoute) {
+      interactiveViewportRestoreRef.current = null
+      setCanvasInteractiveNodeId(null)
+      setCanvasResizingNodeIds(new Set())
+    }
+  }, [boardView, isSettingsRoute])
+
+  useEffect(() => {
+    if (boardView !== 'whiteboard' || isSettingsRoute) {
+      setFlowViewportSize({ width: 0, height: 0 })
+      return
+    }
+
+    const container = flowContainerRef.current
+    if (!container) return
+
+    const updateViewportSize = (): void => {
+      setFlowViewportSize({
+        width: container.clientWidth,
+        height: container.clientHeight
+      })
+    }
+
+    updateViewportSize()
+    const observer = new ResizeObserver(updateViewportSize)
+    observer.observe(container)
+    return (): void => observer.disconnect()
+  }, [boardView, isSettingsRoute])
 
   useEffect(() => {
     if (!workspace) return
@@ -1309,6 +1467,100 @@ function BrowserPageInner(): React.ReactElement {
     }
   }, [])
 
+  const handleCanvasWebviewStateChange = useCallback((tabId: string, webview: Electron.WebviewTag | null) => {
+    if (webview) {
+      canvasWebviews.current.set(tabId, webview)
+    } else {
+      canvasWebviews.current.delete(tabId)
+    }
+  }, [])
+
+  const focusCanvasInteractiveNode = useCallback(
+    (nodeId: string): void => {
+      const node = reactFlowInstance.getNodes().find((entry) => entry.id === nodeId)
+      if (canvasInteractiveNodeId == null) {
+        interactiveViewportRestoreRef.current = reactFlowInstance.getViewport()
+      }
+      setCanvasInteractiveNodeId(nodeId)
+      if (!node) return
+
+      const style = (node.style ?? {}) as Record<string, unknown>
+      const width =
+        toFiniteNumber(node.width)
+        ?? toFiniteNumber(style.width)
+        ?? (node.type === 'terminal' ? defaultTerminalNodeSize.width : defaultBrowserNodeSize.width)
+      const height =
+        toFiniteNumber(node.height)
+        ?? toFiniteNumber(style.height)
+        ?? (node.type === 'terminal' ? defaultTerminalNodeSize.height : defaultBrowserNodeSize.height)
+
+      void reactFlowInstance.setCenter(
+        node.position.x + width / 2,
+        node.position.y + height / 2,
+        { zoom: 1, duration: 180 }
+      )
+    },
+    [canvasInteractiveNodeId, defaultBrowserNodeSize.height, defaultBrowserNodeSize.width, defaultTerminalNodeSize.height, defaultTerminalNodeSize.width, reactFlowInstance]
+  )
+
+  const updateCanvasNodeSize = useCallback(
+    (nodeId: string, width: number, height: number): void => {
+      reactFlowInstance.setNodes((currentNodes) =>
+        currentNodes.map((node) =>
+          node.id === nodeId
+            ? {
+                ...node,
+                style: {
+                  ...(node.style ?? {}),
+                  width,
+                  height
+                }
+              }
+            : node
+        )
+      )
+    },
+    [reactFlowInstance]
+  )
+
+  const handleResizeBrowserNode = useCallback(
+    (tabId: string, width: number, height: number): void => {
+      const nextSize = { width: Math.round(width), height: Math.round(height) }
+      pendingSizeOverrides.current.set(tabId, nextSize)
+      updateCanvasNodeSize(tabId, nextSize.width, nextSize.height)
+      void updateTab(tabId, {
+        flowWidth: nextSize.width,
+        flowHeight: nextSize.height
+      })
+        .then(() => {
+          pendingSizeOverrides.current.delete(tabId)
+        })
+        .catch((error) => {
+          console.error(`${FLOW_TAG} failed to persist browser node size id=${tabId}:`, error)
+        })
+    },
+    [updateCanvasNodeSize, updateTab]
+  )
+
+  const handleResizeGraphNode = useCallback(
+    (nodeId: string, width: number, height: number): void => {
+      const nextSize = { width: Math.round(width), height: Math.round(height) }
+      pendingSizeOverrides.current.set(nodeId, nextSize)
+      updateCanvasNodeSize(nodeId, nextSize.width, nextSize.height)
+      void updateNode(nodeId, {
+        flowWidth: nextSize.width,
+        flowHeight: nextSize.height
+      })
+        .then(() => {
+          pendingSizeOverrides.current.delete(nodeId)
+        })
+        .catch((error) => {
+          console.error(`${FLOW_TAG} failed to persist graph node size id=${nodeId}:`, error)
+        })
+    },
+    [updateCanvasNodeSize, updateNode]
+  )
+
   const executeBrowserTab = useCallback(
     async (tabNodeId: string, inputData?: string, runId?: string): Promise<string | undefined> => {
       const runLabel = runId ?? `standalone-${Date.now().toString(36)}`
@@ -1322,13 +1574,15 @@ function BrowserPageInner(): React.ReactElement {
       const startTs = Date.now()
       setNodeRuntimeStatus(tabNodeId, 'Browser: preparing webview', true)
       const dialogWebview = dialogWebviews.current.get(tabNodeId)
+      const canvasWebview = canvasWebviews.current.get(tabNodeId)
       const usingLiveDialogWebview = Boolean(dialogWebview)
-      if (!usingLiveDialogWebview) {
+      const usingLiveCanvasWebview = !usingLiveDialogWebview && Boolean(canvasWebview)
+      if (!usingLiveDialogWebview && !usingLiveCanvasWebview) {
         // Mark tab as running so the hidden execution webview mounts.
         setRunningTabs((prev) => new Set(prev).add(tabNodeId))
       }
       console.log(
-        `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} start url=${tab.url} inputLen=${inputData?.length ?? 0} inputPreview="${preview(inputData)}" source=${usingLiveDialogWebview ? 'dialog' : 'hidden'}`
+        `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} start url=${tab.url} inputLen=${inputData?.length ?? 0} inputPreview="${preview(inputData)}" source=${usingLiveDialogWebview ? 'dialog' : usingLiveCanvasWebview ? 'canvas' : 'hidden'}`
       )
 
       try {
@@ -1336,9 +1590,9 @@ function BrowserPageInner(): React.ReactElement {
         // the exact same in-memory page/session state the user sees.
         const webviewWaitStart = Date.now()
         let waitAttempts = 0
-        let webview = dialogWebview ?? triggerWebviews.current.get(tabNodeId)
+        let webview = dialogWebview ?? canvasWebview ?? triggerWebviews.current.get(tabNodeId)
 
-        if (!webview && !usingLiveDialogWebview) {
+        if (!webview && !usingLiveDialogWebview && !usingLiveCanvasWebview) {
           // Wait for React to render the hidden webview
           setNodeRuntimeStatus(tabNodeId, 'Browser: waiting for hidden webview', true)
           await new Promise<void>((resolve) => {
@@ -1357,7 +1611,7 @@ function BrowserPageInner(): React.ReactElement {
           webview = triggerWebviews.current.get(tabNodeId)
         }
         console.log(
-          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webviewLookup waitMs=${Date.now() - webviewWaitStart} attempts=${waitAttempts} source=${usingLiveDialogWebview ? 'dialog' : 'hidden'}`
+          `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} webviewLookup waitMs=${Date.now() - webviewWaitStart} attempts=${waitAttempts} source=${usingLiveDialogWebview ? 'dialog' : usingLiveCanvasWebview ? 'canvas' : 'hidden'}`
         )
 
         if (!webview) {
@@ -1373,7 +1627,7 @@ function BrowserPageInner(): React.ReactElement {
         // Hidden webviews still navigate to the persisted tab URL before execution.
         const currentWebviewUrl = webview.getURL()
         const shouldLoadTabUrl =
-          !usingLiveDialogWebview ||
+          (!usingLiveDialogWebview && !usingLiveCanvasWebview) ||
           !currentWebviewUrl ||
           currentWebviewUrl === 'about:blank'
 
@@ -1399,9 +1653,9 @@ function BrowserPageInner(): React.ReactElement {
             `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} load completed ms=${Date.now() - loadStart}`
           )
         } else {
-          setNodeRuntimeStatus(tabNodeId, 'Browser: using live dialog session', true)
+          setNodeRuntimeStatus(tabNodeId, 'Browser: using live session', true)
           console.log(
-            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} reusing dialog webview currentUrl=${currentWebviewUrl}`
+            `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} reusing live webview currentUrl=${currentWebviewUrl} source=${usingLiveDialogWebview ? 'dialog' : 'canvas'}`
           )
         }
 
@@ -1409,7 +1663,7 @@ function BrowserPageInner(): React.ReactElement {
         // poll until no new resources have started/completed for a quiet window.
         setNodeRuntimeStatus(tabNodeId, 'Browser: waiting for page settle', true)
         const networkIdleStart = Date.now()
-        if (usingLiveDialogWebview) {
+        if (usingLiveDialogWebview || usingLiveCanvasWebview) {
           // Never monkeypatch fetch/XHR on the user's visible page.
           await new Promise((r) => setTimeout(r, 700))
         } else {
@@ -1700,7 +1954,7 @@ function BrowserPageInner(): React.ReactElement {
         console.log(
           `${BROWSER_EXEC_TAG} run=${runLabel} tab=${tabNodeId} complete totalMs=${Date.now() - startTs}`
         )
-        if (!usingLiveDialogWebview) {
+        if (!usingLiveDialogWebview && !usingLiveCanvasWebview) {
           setRunningTabs((prev) => {
             const next = new Set(prev)
             next.delete(tabNodeId)
@@ -1980,9 +2234,12 @@ function BrowserPageInner(): React.ReactElement {
 
   const handleClose = useCallback(
     async (id: string) => {
+      if (canvasInteractiveNodeId === id) {
+        exitCanvasInteractiveNode({ restoreViewport: false })
+      }
       await deleteTab(id)
     },
-    [deleteTab]
+    [canvasInteractiveNodeId, deleteTab, exitCanvasInteractiveNode]
   )
 
   // ─── Monitor firing ────────────────────────────────────────────────────
@@ -2266,21 +2523,44 @@ function BrowserPageInner(): React.ReactElement {
   const graphNodeIdSet = useMemo(() => new Set(gNodes.map((node) => node.id)), [gNodes])
 
   const initialNodes: Node[] = useMemo(() => {
-    const tabNodes: Node[] = tabs.map((tab) => ({
-      id: tab.id,
-      type: 'browserTab',
-      position: pendingPositionOverrides.current.get(tab.id) ?? { x: tab.flowX, y: tab.flowY },
-      data: {
-        title: tab.title,
-        url: tab.url,
-        favicon: tab.favicon,
-        screenshot: tab.screenshot,
-        monitors: parseMonitors(tab),
-        isRunning: runningTabs.has(tab.id) || previewingTabs.has(tab.id),
-        hasNotification: notifiedItemIds.has(tab.id),
-        onClose: handleClose
-      } satisfies BrowserTabNodeData
-    }))
+    const tabNodes: Node[] = tabs.map((tab) => {
+      const size = getBrowserNodeSize(tab)
+      return {
+        id: tab.id,
+        type: 'browserTab',
+        position: pendingPositionOverrides.current.get(tab.id) ?? { x: tab.flowX, y: tab.flowY },
+        style: {
+          width: size.width,
+          height: size.height
+        },
+        dragHandle: '.canvas-node-drag-handle',
+        data: {
+          tab,
+          title: tab.title,
+          url: tab.url,
+          favicon: tab.favicon,
+          screenshot: tab.screenshot,
+          monitors: parseMonitors(tab),
+          isRunning: runningTabs.has(tab.id) || previewingTabs.has(tab.id),
+          hasNotification: notifiedItemIds.has(tab.id),
+          isInteractive: canvasInteractiveNodeId === tab.id,
+          isResizing: canvasResizingNodeIds.has(tab.id),
+          onClose: handleClose,
+          onOpen: (tabId: string) => {
+            exitCanvasInteractiveNode({ restoreViewport: false })
+            const nextTab = tabs.find((entry) => entry.id === tabId)
+            if (!nextTab) return
+            setSelectedTab(nextTab)
+            setDialogInitialChatOpen(false)
+            setDialogOpen(true)
+          },
+          onResize: handleResizeBrowserNode,
+          onResizeStateChange: setCanvasNodeResizing,
+          onTabUpdate: updateTab,
+          onWebviewStateChange: handleCanvasWebviewStateChange
+        } satisfies BrowserTabNodeData
+      }
+    })
 
     const graphNodeList: Node[] = gNodes.map((gn) => {
       const config = parseNodeConfig(gn.config)
@@ -2387,13 +2667,35 @@ function BrowserPageInner(): React.ReactElement {
         }
       }
       if (gn.nodeType === 'terminal') {
+        const size = getTerminalNodeSize(gn)
         return {
           ...base,
+          style: {
+            width: size.width,
+            height: size.height
+          },
+          dragHandle: '.canvas-node-drag-handle',
           data: {
+            nodeId: gn.id,
             label: gn.label || 'Terminal',
             config,
             isRunning: runningTerminalIds.has(gn.id),
-            hasNotification: notifiedItemIds.has(gn.id)
+            hasNotification: notifiedItemIds.has(gn.id),
+            isInteractive: canvasInteractiveNodeId === gn.id,
+            isResizing: canvasResizingNodeIds.has(gn.id),
+            onOpen: (nodeId: string) => {
+              exitCanvasInteractiveNode({ restoreViewport: false })
+              setTerminalDialogNodeId(nodeId)
+            },
+            onResize: handleResizeGraphNode,
+            onResizeStateChange: setCanvasNodeResizing,
+            onUpdateConfig: (nextCfg: TerminalNodeConfig) => {
+              void updateNode(gn.id, { config: JSON.stringify(nextCfg) })
+            },
+            onRunningChange: (isRunning: boolean) => {
+              setTerminalRunning(gn.id, isRunning)
+            },
+            workspaceRootDir: boardRootDir || workspace?.rootDir
           }
         }
       }
@@ -2414,7 +2716,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} duplicate node ids detected: ${Array.from(duplicateIds).join(', ')}`)
     }
     return mergedNodes
-  }, [tabs, gNodes, runningTabs, previewingTabs, notifiedItemIds, runningTerminalIds, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile])
+  }, [tabs, gNodes, runningTabs, previewingTabs, notifiedItemIds, runningTerminalIds, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile, getBrowserNodeSize, canvasInteractiveNodeId, canvasResizingNodeIds, exitCanvasInteractiveNode, handleResizeBrowserNode, setCanvasNodeResizing, updateTab, handleCanvasWebviewStateChange, getTerminalNodeSize, handleResizeGraphNode, updateNode, setTerminalRunning, boardRootDir, workspace?.rootDir])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
@@ -2444,6 +2746,10 @@ function BrowserPageInner(): React.ReactElement {
           ...nextNode,
           // Preserve in-flight local positioning and interaction state.
           position: prevNode.position ?? nextNode.position,
+          style: {
+            ...(prevNode.style ?? {}),
+            ...(nextNode.style ?? {})
+          },
           data: mergedData
         }
       })
@@ -2593,6 +2899,7 @@ function BrowserPageInner(): React.ReactElement {
       // Open dialog for browser tabs
       const tab = tabs.find((t) => t.id === node.id)
       if (tab) {
+        exitCanvasInteractiveNode({ restoreViewport: false })
         setSelectedTab(tab)
         setDialogInitialChatOpen(false)
         setDialogOpen(true)
@@ -2600,6 +2907,7 @@ function BrowserPageInner(): React.ReactElement {
       }
       // Open interactive terminal for terminal nodes
       if (node.type === 'terminal') {
+        exitCanvasInteractiveNode({ restoreViewport: false })
         setTerminalDialogNodeId(node.id)
       }
       // Open file preview in tabs view
@@ -2608,19 +2916,51 @@ function BrowserPageInner(): React.ReactElement {
         requestTabSelect(node.id)
       }
     },
-    [requestTabSelect, tabs]
+    [exitCanvasInteractiveNode, requestTabSelect, tabs]
+  )
+
+  const handleWhiteboardNodeClick = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      if (isInteractiveCanvasNodeType(node.type)) {
+        focusCanvasInteractiveNode(node.id)
+        return
+      }
+      if (nodeOpenClick === 'single') {
+        handleNodeDoubleClick(event, node)
+      }
+    },
+    [focusCanvasInteractiveNode, handleNodeDoubleClick, nodeOpenClick]
+  )
+
+  const handleWhiteboardNodeDoubleClick = useCallback(
+    (event: React.MouseEvent, node: Node) => {
+      if (isInteractiveCanvasNodeType(node.type)) {
+        handleNodeDoubleClick(event, node)
+        return
+      }
+      if (nodeOpenClick === 'double') {
+        handleNodeDoubleClick(event, node)
+      }
+    },
+    [handleNodeDoubleClick, nodeOpenClick]
   )
 
   const handleAddTab = useCallback(
     async (flowX?: number, flowY?: number) => {
       if (!activeBoardId) return undefined
-      // Center the node on the target position (node origin is top-left)
-      const cx = (flowX ?? 100 + Math.random() * 200) - 120
-      const cy = (flowY ?? 100 + Math.random() * 200) - 84
-      const tab = await createTab({ flowX: cx, flowY: cy })
+      const size = defaultBrowserNodeSize
+      const targetX = flowX ?? 100 + Math.random() * 200
+      const targetY = flowY ?? 100 + Math.random() * 200
+      const position = centerNodeOnPosition(targetX, targetY, size)
+      const tab = await createTab({
+        flowX: position.x,
+        flowY: position.y,
+        flowWidth: size.width,
+        flowHeight: size.height
+      })
       return tab
     },
-    [createTab, activeBoardId]
+    [createTab, activeBoardId, defaultBrowserNodeSize]
   )
 
   const handleAddAgent = useCallback(
@@ -2630,14 +2970,18 @@ function BrowserPageInner(): React.ReactElement {
         const agentId = getSetting('defaultAgent')
         const command = getAgentCommand(agentId, workspace?.rootDir, workspaceAgentCommandOverrides)
         const agentLabel = CLI_AGENTS.find((a) => a.id === agentId)?.label ?? 'Agent'
-        const cx = (flowX ?? 100 + Math.random() * 200) - 120
-        const cy = (flowY ?? 100 + Math.random() * 200) - 84
+        const size = defaultTerminalNodeSize
+        const targetX = flowX ?? 100 + Math.random() * 200
+        const targetY = flowY ?? 100 + Math.random() * 200
+        const position = centerNodeOnPosition(targetX, targetY, size)
         const node = await createNode({
           nodeType: 'terminal',
           label: agentLabel,
           config: JSON.stringify({ command }),
-          flowX: cx,
-          flowY: cy
+          flowX: position.x,
+          flowY: position.y,
+          flowWidth: size.width,
+          flowHeight: size.height
         })
         return node.id
       } catch (error) {
@@ -2646,7 +2990,7 @@ function BrowserPageInner(): React.ReactElement {
         return undefined
       }
     },
-    [activeBoardId, createNode, getSetting, workspace?.rootDir, workspaceAgentCommandOverrides]
+    [activeBoardId, createNode, defaultTerminalNodeSize, getSetting, workspace?.rootDir, workspaceAgentCommandOverrides]
   )
 
   const handleAddFileTab = useCallback(
@@ -2698,10 +3042,11 @@ function BrowserPageInner(): React.ReactElement {
   )
 
   const openBrowserDialogForTab = useCallback((tab: BrowserTab, initialChatOpen = false) => {
+    exitCanvasInteractiveNode({ restoreViewport: false })
     setSelectedTab(tab)
     setDialogInitialChatOpen(initialChatOpen)
     setDialogOpen(true)
-  }, [])
+  }, [exitCanvasInteractiveNode])
 
   const queueBrowserTabAction = useCallback(
     (boardId: string, tabId: string, action: PendingBrowserActionKind) => {
@@ -2924,11 +3269,15 @@ function BrowserPageInner(): React.ReactElement {
       }
 
       const flowPosition = reactFlowInstance.screenToFlowPosition(clientPosition)
+      const size = defaultBrowserNodeSize
+      const position = centerNodeOnPosition(flowPosition.x, flowPosition.y, size)
       event.preventDefault()
       void createTab({
         url: normalizedUrl,
-        flowX: flowPosition.x,
-        flowY: flowPosition.y
+        flowX: position.x,
+        flowY: position.y,
+        flowWidth: size.width,
+        flowHeight: size.height
       })
         .then((createdTab) => hydratePastedTabPreview(createdTab.id, normalizedUrl))
         .catch((error) => {
@@ -2940,7 +3289,7 @@ function BrowserPageInner(): React.ReactElement {
     return (): void => {
       window.removeEventListener('paste', onPaste)
     }
-  }, [createTab, hydratePastedTabPreview, reactFlowInstance])
+  }, [createTab, defaultBrowserNodeSize, hydratePastedTabPreview, reactFlowInstance])
 
   const handleDialogClose = useCallback(
     (open: boolean) => {
@@ -2984,6 +3333,7 @@ function BrowserPageInner(): React.ReactElement {
   const handlePaneContextMenu = useCallback(
     (event: MouseEvent | React.MouseEvent<Element, MouseEvent>) => {
       event.preventDefault()
+      exitCanvasInteractiveNode()
       setBoardItemMenu(null)
       setBoardContextMenu(null)
       setFolderContextMenu(null)
@@ -2998,8 +3348,12 @@ function BrowserPageInner(): React.ReactElement {
         flowPosition
       })
     },
-    [reactFlowInstance]
+    [exitCanvasInteractiveNode, reactFlowInstance]
   )
+
+  const handlePaneClick = useCallback(() => {
+    exitCanvasInteractiveNode()
+  }, [exitCanvasInteractiveNode])
 
   const handleNodeContextMenu = useCallback(
     (event: React.MouseEvent, node: Node) => {
@@ -3215,8 +3569,9 @@ function BrowserPageInner(): React.ReactElement {
 
       const sourceTab = tabs.find((tab) => tab.id === sourceTabId)
       if (!sourceTab) return
-      const flowX = sourceTab.flowX + 280
-      const flowY = sourceTab.flowY + 20
+      const nextSize = getBrowserNodeSize(sourceTab)
+      const flowX = sourceTab.flowX + nextSize.width + 48
+      const flowY = sourceTab.flowY + 24
       const preferredOrderIds = boardItemOrderMap.get(activeBoardId) ?? []
       const availableItemIds = new Set([
         BOARD_FILESYSTEM_TAB_ID,
@@ -3247,7 +3602,7 @@ function BrowserPageInner(): React.ReactElement {
         currentOrder.push(node.id)
       }
 
-      void createTab({ url, flowX, flowY })
+      void createTab({ url, flowX, flowY, flowWidth: nextSize.width, flowHeight: nextSize.height })
         .then((tab) => {
           const sourceIndex = currentOrder.indexOf(sourceTabId)
           const nextOrder =
@@ -3267,7 +3622,7 @@ function BrowserPageInner(): React.ReactElement {
           console.error(`${FLOW_TAG} failed to open link in new tab from source=${sourceTabId}:`, error)
         })
     })
-  }, [activeBoardId, boardItemOrderMap, createTab, fileNodes, requestTabSelect, saveBoardItemOrder, tabs, terminalNodes])
+  }, [activeBoardId, boardItemOrderMap, createTab, fileNodes, getBrowserNodeSize, requestTabSelect, saveBoardItemOrder, tabs, terminalNodes])
 
   const getSidebarBoardCollections = useCallback(
     (boardId: string): { tabs: BrowserTab[]; terminalNodes: GraphNode[]; fileNodes: GraphNode[] } => {
@@ -3506,17 +3861,32 @@ function BrowserPageInner(): React.ReactElement {
   const handleContextAddGraphNode = useCallback(
     async (nodeType: string, label: string, config?: Record<string, unknown>) => {
       if (contextMenu?.flowPosition) {
+        const defaultSize =
+          nodeType === 'terminal'
+            ? defaultTerminalNodeSize
+            : nodeType === 'browserTab'
+              ? defaultBrowserNodeSize
+              : null
+        const position = defaultSize
+          ? centerNodeOnPosition(contextMenu.flowPosition.x, contextMenu.flowPosition.y, defaultSize)
+          : contextMenu.flowPosition
         await createNode({
           nodeType,
           label,
           config: config ? JSON.stringify(config) : undefined,
-          flowX: contextMenu.flowPosition.x,
-          flowY: contextMenu.flowPosition.y
+          flowX: position.x,
+          flowY: position.y,
+          ...(defaultSize
+            ? {
+                flowWidth: defaultSize.width,
+                flowHeight: defaultSize.height
+              }
+            : {})
         })
       }
       setContextMenu(null)
     },
-    [contextMenu, createNode]
+    [contextMenu, createNode, defaultBrowserNodeSize, defaultTerminalNodeSize]
   )
 
   // Node context menu actions
@@ -3542,18 +3912,24 @@ function BrowserPageInner(): React.ReactElement {
     if (!contextMenu?.nodeId) return
     const tab = tabs.find((t) => t.id === contextMenu.nodeId)
     if (tab) {
+      const size = getBrowserNodeSize(tab)
       await createTab({
         title: tab.title,
         url: tab.url,
-        flowX: tab.flowX + 280,
-        flowY: tab.flowY + 20
+        flowX: tab.flowX + size.width + 48,
+        flowY: tab.flowY + 24,
+        flowWidth: size.width,
+        flowHeight: size.height
       })
     }
     setContextMenu(null)
-  }, [contextMenu, createTab, tabs])
+  }, [contextMenu, createTab, getBrowserNodeSize, tabs])
 
   const deleteGraphItemFromActiveBoard = useCallback(
     async (itemId: string, kind: 'graph' | 'terminal' | 'file') => {
+      if (canvasInteractiveNodeId === itemId) {
+        exitCanvasInteractiveNode({ restoreViewport: false })
+      }
       if (kind === 'terminal') {
         window.api.terminal.kill(`pty-${itemId}`).catch(() => {})
         setTerminalRunning(itemId, false)
@@ -3567,7 +3943,7 @@ function BrowserPageInner(): React.ReactElement {
       setEdges(filteredEdges)
       saveEdges(filteredEdges)
     },
-    [deleteNode, reactFlowInstance, saveEdges, setEdges, setTerminalRunning, terminalDialogNodeId]
+    [canvasInteractiveNodeId, deleteNode, exitCanvasInteractiveNode, reactFlowInstance, saveEdges, setEdges, setTerminalRunning, terminalDialogNodeId]
   )
 
   const getBrowserTabForBoard = useCallback(
@@ -3673,11 +4049,14 @@ function BrowserPageInner(): React.ReactElement {
       if (!sourceTab) return
 
       try {
+        const size = getBrowserNodeSize(sourceTab)
         const payload = {
           title: sourceTab.title,
           url: sourceTab.url,
-          flowX: sourceTab.flowX + 280,
-          flowY: sourceTab.flowY + 20
+          flowX: sourceTab.flowX + size.width + 48,
+          flowY: sourceTab.flowY + 24,
+          flowWidth: size.width,
+          flowHeight: size.height
         }
         const duplicatedTab = boardId === activeBoardId
           ? await createTab(payload)
@@ -3705,7 +4084,7 @@ function BrowserPageInner(): React.ReactElement {
         window.alert(`Failed to duplicate tab: ${message}`)
       }
     },
-    [activeBoardId, createTab, getBrowserTabForBoard, getCurrentBoardItemIds, saveBoardItemOrder, updateBoardTabsSidebar]
+    [activeBoardId, createTab, getBrowserNodeSize, getBrowserTabForBoard, getCurrentBoardItemIds, saveBoardItemOrder, updateBoardTabsSidebar]
   )
 
   const handleFileItemPickDifferentFile = useCallback(
@@ -4271,12 +4650,15 @@ function BrowserPageInner(): React.ReactElement {
     if (!activeBoardId) return
     try {
       const command = getAgentCommand(getSetting('defaultAgent'), workspace?.rootDir, workspaceAgentCommandOverrides)
+      const size = defaultTerminalNodeSize
       const node = await createNode({
         nodeType: 'terminal',
         label: 'Terminal',
         config: JSON.stringify({ command }),
         flowX: 0,
-        flowY: 0
+        flowY: 0,
+        flowWidth: size.width,
+        flowHeight: size.height
       })
       setTerminalDialogNodeId(node.id)
     } catch (error) {
@@ -4284,7 +4666,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} failed to create terminal:`, error)
       window.alert(`Failed to create terminal: ${message}`)
     }
-  }, [activeBoardId, createNode, getSetting, workspace?.rootDir, workspaceAgentCommandOverrides])
+  }, [activeBoardId, createNode, defaultTerminalNodeSize, getSetting, workspace?.rootDir, workspaceAgentCommandOverrides])
 
   const startInlineBoardEdit = useCallback((boardId: string, name: string) => {
     setEditingFolderId(null)
@@ -5081,8 +5463,9 @@ function BrowserPageInner(): React.ReactElement {
               onReconnect={handleReconnect}
               onConnectStart={handleConnectStart}
               onConnectEnd={handleConnectEnd}
-              onNodeClick={nodeOpenClick === 'single' ? handleNodeDoubleClick : undefined}
-              onNodeDoubleClick={nodeOpenClick === 'double' ? handleNodeDoubleClick : undefined}
+              onNodeClick={handleWhiteboardNodeClick}
+              onNodeDoubleClick={handleWhiteboardNodeDoubleClick}
+              onPaneClick={handlePaneClick}
               onPaneContextMenu={handlePaneContextMenu}
               onNodeContextMenu={handleNodeContextMenu}
               fitView
@@ -5170,12 +5553,15 @@ function BrowserPageInner(): React.ReactElement {
                   const agentId = getSetting('defaultAgent')
                   const command = getAgentCommand(agentId, boardRootDir || workspace?.rootDir, workspaceAgentCommandOverrides)
                   const agentLabel = CLI_AGENTS.find((a) => a.id === agentId)?.label ?? 'Agent'
+                  const size = defaultTerminalNodeSize
                   const node = await createNode({
                     nodeType: 'terminal',
                     label: agentLabel,
                     config: JSON.stringify({ command }),
                     flowX: 0,
-                    flowY: 0
+                    flowY: 0,
+                    flowWidth: size.width,
+                    flowHeight: size.height
                   })
                   return node.id
                 } catch (error) {
@@ -5187,11 +5573,14 @@ function BrowserPageInner(): React.ReactElement {
               onCreateTerminal={async () => {
                 if (!activeBoardId) return undefined
                 try {
+                  const size = defaultTerminalNodeSize
                   const node = await createNode({
                     nodeType: 'terminal',
                     label: 'Terminal',
                     flowX: 0,
-                    flowY: 0
+                    flowY: 0,
+                    flowWidth: size.width,
+                    flowHeight: size.height
                   })
                   return node.id
                 } catch (error) {
@@ -5207,7 +5596,10 @@ function BrowserPageInner(): React.ReactElement {
                 void deleteBoardItem(id, kind, activeBoardId)
               }}
               onOpenTab={(tab) => { openBrowserDialogForTab(tab) }}
-              onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
+              onOpenTerminal={(nodeId) => {
+                exitCanvasInteractiveNode({ restoreViewport: false })
+                setTerminalDialogNodeId(nodeId)
+              }}
               onUpdateNode={updateNode}
               notifiedIds={notifiedItemIds}
               runningTerminalIds={runningTerminalIds}
@@ -5236,7 +5628,10 @@ function BrowserPageInner(): React.ReactElement {
               outputNodes={outputNodes}
               onChange={handleBoardDocHtmlChange}
               onOpenTab={(tab) => { openBrowserDialogForTab(tab) }}
-              onOpenTerminal={(nodeId) => setTerminalDialogNodeId(nodeId)}
+              onOpenTerminal={(nodeId) => {
+                exitCanvasInteractiveNode({ restoreViewport: false })
+                setTerminalDialogNodeId(nodeId)
+              }}
             />
           )}
       </div>
@@ -5957,6 +6352,7 @@ function BrowserPageInner(): React.ReactElement {
         >
           {Array.from(previewingTabs).map((tabId) => {
             const tab = tabs.find((item) => item.id === tabId)
+            const size = getBrowserNodeSize(tab ?? null)
             return (
               <webview
                 key={`preview-${tabId}`}
@@ -5973,7 +6369,7 @@ function BrowserPageInner(): React.ReactElement {
                 partition="persist:browser-tabs"
                 useragent={WEBVIEW_USER_AGENT}
                 tabIndex={-1}
-                style={{ width: '1280px', height: '800px' }}
+                style={{ width: `${size.width}px`, height: `${size.height}px` }}
               />
             )
           })}
@@ -5992,25 +6388,29 @@ function BrowserPageInner(): React.ReactElement {
             overflow: 'hidden'
           }}
         >
-          {Array.from(runningTabs).map((tabId) => (
-            <webview
-              key={tabId}
-              ref={(el) => {
-                if (el) {
-                  const wv = el as unknown as Electron.WebviewTag
-                  triggerWebviews.current.set(tabId, wv)
-                  wv.addEventListener('focus', () => wv.blur())
-                } else {
-                  triggerWebviews.current.delete(tabId)
-                }
-              }}
-              src="about:blank"
-              partition="persist:browser-tabs"
-              useragent={WEBVIEW_USER_AGENT}
-              tabIndex={-1}
-              style={{ width: '1024px', height: '768px' }}
-            />
-          ))}
+          {Array.from(runningTabs).map((tabId) => {
+            const tab = tabs.find((item) => item.id === tabId)
+            const size = getBrowserNodeSize(tab ?? null)
+            return (
+              <webview
+                key={tabId}
+                ref={(el) => {
+                  if (el) {
+                    const wv = el as unknown as Electron.WebviewTag
+                    triggerWebviews.current.set(tabId, wv)
+                    wv.addEventListener('focus', () => wv.blur())
+                  } else {
+                    triggerWebviews.current.delete(tabId)
+                  }
+                }}
+                src="about:blank"
+                partition="persist:browser-tabs"
+                useragent={WEBVIEW_USER_AGENT}
+                tabIndex={-1}
+                style={{ width: `${size.width}px`, height: `${size.height}px` }}
+              />
+            )
+          })}
         </div>
       )}
 

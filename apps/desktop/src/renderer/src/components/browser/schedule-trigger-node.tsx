@@ -1,5 +1,5 @@
 import { memo, useEffect, useMemo, useState } from 'react'
-import { type NodeProps, Position } from '@xyflow/react'
+import { type NodeProps } from '@xyflow/react'
 import { CalendarClock, Play, Sparkles } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useFlowDirection, getSourcePosition } from './flow-direction-context'
