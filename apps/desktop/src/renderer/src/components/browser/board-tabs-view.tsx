@@ -621,7 +621,7 @@ export function BoardTabsView({
           {tabBarLeading}
         </div>
       ) : null}
-      <div className="scrollbar-hidden flex min-w-0 flex-1 items-end gap-0 overflow-x-auto">
+      <div className="scrollbar-hidden flex min-w-0 flex-1 items-end gap-0 overflow-x-auto overflow-y-hidden">
         {allItems.map((item) => {
           const id = item.kind === 'filesystem' ? item.id : item.kind === 'browser' ? item.tab.id : item.node.id
           const isSelected = id === selectedId
@@ -641,7 +641,7 @@ export function BoardTabsView({
               key={id}
               type="button"
               draggable
-              className={`no-drag group relative flex max-w-[200px] items-center gap-1.5 ${isSelected ? 'rounded-t-xl' : 'rounded-t-lg'} border -mb-px px-3 py-1.5 text-xs transition-[background-color,border-color,color,box-shadow] ${
+              className={`no-drag group relative flex w-[160px] shrink-0 items-center gap-1.5 ${isSelected ? 'rounded-t-xl' : 'rounded-t-lg'} border -mb-px px-3 py-1.5 text-xs transition-[background-color,border-color,color,box-shadow] ${
                 isSelected
                   ? 'bg-background border-border/70 border-b-background text-foreground shadow-[0_-1px_0_rgba(255,255,255,0.08),0_12px_28px_rgba(15,23,42,0.14)] z-10 font-semibold'
                   : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
@@ -708,83 +708,83 @@ export function BoardTabsView({
             </button>
           )
         })}
-        <div className="relative shrink-0" ref={newTabMenuRef}>
-          <button
-            type="button"
-            className="no-drag flex items-center justify-center rounded-t-lg px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
-            onClick={() => {
-              setNewTabMenuOpen((prev) => !prev)
-            }}
-            onContextMenu={(event) => {
-              event.preventDefault()
-              setNewTabMenuOpen(true)
-            }}
-            title="New tab"
-          >
-            <Plus className="h-3.5 w-3.5" />
-          </button>
-          {newTabMenuOpen && (
-            <div className="absolute right-0 top-[calc(100%+4px)] z-50 w-36 rounded-md border border-border/40 bg-popover p-1 shadow-sm">
+      </div>
+      <div className="relative shrink-0 self-end" ref={newTabMenuRef}>
+        <button
+          type="button"
+          className="no-drag flex items-center justify-center rounded-t-lg px-2 py-1.5 text-muted-foreground hover:bg-muted/60 hover:text-foreground transition-colors"
+          onClick={() => {
+            setNewTabMenuOpen((prev) => !prev)
+          }}
+          onContextMenu={(event) => {
+            event.preventDefault()
+            setNewTabMenuOpen(true)
+          }}
+          title="New tab"
+        >
+          <Plus className="h-3.5 w-3.5" />
+        </button>
+        {newTabMenuOpen && (
+          <div className="absolute right-0 top-[calc(100%+4px)] z-50 w-36 rounded-md border border-border/40 bg-popover p-1 shadow-sm">
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
+              onClick={() => {
+                setNewTabMenuOpen(false)
+                void handleCreateBrowserTab()
+              }}
+            >
+              <Globe className="h-3.5 w-3.5" />
+              Web
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
+              onClick={() => {
+                setNewTabMenuOpen(false)
+                void handleCreateAgentTab()
+              }}
+            >
+              <Sparkles className="h-3.5 w-3.5" />
+              Agent
+            </button>
+            {!filesystemTabOpen && activeBoardId != null && (
               <button
                 type="button"
                 className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
                 onClick={() => {
                   setNewTabMenuOpen(false)
-                  void handleCreateBrowserTab()
+                  handleCreateFilesystemTab()
                 }}
               >
-                <Globe className="h-3.5 w-3.5" />
-                Web
+                <FolderOpen className="h-3.5 w-3.5" />
+                Files
               </button>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                onClick={() => {
-                  setNewTabMenuOpen(false)
-                  void handleCreateAgentTab()
-                }}
-              >
-                <Sparkles className="h-3.5 w-3.5" />
-                Agent
-              </button>
-              {!filesystemTabOpen && activeBoardId != null && (
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                  onClick={() => {
-                    setNewTabMenuOpen(false)
-                    handleCreateFilesystemTab()
-                  }}
-                >
-                  <FolderOpen className="h-3.5 w-3.5" />
-                  Files
-                </button>
-              )}
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                onClick={() => {
-                  setNewTabMenuOpen(false)
-                  void handleCreateFileTab()
-                }}
-              >
-                <File className="h-3.5 w-3.5" />
-                File
-              </button>
-              <button
-                type="button"
-                className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
-                onClick={() => {
-                  setNewTabMenuOpen(false)
-                  void handleCreateTerminalTab()
-                }}
-              >
-                <Terminal className="h-3.5 w-3.5" />
-                Terminal
-              </button>
-            </div>
-          )}
-        </div>
+            )}
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
+              onClick={() => {
+                setNewTabMenuOpen(false)
+                void handleCreateFileTab()
+              }}
+            >
+              <File className="h-3.5 w-3.5" />
+              File
+            </button>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-xs hover:bg-accent"
+              onClick={() => {
+                setNewTabMenuOpen(false)
+                void handleCreateTerminalTab()
+              }}
+            >
+              <Terminal className="h-3.5 w-3.5" />
+              Terminal
+            </button>
+          </div>
+        )}
       </div>
       {tabBarTrailing ? (
         <div className={`no-drag flex shrink-0 items-center ${inlineWithTrafficLights ? '' : 'self-center pb-1'}`}>
