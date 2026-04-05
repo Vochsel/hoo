@@ -550,7 +550,7 @@ export function SettingsPage({
                     {
                       id: 'map',
                       label: 'Map Like',
-                      description: 'Pan and zoom the canvas like a spatial map.',
+                      description: 'Pan and zoom the canvas like a spatial map while still moving nodes from their headers.',
                       icon: Map,
                       selected: flowInteractionMode === 'map'
                     }

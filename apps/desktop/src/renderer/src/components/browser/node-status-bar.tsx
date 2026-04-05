@@ -55,20 +55,26 @@ interface NodeExecutionFooterProps {
   isRunning?: boolean
   className?: string
   runtimeOutput?: string
+  reserveSpace?: boolean
 }
 
 export function NodeExecutionFooter({
   status,
   isRunning,
   className,
-  runtimeOutput
+  runtimeOutput,
+  reserveSpace = false
 }: NodeExecutionFooterProps): React.ReactElement | null {
   const message = status?.trim() || (isRunning ? 'Running...' : '')
-  if (!message) return null
+  if (!message && !reserveSpace) return null
 
   return (
-    <div className={cn('border-t px-3 py-1.5', className)}>
-      <NodeStatusBar status={status} isRunning={isRunning} runtimeOutput={runtimeOutput} className="border-0 bg-muted/40 px-1.5 py-1" />
+    <div className={cn('border-t px-3 py-1.5', !message && 'border-transparent', className)}>
+      {message ? (
+        <NodeStatusBar status={status} isRunning={isRunning} runtimeOutput={runtimeOutput} className="border-0 bg-muted/40 px-1.5 py-1" />
+      ) : (
+        <div aria-hidden="true" className="h-[22px]" />
+      )}
     </div>
   )
 }

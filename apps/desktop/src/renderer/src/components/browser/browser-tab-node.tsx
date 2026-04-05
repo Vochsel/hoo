@@ -113,7 +113,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
         </button>
         <button
           type="button"
-          className="nodrag inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+          className="nodrag ml-auto inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
           onClick={(event) => {
             event.stopPropagation()
             onClose(id)
@@ -161,6 +161,7 @@ function BrowserTabNodeInner({ id, data, selected }: NodeProps): React.ReactElem
         status={runtimeStatus}
         isRunning={isRunning}
         runtimeOutput={runtimeOutput}
+        reserveSpace={isInteractive}
         className="shrink-0 px-2.5 py-1.5"
       />
     </div>

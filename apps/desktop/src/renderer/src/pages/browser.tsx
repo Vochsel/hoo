@@ -15,6 +15,7 @@ import {
   type Edge,
   type NodeTypes,
   type NodeChange,
+  type NodeDimensionChange,
   type NodePositionChange,
   type EdgeChange,
   type Connection,
@@ -94,6 +95,8 @@ const DEFAULT_BROWSER_NODE_WIDTH = 1024
 const DEFAULT_BROWSER_NODE_HEIGHT = 768
 const DEFAULT_TERMINAL_NODE_WIDTH = 920
 const DEFAULT_TERMINAL_NODE_HEIGHT = 560
+const MAX_LIVE_CANVAS_TERMINALS = 5
+const TERMINAL_RUNNING_STOP_DELAY_MS = 180
 const INTERACTIVE_SELECTOR =
   'a[href], button, input, textarea, select, [contenteditable]:not([contenteditable="false"]), [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [role="row"], [role="checkbox"], [role="switch"], [role="textbox"], [aria-label], [data-tooltip], [onclick], [data-action]'
 const WEBVIEW_USER_AGENT = getWebviewUserAgent()
@@ -477,6 +480,7 @@ function BrowserPageInner(): React.ReactElement {
   const [newWorkspaceDialogOpen, setNewWorkspaceDialogOpen] = useState(false)
   const [notifiedItemIds, setNotifiedItemIds] = useState<Set<string>>(new Set())
   const [runningTerminalIds, setRunningTerminalIds] = useState<Set<string>>(new Set())
+  const [canvasLiveTerminalIds, setCanvasLiveTerminalIds] = useState<string[]>([])
   const [canvasResizingNodeIds, setCanvasResizingNodeIds] = useState<Set<string>>(new Set())
   const [sidebarWidth, setSidebarWidth] = useState(288)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
@@ -529,6 +533,7 @@ function BrowserPageInner(): React.ReactElement {
   const workspaceAgentCommandOverrides = getSetting(WORKSPACE_AGENT_COMMAND_OVERRIDES_KEY)
 
   const terminalNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'terminal'), [gNodes])
+  const terminalNodeIdSet = useMemo(() => new Set(terminalNodes.map((node) => node.id)), [terminalNodes])
   const terminalCommandById = useMemo(() => {
     const next = new Map<string, string | undefined>()
     for (const node of terminalNodes) {
@@ -537,6 +542,10 @@ function BrowserPageInner(): React.ReactElement {
     }
     return next
   }, [terminalNodes])
+  const liveCanvasTerminalIdSet = useMemo(
+    () => new Set(canvasLiveTerminalIds.filter((nodeId) => terminalNodeIdSet.has(nodeId)).slice(0, MAX_LIVE_CANVAS_TERMINALS)),
+    [canvasLiveTerminalIds, terminalNodeIdSet]
+  )
   const fileNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'file'), [gNodes])
   const outputNodes = useMemo(() => gNodes.filter((n) => n.nodeType === 'output'), [gNodes])
   const defaultBrowserNodeSize = useMemo(
@@ -582,6 +591,13 @@ function BrowserPageInner(): React.ReactElement {
     })
   }, [])
 
+  const touchCanvasLiveTerminal = useCallback((nodeId: string): void => {
+    setCanvasLiveTerminalIds((prev) => [
+      nodeId,
+      ...prev.filter((existingId) => existingId !== nodeId)
+    ].slice(0, MAX_LIVE_CANVAS_TERMINALS))
+  }, [])
+
   const exitCanvasInteractiveNode = useCallback(
     (options?: { restoreViewport?: boolean; duration?: number }): void => {
       if (!canvasInteractiveNodeId) return
@@ -604,20 +620,57 @@ function BrowserPageInner(): React.ReactElement {
   // Track agent terminals confirmed idle (via BEL or pattern match) so that
   // subsequent TUI refresh output doesn't flip the spinner back to running.
   const confirmedIdleTerminalIdsRef = useRef(new Set<string>())
+  const terminalRunningStopTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
+
+  const clearTerminalRunningStopTimer = useCallback((nodeId: string): void => {
+    const existing = terminalRunningStopTimersRef.current.get(nodeId)
+    if (!existing) return
+    clearTimeout(existing)
+    terminalRunningStopTimersRef.current.delete(nodeId)
+  }, [])
 
   const setTerminalRunning = useCallback((nodeId: string, isRunning: boolean): void => {
+    clearTerminalRunningStopTimer(nodeId)
     if (isRunning) {
       confirmedIdleTerminalIdsRef.current.delete(nodeId)
+      if (!runningTerminalIdsRef.current.has(nodeId)) {
+        touchCanvasLiveTerminal(nodeId)
+      }
+      setRunningTerminalIds((prev) => {
+        if (prev.has(nodeId)) return prev
+        const next = new Set(prev)
+        next.add(nodeId)
+        return next
+      })
+      return
     }
-    setRunningTerminalIds((prev) => {
-      const alreadyRunning = prev.has(nodeId)
-      if (alreadyRunning === isRunning) return prev
-      const next = new Set(prev)
-      if (isRunning) next.add(nodeId)
-      else next.delete(nodeId)
-      return next
-    })
+
+    terminalRunningStopTimersRef.current.set(nodeId, setTimeout(() => {
+      terminalRunningStopTimersRef.current.delete(nodeId)
+      setRunningTerminalIds((prev) => {
+        if (!prev.has(nodeId)) return prev
+        const next = new Set(prev)
+        next.delete(nodeId)
+        return next
+      })
+    }, TERMINAL_RUNNING_STOP_DELAY_MS))
+  }, [clearTerminalRunningStopTimer, touchCanvasLiveTerminal])
+
+  useEffect(() => {
+    return (): void => {
+      for (const timer of terminalRunningStopTimersRef.current.values()) {
+        clearTimeout(timer)
+      }
+      terminalRunningStopTimersRef.current.clear()
+    }
   }, [])
+
+  useEffect(() => {
+    setCanvasLiveTerminalIds((prev) => {
+      const filtered = prev.filter((nodeId) => terminalNodeIdSet.has(nodeId))
+      return filtered.length === prev.length ? prev : filtered
+    })
+  }, [terminalNodeIdSet])
 
   // Clear notification when an item becomes active
   useEffect(() => {
@@ -1013,12 +1066,17 @@ function BrowserPageInner(): React.ReactElement {
     setPreviewingTabs(new Set())
     dialogWebviews.current.clear()
     canvasWebviews.current.clear()
+    for (const timer of terminalRunningStopTimersRef.current.values()) {
+      clearTimeout(timer)
+    }
+    terminalRunningStopTimersRef.current.clear()
     setMonitorNodeId(null)
     setSelectedTab(null)
     setDialogOpen(false)
     setTerminalDialogNodeId(null)
     interactiveViewportRestoreRef.current = null
     setCanvasInteractiveNodeId(null)
+    setCanvasLiveTerminalIds([])
     setCanvasResizingNodeIds(new Set())
     setContextMenu(null)
     setBoardItemMenu(null)
@@ -1033,6 +1091,20 @@ function BrowserPageInner(): React.ReactElement {
       setCanvasResizingNodeIds(new Set())
     }
   }, [boardView, isSettingsRoute])
+
+  useEffect(() => {
+    const clearCanvasResizeState = (): void => {
+      setCanvasResizingNodeIds((prev) => (prev.size === 0 ? prev : new Set()))
+    }
+
+    window.addEventListener('pointerup', clearCanvasResizeState)
+    window.addEventListener('pointercancel', clearCanvasResizeState)
+
+    return (): void => {
+      window.removeEventListener('pointerup', clearCanvasResizeState)
+      window.removeEventListener('pointercancel', clearCanvasResizeState)
+    }
+  }, [])
 
   useEffect(() => {
     if (boardView !== 'whiteboard' || isSettingsRoute) {
@@ -1482,6 +1554,9 @@ function BrowserPageInner(): React.ReactElement {
         interactiveViewportRestoreRef.current = reactFlowInstance.getViewport()
       }
       setCanvasInteractiveNodeId(nodeId)
+      if (node?.type === 'terminal') {
+        touchCanvasLiveTerminal(nodeId)
+      }
       if (!node) return
 
       const style = (node.style ?? {}) as Record<string, unknown>
@@ -1500,7 +1575,7 @@ function BrowserPageInner(): React.ReactElement {
         { zoom: 1, duration: 180 }
       )
     },
-    [canvasInteractiveNodeId, defaultBrowserNodeSize.height, defaultBrowserNodeSize.width, defaultTerminalNodeSize.height, defaultTerminalNodeSize.width, reactFlowInstance]
+    [canvasInteractiveNodeId, defaultBrowserNodeSize.height, defaultBrowserNodeSize.width, defaultTerminalNodeSize.height, defaultTerminalNodeSize.width, reactFlowInstance, touchCanvasLiveTerminal]
   )
 
   const updateCanvasNodeSize = useCallback(
@@ -2668,6 +2743,8 @@ function BrowserPageInner(): React.ReactElement {
       }
       if (gn.nodeType === 'terminal') {
         const size = getTerminalNodeSize(gn)
+        const isInteractiveTerminal = canvasInteractiveNodeId === gn.id
+        const showLiveTerminal = isInteractiveTerminal || liveCanvasTerminalIdSet.has(gn.id)
         return {
           ...base,
           style: {
@@ -2681,7 +2758,8 @@ function BrowserPageInner(): React.ReactElement {
             config,
             isRunning: runningTerminalIds.has(gn.id),
             hasNotification: notifiedItemIds.has(gn.id),
-            isInteractive: canvasInteractiveNodeId === gn.id,
+            isInteractive: isInteractiveTerminal,
+            showLivePreview: showLiveTerminal,
             isResizing: canvasResizingNodeIds.has(gn.id),
             onOpen: (nodeId: string) => {
               exitCanvasInteractiveNode({ restoreViewport: false })
@@ -2716,7 +2794,7 @@ function BrowserPageInner(): React.ReactElement {
       console.error(`${FLOW_TAG} duplicate node ids detected: ${Array.from(duplicateIds).join(', ')}`)
     }
     return mergedNodes
-  }, [tabs, gNodes, runningTabs, previewingTabs, notifiedItemIds, runningTerminalIds, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile, getBrowserNodeSize, canvasInteractiveNodeId, canvasResizingNodeIds, exitCanvasInteractiveNode, handleResizeBrowserNode, setCanvasNodeResizing, updateTab, handleCanvasWebviewStateChange, getTerminalNodeSize, handleResizeGraphNode, updateNode, setTerminalRunning, boardRootDir, workspace?.rootDir])
+  }, [tabs, gNodes, runningTabs, previewingTabs, notifiedItemIds, runningTerminalIds, handleClose, handleTrigger, handleEditScheduleConfig, handleScheduleTrigger, handleEditFormTriggerConfig, handleSubmitFormTrigger, handleEditNotificationConfig, handleEditDelayConfig, handleEditAiPrompt, handleEditText, handleEditFileConfig, handlePickFile, getBrowserNodeSize, canvasInteractiveNodeId, canvasResizingNodeIds, exitCanvasInteractiveNode, handleResizeBrowserNode, setCanvasNodeResizing, updateTab, handleCanvasWebviewStateChange, getTerminalNodeSize, handleResizeGraphNode, updateNode, setTerminalRunning, boardRootDir, workspace?.rootDir, liveCanvasTerminalIdSet])
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
@@ -2845,6 +2923,28 @@ function BrowserPageInner(): React.ReactElement {
       // Filter out 'remove' changes — deletion is handled via context menu only
       const filtered = changes.filter((c) => c.type !== 'remove')
       if (filtered.length === 0) return
+
+      const resizingChanges = filtered.filter(
+        (c): c is NodeDimensionChange => c.type === 'dimensions' && typeof c.resizing === 'boolean'
+      )
+      if (resizingChanges.length > 0) {
+        setCanvasResizingNodeIds((prev) => {
+          let next: Set<string> | null = null
+          for (const change of resizingChanges) {
+            const current = next ?? prev
+            const alreadyResizing = current.has(change.id)
+            if (alreadyResizing === change.resizing) continue
+            if (!next) next = new Set(prev)
+            if (change.resizing) {
+              next.add(change.id)
+            } else {
+              next.delete(change.id)
+            }
+          }
+          return next ?? prev
+        })
+      }
+
       onNodesChange(filtered)
 
       const positionChanges = changes.filter(
@@ -5472,9 +5572,9 @@ function BrowserPageInner(): React.ReactElement {
               fitViewOptions={{ padding: 0.5 }}
               minZoom={0.3}
               maxZoom={2}
-              nodesDraggable={!isMapMode}
+              nodesDraggable
               nodesConnectable={!isMapMode}
-              elementsSelectable={!isMapMode}
+              elementsSelectable
               selectionOnDrag={!isMapMode}
               selectionMode={isMapMode ? SelectionMode.Full : SelectionMode.Partial}
               panOnDrag={isMapMode ? [0, 1] : [1]}
@@ -5488,7 +5588,7 @@ function BrowserPageInner(): React.ReactElement {
                 <div className="flex items-center gap-2">
                   <p className="text-xs text-muted-foreground bg-background/80 px-3 py-1 rounded-full border border-border/40">
                     {isMapMode
-                      ? 'Map mode: drag to pan and scroll to zoom'
+                      ? 'Map mode: drag empty space to pan, drag node headers to move, scroll to zoom'
                       : 'Design mode: scroll to pan · drag-select supports partial overlap'}
                   </p>
                   <button

@@ -31,6 +31,7 @@ export interface TerminalNodeData {
   runtimeStatus?: string
   runtimeOutput?: string
   isInteractive?: boolean
+  showLivePreview?: boolean
   isResizing?: boolean
   onOpen?: (id: string) => void
   onResize?: (id: string, width: number, height: number) => void
@@ -51,6 +52,7 @@ function TerminalNodeInner({ id, data, selected }: NodeProps): React.ReactElemen
     runtimeStatus,
     runtimeOutput,
     isInteractive,
+    showLivePreview,
     isResizing,
     onOpen,
     onResize,
@@ -114,13 +116,14 @@ function TerminalNodeInner({ id, data, selected }: NodeProps): React.ReactElemen
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col">
-        {isInteractive ? (
+        {showLivePreview ? (
           <div className={cn('nodrag nopan nowheel flex min-h-0 flex-1', isResizing && 'pointer-events-none select-none')}>
             <TerminalContent
               sessionId={`pty-${nodeId}`}
               label={label}
               config={config}
-              active
+              active={isInteractive}
+              readOnly={!isInteractive}
               onUpdateConfig={onUpdateConfig}
               onRunningChange={onRunningChange}
               workspaceRootDir={workspaceRootDir}
@@ -144,6 +147,7 @@ function TerminalNodeInner({ id, data, selected }: NodeProps): React.ReactElemen
         status={runtimeStatus}
         isRunning={isRunning}
         runtimeOutput={runtimeOutput}
+        reserveSpace={showLivePreview}
         className="shrink-0 px-2.5 py-1.5"
       />
     </div>

@@ -26,6 +26,7 @@ interface TerminalContentProps {
   label?: string
   config: TerminalNodeConfig
   active?: boolean
+  readOnly?: boolean
   onRequestClose?: () => void
   onUpdateConfig: (config: TerminalNodeConfig) => void
   onRunningChange?: (isRunning: boolean) => void
@@ -38,6 +39,7 @@ export function TerminalContent({
   label,
   config,
   active = true,
+  readOnly = false,
   onRequestClose,
   onUpdateConfig,
   onRunningChange,
@@ -273,18 +275,20 @@ export function TerminalContent({
   }, [active, fitTerminal, focusTerminal])
 
   const handleDragOver = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (readOnly) return
     if (!canAcceptTerminalDrop(event.dataTransfer)) return
     event.preventDefault()
     event.stopPropagation()
     event.dataTransfer.dropEffect = 'copy'
-  }, [])
+  }, [readOnly])
 
   const handleDrop = useCallback((event: ReactDragEvent<HTMLDivElement>) => {
+    if (readOnly) return
     if (!canAcceptTerminalDrop(event.dataTransfer)) return
     event.preventDefault()
     event.stopPropagation()
     void writeDroppedItemsToTerminal(sessionIdRef.current, event.dataTransfer)
-  }, [])
+  }, [readOnly])
 
   const initTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -312,6 +316,7 @@ export function TerminalContent({
           scrollback: 10_000,
           fontSize: 13,
           fontFamily: 'Menlo, Monaco, "Courier New", monospace',
+          disableStdin: readOnly,
           theme: {
             background: '#1a1a2e',
             foreground: '#e0e0e0',
@@ -327,9 +332,11 @@ export function TerminalContent({
         fitRef.current = fitAddon
         focusTerminal()
 
-        const removeKeyBindings = installTerminalKeyBindings(term, sid, el, () => {
-          onRequestCloseRef.current?.()
-        })
+        const removeKeyBindings = readOnly
+          ? (): void => {}
+          : installTerminalKeyBindings(term, sid, el, () => {
+              onRequestCloseRef.current?.()
+            })
 
         try { fitAddon.fit() } catch {}
 
@@ -415,13 +422,15 @@ export function TerminalContent({
           }
         )
 
-        const disposable = term.onData((data) => {
-          if (data.includes('\r') || data.includes('\n')) {
-            pendingSubmittedCommandRef.current = true
-            setRunningState(true)
-          }
-          window.api.terminal.write(sid, data).catch(() => {})
-        })
+        const disposable = readOnly
+          ? { dispose: (): void => {} }
+          : term.onData((data) => {
+              if (data.includes('\r') || data.includes('\n')) {
+                pendingSubmittedCommandRef.current = true
+                setRunningState(true)
+              }
+              window.api.terminal.write(sid, data).catch(() => {})
+            })
 
         const removeExitListener = window.api.terminal.onExit(
           (incomingSessionId: string, exitCode: number) => {
@@ -448,7 +457,7 @@ export function TerminalContent({
         observerRef.current = observer
       }, 0)
     },
-    [detachTerminal, focusTerminal]
+    [detachTerminal, focusTerminal, readOnly]
   )
 
   return (
@@ -472,12 +481,13 @@ export function TerminalContent({
           className="absolute inset-0 p-1"
           style={{ background: '#1a1a2e' }}
           onContextMenu={(e) => {
+            if (readOnly) return
             e.preventDefault()
             setTermContextMenu({ x: e.clientX, y: e.clientY })
           }}
         />
       </div>
-      {termContextMenu && (
+      {termContextMenu && !readOnly && (
         <div
           className="fixed z-[100] rounded-md border bg-popover p-1 shadow-md"
           style={{ left: termContextMenu.x, top: termContextMenu.y }}
