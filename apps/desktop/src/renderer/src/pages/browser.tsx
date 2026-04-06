@@ -2799,8 +2799,12 @@ function BrowserPageInner(): React.ReactElement {
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes)
   const [edges, setEdges, onEdgesChange] = useEdgesState(savedEdges)
 
-  // Sync nodes when data sources change
-  useEffect(() => {
+  // Track whether any node is currently being dragged so we can defer sync updates.
+  const isDraggingRef = useRef(false)
+  const pendingSyncRef = useRef(false)
+
+  // Sync nodes when data sources change, but defer if a drag is in progress.
+  const applyNodeSync = useCallback(() => {
     setNodes((prevNodes) => {
       const prevById = new Map(prevNodes.map((node) => [node.id, node]))
       return initialNodes.map((nextNode) => {
@@ -2824,6 +2828,8 @@ function BrowserPageInner(): React.ReactElement {
           ...nextNode,
           // Preserve in-flight local positioning and interaction state.
           position: prevNode.position ?? nextNode.position,
+          dragging: prevNode.dragging,
+          selected: prevNode.selected,
           style: {
             ...(prevNode.style ?? {}),
             ...(nextNode.style ?? {})
@@ -2833,6 +2839,14 @@ function BrowserPageInner(): React.ReactElement {
       })
     })
   }, [initialNodes, setNodes])
+
+  useEffect(() => {
+    if (isDraggingRef.current) {
+      pendingSyncRef.current = true
+      return
+    }
+    applyNodeSync()
+  }, [applyNodeSync])
 
   // Sync edges when loaded from DB
   useEffect(() => {
@@ -2945,7 +2959,27 @@ function BrowserPageInner(): React.ReactElement {
         })
       }
 
+      // Track drag state so the node sync effect defers during drags.
+      const hasDragging = changes.some(
+        (c): c is NodePositionChange => c.type === 'position' && c.dragging === true
+      )
+      const hasDragEnd = changes.some(
+        (c): c is NodePositionChange => c.type === 'position' && c.dragging === false
+      )
+      if (hasDragging) {
+        isDraggingRef.current = true
+      }
+
       onNodesChange(filtered)
+
+      // When drag ends, flush any deferred node sync.
+      if (hasDragEnd) {
+        isDraggingRef.current = false
+        if (pendingSyncRef.current) {
+          pendingSyncRef.current = false
+          applyNodeSync()
+        }
+      }
 
       const positionChanges = changes.filter(
         (c): c is NodePositionChange => c.type === 'position' && c.dragging === false && c.position !== undefined
@@ -2991,7 +3025,7 @@ function BrowserPageInner(): React.ReactElement {
         }
       }
     },
-    [onNodesChange, saveTabPositions, saveGraphPositions, graphNodeIdSet]
+    [onNodesChange, saveTabPositions, saveGraphPositions, graphNodeIdSet, applyNodeSync]
   )
 
   const handleNodeDoubleClick = useCallback(
